@@ -1,0 +1,24 @@
+// QuoteFlow database schema.
+// `url` is the POOLED Neon connection (app runtime); `directUrl` is the DIRECT
+// connection (migrations) — see ADR-0005 and .env.example.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Trivial entity for the walking skeleton: proves a real write+read round-trip
+// to Neon. Real domain models (Pricing Study, Benchmark Item, Quote, …) arrive
+// with their slices (#3 onward).
+model HealthCheck {
+  id        String   @id @default(cuid())
+  note      String
+  createdAt DateTime @default(now())
+
+  @@map("health_check")
+}
