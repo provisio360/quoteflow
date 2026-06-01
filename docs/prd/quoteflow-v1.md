@@ -161,4 +161,4 @@ Adapters (FX HTTP client, spreadsheet parser, persistence, email, web layer) are
 
 - Open threads to resolve before or during build: (1) how the QC "expected range" around Client Price is defined; (2) Study/Quote terminal states, archival, and retention; (3) exact dashboard filters/cuts for A and B.
 - This PRD was produced from a `grill-with-docs` session; the domain glossary (`CONTEXT.md`) and ADRs 0001–0004 are the source of truth for terminology and decisions and should be kept in sync as the build proceeds.
-- Issue tracker / triage labels were never formalized (`setup-matt-pocock-skills` not run); this PRD is published as a file rather than a GitHub Issue, so the `ready-for-agent` label is recorded in the Status line above instead of as a tracker label.
+- This PRD is tracked as GitHub issue [#1](https://github.com/provisio360/quoteflow/issues/1) on `provisio360/quoteflow`, labeled `ready-for-agent`. This file is the canonical source; the issue carries the same content for agent pickup.
