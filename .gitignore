@@ -3,3 +3,16 @@
 
 # Local research / scratch notes — non-authoritative, never committed
 research/
+
+# Secrets & local env — never commit connection strings or API keys
+.env
+.env.*
+!.env.example
+
+# Node / build output
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.log
