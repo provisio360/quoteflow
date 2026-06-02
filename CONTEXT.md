@@ -55,8 +55,12 @@ The geographic focus of a Benchmark Item's pricing and the unit of client releas
 _Avoid_: Market, segment, region, territory
 
 **Country Assignment**:
-The Engagement Manager's act of putting a [[Researcher]] onto a Country within a study — the pool allowed to work that Country. A Country may have several assigned researchers, and a researcher may be assigned across many studies. A Country is only assignable once it has Benchmark Items (the brief defines a study's countries), and assignment is **additive**: it only ever adds researchers, never removes them. Distinct from a researcher then self-assigning an individual [[Benchmark Item]] within a Country (becoming its _primary researcher_), which is a separate, later act.
+The Engagement Manager's act of putting a [[Researcher]] onto a Country within a study — the pool allowed to work that Country. A Country may have several assigned researchers, and a researcher may be assigned across many studies. A Country is only assignable once it has Benchmark Items (the brief defines a study's countries), and assignment is **additive**: it only ever adds researchers, never removes them. Distinct from a researcher then self-assigning an individual [[Benchmark Item]] within a Country (becoming its [[Primary Researcher]]), which is a separate, later act.
 _Avoid_: Allocation, posting
+
+**Primary Researcher**:
+The single lead [[Researcher]] on a [[Benchmark Item]], established when a researcher **self-assigns** that item. Self-assignment is only permitted within a Country the researcher already has a [[Country Assignment]] to, and is **first-come**: an item has at most one primary researcher and the lead cannot be taken over once claimed (re-assignment/handoff is out of scope here). Being primary is a *lead* designation, not a lock on the item — other researchers may still contribute [[Quote]]s to the same item without becoming primary. An item may have no primary researcher (unclaimed).
+_Avoid_: Owner, assignee, item owner
 
 **Required Quotes**:
 The per-Benchmark-Item count of approved quotes needed before its Country can be released. Set by the client up front and carried as a column in the bulk upload; varies per item, so sparse-source parts simply specify a lower number (no analyst override exists). May be **zero** — an item that needs no quotes, whose Country can release without any approved quote for it.
