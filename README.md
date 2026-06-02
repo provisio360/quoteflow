@@ -15,11 +15,17 @@ domain logic kept in framework-agnostic `src/domains/*` packages.
 src/
   app/            Next.js App Router (web + adapter layer)
     api/health/   end-to-end health probe (DB round-trip)
+    api/auth/     Better Auth endpoints (sign-in, sign-out, reset, …)
+    login/        invite-only sign-in form
+    accept-invite/ set name + password to activate an invited account
   domains/        pure decision cores — NO framework/DB/network imports
     health/       example core + unit test
-  lib/            thin adapters (Prisma client, …)
+    authz/        Principal (internal|client discriminated union) + tests
+    identity/     invite eligibility rules + tests
+  lib/            thin adapters (Prisma client, Better Auth, notifications, …)
+    identity/     invite/user lifecycle, token hashing, current-principal resolver
 worker/           Graphile Worker (background jobs) — uses DIRECT_URL
-scripts/          one-off scripts (db smoke test)
+scripts/          one-off scripts (db smoke test, seed-admin)
 prisma/           schema + migrations
 ```
 
@@ -54,6 +60,41 @@ npm run worker       # background worker (separate process)
 
 Visit <http://localhost:3000/api/health> — it writes and reads a row through
 Prisma and returns `{ "status": "ok", ... }` when the database is reachable.
+
+## Identity & auth (issue #3)
+
+Invite-only email/password, app-owned via Better Auth in our own Postgres
+(ADR-0005), with database-backed sessions (ADR-0006) and an identity model that
+is SSO-ready by construction (ADR-0007). There is **no public sign-up** — every
+account is created by accepting an Admin invite.
+
+Bootstrap the very first Admin (one-shot; refuses to run if an Admin already
+exists):
+
+```bash
+# set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (≥12 chars) in .env first
+npm run seed:admin
+```
+
+Then sign in at `/login` and invite the rest of the team. The flow:
+
+- An **Admin** invites a user — either internal (with a role: Admin,
+  Engagement Manager, Researcher, Analyst) or a **Client User** (bound to one
+  Client/tenant). Internal staff are never tenant-scoped.
+- The invitee gets a link to `/accept-invite`, sets a password, and the account
+  activates. Accepting the invite **is** the email verification — no separate
+  step. Invites are single-use and expire after `INVITE_EXPIRY_DAYS` (default 7).
+- Offboarding is reversible **deactivation, never deletion**; deactivating a user
+  deletes their sessions so access ends immediately. Password reset likewise
+  revokes existing sessions, and deactivated accounts cannot reset.
+
+The authenticated `Principal` (a discriminated union, illegal states forbidden by
+both the type and a DB CHECK constraint) is resolved per request by
+`getCurrentPrincipal()` — the seam the Authorization & Visibility layer (#4)
+consumes.
+
+Better Auth needs `BETTER_AUTH_SECRET` (a 32-byte random string) and
+`BETTER_AUTH_URL` in `.env` — see `.env.example`.
 
 ## Verify
 

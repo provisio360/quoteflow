@@ -14,13 +14,16 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:smoke": "tsx scripts/db-smoke.ts",
+    "seed:admin": "tsx scripts/seed-admin.ts",
     "worker": "tsx worker/index.ts",
     "worker:once": "tsx worker/run-once.ts"
   },
   "dependencies": {
     "@prisma/client": "^6",
+    "better-auth": "^1.6.13",
     "dotenv": "^16",
     "graphile-worker": "^0.16",
+    "kysely": "^0.28.17",
     "next": "^15",
     "react": "^19",
     "react-dom": "^19"

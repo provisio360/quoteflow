@@ -22,3 +22,151 @@ model HealthCheck {
 
   @@map("health_check")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity (#3) — invite-only login, roles, tenant binding.
+// See CONTEXT.md (Admin, Client, Client User, Invite) and ADRs 0001/0006/0007.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// internal = staff (carries a role, no tenant); client = Client User (one tenant, no role).
+enum PrincipalKind {
+  internal
+  client
+}
+
+/// The four internal staff roles. Admin is user-administration only.
+enum InternalRole {
+  Admin
+  EngagementManager
+  Researcher
+  Analyst
+}
+
+/// Offboarding is reversible deactivation, never deletion (ADR-0006 / grilling Q6).
+enum UserStatus {
+  active
+  deactivated
+}
+
+/// A Client is the tenant (ADR-0001): a company, not a person — it never logs in.
+/// Minimal here; Pricing Studies and the rest of the tenant's data arrive in #4+.
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users   User[]
+  invites Invite[]
+
+  @@map("client")
+}
+
+/// The principal. The internal/client split + role-XOR-tenant invariant is also
+/// enforced by a DB CHECK constraint added in the migration (the pure mirror of
+/// src/domains/authz Principal). Better Auth owns the base columns; kind/role/
+/// tenantId/status/deactivatedAt are our additionalFields, never client-settable.
+model User {
+  id            String  @id
+  name          String
+  email         String  @unique
+  emailVerified Boolean @default(false)
+  image         String?
+
+  // QuoteFlow identity fields:
+  kind          PrincipalKind
+  role          InternalRole?
+  tenantId      String?
+  status        UserStatus    @default(active)
+  deactivatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant         Client?   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  sessions       Session[]
+  accounts       Account[]
+  invitesCreated Invite[]  @relation("InvitedBy")
+
+  @@index([tenantId])
+  @@map("user")
+}
+
+/// Better Auth session — opaque server-side session (ADR-0006). Deactivating a
+/// user or resetting a password deletes their sessions so access ends at once.
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+/// Better Auth account — the authentication method, separated from the principal
+/// (ADR-0007). v1 has exactly one providerId: "credential" (email/password, hash
+/// in `password`). SSO later = a new account row pointing at the same User.
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+/// Better Auth verification — backs email-ownership / password-reset tokens.
+model Verification {
+  id         String    @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+/// An Admin's single-use, expiring offer to create one account (CONTEXT.md: Invite).
+/// Carries the bindings chosen up front (role XOR tenant). Only the token HASH is
+/// stored. Accepting it creates the User and is itself the email verification.
+model Invite {
+  id          String        @id @default(cuid())
+  email       String
+  kind        PrincipalKind
+  role        InternalRole?
+  tenantId    String?
+  tokenHash   String        @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  invitedById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  invitedBy User    @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Restrict)
+  tenant    Client? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([tenantId])
+  @@map("invite")
+}
