@@ -92,6 +92,7 @@ model User {
 
   countryAssignments CountryAssignment[] @relation("AssignedResearcher")
   assignmentsMade    CountryAssignment[] @relation("AssignedBy")
+  itemsAsPrimary     BenchmarkItem[]     @relation("PrimaryResearcher")
 
   @@index([tenantId])
   @@map("user")
@@ -230,13 +231,22 @@ model BenchmarkItem {
   machineModel         String
   requiredQuotes       Int
   clientPrice          Decimal  @db.Decimal(14, 4)
+  // The single lead Researcher on this item (CONTEXT.md: Primary Researcher),
+  // set when a researcher self-assigns (#7). Null = unclaimed. First-come and
+  // never stolen: the claim is a conditional update on this being NULL. Restrict
+  // on delete is moot in practice (staff are deactivated, never deleted) but
+  // keeps a lead from pointing at a vanished user; #25 nulls it on Country
+  // unassignment.
+  primaryResearcherId  String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  study Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  study             Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  primaryResearcher User? @relation("PrimaryResearcher", fields: [primaryResearcherId], references: [id], onDelete: Restrict)
 
   @@unique([studyId, country, clientPartNumberKey])
   @@index([studyId])
+  @@index([primaryResearcherId])
   @@map("benchmark_item")
 }
 
