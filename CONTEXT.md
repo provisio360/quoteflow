@@ -54,6 +54,10 @@ A per-Benchmark-Item reference label for a Quote, auto-assigned in sequence. Sta
 The geographic focus of a Benchmark Item's pricing and the unit of client release.
 _Avoid_: Market, segment, region, territory
 
+**Country Assignment**:
+The Engagement Manager's act of putting a [[Researcher]] onto a Country within a study — the pool allowed to work that Country. A Country may have several assigned researchers, and a researcher may be assigned across many studies. A Country is only assignable once it has Benchmark Items (the brief defines a study's countries), and assignment is **additive**: it only ever adds researchers, never removes them. Distinct from a researcher then self-assigning an individual [[Benchmark Item]] within a Country (becoming its _primary researcher_), which is a separate, later act.
+_Avoid_: Allocation, posting
+
 **Required Quotes**:
 The per-Benchmark-Item count of approved quotes needed before its Country can be released. Set by the client up front and carried as a column in the bulk upload; varies per item, so sparse-source parts simply specify a lower number (no analyst override exists). May be **zero** — an item that needs no quotes, whose Country can release without any approved quote for it.
 
