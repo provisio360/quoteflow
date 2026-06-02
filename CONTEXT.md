@@ -20,8 +20,12 @@ One competitive data point collected from a single distributor/dealer against a 
 _Avoid_: Row, price entry, bid
 
 **Client**:
-An end-client company that commissions pricing studies. The client is the **tenant**: its studies, benchmark items, and quotes are isolated from every other client. Client users are the only external users and see only their own data.
+An end-client company that commissions pricing studies. The client is the **tenant**: its studies, benchmark items, and quotes are isolated from every other client. A Client is a company, not a person — it never logs in. The humans who log in on its behalf are **Client Users**.
 _Avoid_: Customer, account, organization
+
+**Client User**:
+A person who logs in on behalf of exactly one Client (tenant). The only external (non-staff) user. Viewer-only and tenant-bound: sees only that Client's released data, never another tenant's, and has no intra-client roles in v1 (every Client User of a tenant has the same view). Many Client Users may belong to one Client. Distinct from the **Client** itself, which is the company/tenant and never logs in.
+_Avoid_: Client (when you mean the person), customer contact, account user
 
 **Engagement Manager**:
 Internal staff member who runs a study and assigns researchers to Countries (a Country may have several). Sets the pool who may work each Country.
@@ -34,6 +38,14 @@ _Avoid_: Agent, collector
 **Analyst**:
 Internal staff member who performs quality checks on quotes and approves them before clients see them.
 _Avoid_: Reviewer, QA
+
+**Admin**:
+Internal staff member responsible for user administration: invites users, assigns internal roles, and binds client users to their tenant. The root of the invite tree — the only role that can mint other internal staff (including other Admins) and client users. Like all internal staff, an Admin is **not tenant-scoped**. User-administration authority only; being an Admin does not by itself grant Engagement Manager, Researcher, or Analyst capabilities (those are separate role assignments).
+_Avoid_: Superuser, owner, operator
+
+**Invite**:
+An Admin's single-use, expiring offer to create one account for a specific email, carrying the bindings chosen up front — either an internal **role** or a **Client** (tenant). There is no other way to obtain an account (no self-signup). Accepting an Invite (setting a password via the emailed link) both creates the account and serves as **email verification** — possession of the link proves inbox control, so no separate verification step exists. A pending Invite is not yet a [[Client User]] or staff account: it cannot authenticate until accepted. Invites can be revoked or resent by an Admin and expire after a configurable window.
+_Avoid_: Signup, registration, activation link
 
 **Quote Number**:
 A per-Benchmark-Item reference label for a Quote, auto-assigned in sequence. Stable and never reused — an abandoned or rejected quote leaves a permanent gap rather than renumbering, so "Item 12, Quote 3" always means the same quote. It is a display label, not the quote's internal identity.
