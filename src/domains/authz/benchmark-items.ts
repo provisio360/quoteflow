@@ -16,3 +16,13 @@ export function canImportBenchmarkItems(principal: Principal): boolean {
     (principal.role === "EngagementManager" || principal.role === "Analyst")
   );
 }
+
+// Self-assigning a Benchmark Item (becoming its Primary Researcher; issue #7) is
+// a Researcher act — narrower than import, which is EM+Analyst setup. The role is
+// gated explicitly even though only Researchers are ever in a Country pool (the
+// repository's membership check would imply it): defense-in-depth, so a future
+// loosening of the pool invariant can't silently let other roles claim a lead.
+// Per CONTEXT.md, the Primary Researcher of an item is always a Researcher.
+export function canSelfAssignBenchmarkItem(principal: Principal): boolean {
+  return principal.kind === "internal" && principal.role === "Researcher";
+}
