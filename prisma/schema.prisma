@@ -58,6 +58,7 @@ model Client {
 
   users   User[]
   invites Invite[]
+  studies Study[]
 
   @@map("client")
 }
@@ -87,6 +88,7 @@ model User {
   sessions       Session[]
   accounts       Account[]
   invitesCreated Invite[]  @relation("InvitedBy")
+  studiesCreated Study[]   @relation("StudyCreatedBy")
 
   @@index([tenantId])
   @@map("user")
@@ -169,4 +171,31 @@ model Invite {
   @@index([email])
   @@index([tenantId])
   @@map("invite")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pricing Study (#4) — the first tenant-owned resource and the isolation tracer.
+// See CONTEXT.md (Pricing Study) and ADR-0001 (Client = tenant) / ADR-0008
+// (app-layer visibility policy; reads go through src/lib/studies only).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A top-level project container scoped to exactly one Client (the tenant).
+/// `clientId` IS the tenant binding — the whole point of the slice — and is
+/// NON-NULL with onDelete: Restrict so a study can never escape the tenant
+/// filter or point at a vanished tenant (grilling Q4: the security-load-bearing
+/// part). The items/people/quotes a study "holds" arrive in later slices.
+model Study {
+  id          String   @id @default(cuid())
+  name        String
+  clientId    String
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  client    Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy User   @relation("StudyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([clientId])
+  @@index([createdById])
+  @@map("study")
 }
