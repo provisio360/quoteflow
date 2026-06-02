@@ -195,7 +195,43 @@ model Study {
   client    Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
   createdBy User   @relation("StudyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
+  benchmarkItems BenchmarkItem[]
+
   @@index([clientId])
   @@index([createdById])
   @@map("study")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Benchmark Item (#5) — the client's part to be price-benchmarked, loaded via
+// all-or-nothing spreadsheet import. See CONTEXT.md (Benchmark Item, Required
+// Quotes, Client Price) and ADR-0009 (import is source of truth; upsert key).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One client part to price, within a study. Identity is (client part number +
+/// country); `clientPartNumberKey` is the case-folded part number and `country`
+/// the canonical name, so the @@unique IS the upsert key a re-import resolves on
+/// (ADR-0009). `clientPartNumber` keeps the first-seen casing for display.
+/// `clientPrice` is the analyst's expected USD price-per-unit (ADR-0003) — NOT
+/// NULL because every import row must carry it.
+model BenchmarkItem {
+  id                   String   @id @default(cuid())
+  studyId              String
+  country              String
+  clientPartNumber     String
+  clientPartNumberKey  String
+  itemDescription      String
+  configurationComment String?
+  quantity             Int?
+  machineModel         String
+  requiredQuotes       Int
+  clientPrice          Decimal  @db.Decimal(14, 4)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  study Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  @@unique([studyId, country, clientPartNumberKey])
+  @@index([studyId])
+  @@map("benchmark_item")
 }

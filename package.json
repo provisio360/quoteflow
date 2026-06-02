@@ -23,6 +23,7 @@
     "@prisma/client": "^6",
     "better-auth": "^1.6.13",
     "dotenv": "^16",
+    "exceljs": "^4.4.0",
     "graphile-worker": "^0.16",
     "kysely": "^0.28.17",
     "next": "^15",
