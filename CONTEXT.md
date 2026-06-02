@@ -55,7 +55,7 @@ The geographic focus of a Benchmark Item's pricing and the unit of client releas
 _Avoid_: Market, segment, region, territory
 
 **Required Quotes**:
-The per-Benchmark-Item count of approved quotes needed before its Country can be released. Set by the client up front and carried as a column in the bulk upload; varies per item, so sparse-source parts simply specify a lower number (no analyst override exists).
+The per-Benchmark-Item count of approved quotes needed before its Country can be released. Set by the client up front and carried as a column in the bulk upload; varies per item, so sparse-source parts simply specify a lower number (no analyst override exists). May be **zero** — an item that needs no quotes, whose Country can release without any approved quote for it.
 
 **Released**:
 The state of a Country whose approved quotes have been made visible to the client, as a set. The analyst manually releases a Country, gated by a system-enforced precondition: every Benchmark Item in it has at least its Required Quotes approved, and no quote is still in Draft or Submitted. A released Country can be reopened (pulling it back from client view) and re-released; the client's view always reflects only currently-released data. Per-quote approval alone never exposes a quote.
