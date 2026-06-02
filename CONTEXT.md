@@ -36,7 +36,7 @@ Internal staff member who collects quotes by contacting distributors/dealers. Wo
 _Avoid_: Agent, collector
 
 **Analyst**:
-Internal staff member who performs quality checks on quotes and approves them before clients see them.
+Internal staff member who performs quality checks on quotes and approves them before clients see them. Can also create a [[Pricing Study]]: study **creation** is a shared internal-setup capability held by Engagement Managers and Analysts (not the Admin, who remains user-administration only), distinct from **running** a study, which stays the Engagement Manager's job.
 _Avoid_: Reviewer, QA
 
 **Admin**:

@@ -9,8 +9,11 @@ export default defineConfig({
     },
   },
   test: {
-    // Unit tests cover the pure decision cores under src/domains — no DB, no network.
+    // Unit tests cover the pure decision cores (and pure adapter helpers) — no
+    // DB, no network. Integration tests (*.integration.test.ts) hit real
+    // Postgres and run via vitest.integration.config.ts, so exclude them here.
     include: ["src/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "**/*.integration.test.ts"],
     environment: "node",
   },
 });
