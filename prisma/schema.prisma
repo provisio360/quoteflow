@@ -90,6 +90,9 @@ model User {
   invitesCreated Invite[]  @relation("InvitedBy")
   studiesCreated Study[]   @relation("StudyCreatedBy")
 
+  countryAssignments CountryAssignment[] @relation("AssignedResearcher")
+  assignmentsMade    CountryAssignment[] @relation("AssignedBy")
+
   @@index([tenantId])
   @@map("user")
 }
@@ -195,7 +198,8 @@ model Study {
   client    Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
   createdBy User   @relation("StudyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
-  benchmarkItems BenchmarkItem[]
+  benchmarkItems     BenchmarkItem[]
+  countryAssignments CountryAssignment[]
 
   @@index([clientId])
   @@index([createdById])
@@ -234,4 +238,39 @@ model BenchmarkItem {
   @@unique([studyId, country, clientPartNumberKey])
   @@index([studyId])
   @@map("benchmark_item")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Country Assignment (#6) — the Engagement Manager puts Researchers onto a
+// Country within a study (the pool allowed to work it). See CONTEXT.md (Country
+// Assignment) and src/domains/authz/assignments (EM-only: running ≠ setup).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One Researcher assigned to one Country within one study. M:N: a Country may
+/// have several researchers and a researcher works many countries/studies. The
+/// @@unique makes assignment idempotent/additive (re-assigning is a no-op; #6
+/// never removes — removal is tracked separately as #25). `country` is the
+/// canonical name and matches a BenchmarkItem.country in the same study — a
+/// country is only assignable once it has Benchmark Items (the brief defines a
+/// study's countries; ADR-0009). It is a plain string, not an FK: the Benchmark
+/// Item identity is (study, country, partNumberKey), so there is no single row
+/// to reference — that integrity is enforced by the repository, consistent with
+/// the app-layer-first policy (ADR-0008). `assignedById` records the EM who made
+/// the assignment for provenance (audit log is #16/#42).
+model CountryAssignment {
+  id           String   @id @default(cuid())
+  studyId      String
+  country      String
+  researcherId String
+  assignedById String
+  createdAt    DateTime @default(now())
+
+  study      Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  researcher User  @relation("AssignedResearcher", fields: [researcherId], references: [id], onDelete: Restrict)
+  assignedBy User  @relation("AssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  @@unique([studyId, country, researcherId])
+  @@index([researcherId])
+  @@index([studyId])
+  @@map("country_assignment")
 }
