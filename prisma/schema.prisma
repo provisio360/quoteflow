@@ -93,6 +93,7 @@ model User {
   countryAssignments CountryAssignment[] @relation("AssignedResearcher")
   assignmentsMade    CountryAssignment[] @relation("AssignedBy")
   itemsAsPrimary     BenchmarkItem[]     @relation("PrimaryResearcher")
+  quotesCreated      Quote[]             @relation("QuoteCreatedBy")
 
   @@index([tenantId])
   @@map("user")
@@ -238,11 +239,17 @@ model BenchmarkItem {
   // keeps a lead from pointing at a vanished user; #25 nulls it on Country
   // unassignment.
   primaryResearcherId  String?
+  // Monotonic per-item allocator for Quote Numbers (ADR-0010). Incremented
+  // atomically as each Quote (Draft) is created and never reset, so numbers are
+  // sequential, gap-tolerant (a hard-deleted Draft leaves a permanent gap), and
+  // never reused. Starts at 0; the first Quote gets 1.
+  quoteSeq             Int      @default(0)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  study             Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
-  primaryResearcher User? @relation("PrimaryResearcher", fields: [primaryResearcherId], references: [id], onDelete: Restrict)
+  study             Study   @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  primaryResearcher User?   @relation("PrimaryResearcher", fields: [primaryResearcherId], references: [id], onDelete: Restrict)
+  quotes            Quote[]
 
   @@unique([studyId, country, clientPartNumberKey])
   @@index([studyId])
@@ -283,4 +290,65 @@ model CountryAssignment {
   @@index([researcherId])
   @@index([studyId])
   @@map("country_assignment")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quote (#8) — one competitive data point a Researcher collects against a
+// Benchmark Item. See CONTEXT.md (Quote, Draft, Quote Lifecycle, Quote Number),
+// ADR-0010 (per-item monotonic numbering) and ADR-0011 (Draft is private to its
+// author). The Draft→Submitted lifecycle and submit-time validation live in the
+// pure core src/domains/quotes/lifecycle; this is only the row.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The Quote Lifecycle states (CONTEXT.md). All four exist from day one; only
+/// Draft→Submitted is a legal transition in v1 (the analyst verdicts land in
+/// #11). The enum is the persisted mirror of QuoteState in the pure core.
+enum QuoteState {
+  Draft
+  Submitted
+  Approved
+  Rejected
+}
+
+/// A Quote against a Benchmark Item. The competitive fields are ALL nullable: a
+/// Draft saves with partial data, and "required to submit" is enforced only by
+/// the pure lifecycle core at the Draft→Submitted transition — never by a DB
+/// constraint (issue #8). Currency conversion columns (exchange rate, converted
+/// USD) are deliberately absent here; they arrive with #9. `price` is the
+/// dealer's final quoted price in `currency` (local). `quoteNumber` is the
+/// per-item label allocated from BenchmarkItem.quoteSeq (ADR-0010); the @@unique
+/// is its backstop. `createdById` is the author — the only one who may edit,
+/// submit, or delete this Quote (owner-only writes), and the sole reader of it
+/// while it is a Draft (ADR-0011).
+model Quote {
+  id              String     @id @default(cuid())
+  benchmarkItemId String
+  quoteNumber     Int
+  state           QuoteState @default(Draft)
+  createdById     String
+
+  competitorBrand   String?
+  dealerName        String?
+  dealerLocation    String?
+  dealerUrl         String?
+  price             Decimal?  @db.Decimal(14, 4)
+  currency          String?
+  quantityQuoted    Int?
+  stockStatus       String?
+  leadTime          String?
+  warranty          String?
+  discount          String?
+  notes             String?
+  dateQuoteReceived DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  benchmarkItem BenchmarkItem @relation(fields: [benchmarkItemId], references: [id], onDelete: Cascade)
+  createdBy     User          @relation("QuoteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([benchmarkItemId, quoteNumber])
+  @@index([benchmarkItemId])
+  @@index([createdById])
+  @@map("quote")
 }

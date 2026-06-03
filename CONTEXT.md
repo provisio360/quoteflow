@@ -78,8 +78,15 @@ The local-currency-to-USD rate applied to a Quote's price. Auto-fetched as the h
 **Converted USD Price / USD Price per Unit**:
 System-computed values on a Quote: the local price converted to USD, and that figure divided by quantity quoted. Always derived, never hand-entered. USD is currently the fixed conversion target.
 
+**Draft**:
+The state a Quote starts in: a researcher's in-progress working copy, saveable with partial data so collection can be interrupted and resumed. No field is required to hold a Draft; required-field validation applies only on the move to [[Submitted]]. A Draft is internal and pre-review — never in the analyst's queue and never client-visible. Abandoning a Draft is what leaves a permanent gap in the item's [[Quote Number]] sequence.
+_Avoid_: Incomplete, pending, unsaved
+
+**Quote Lifecycle**:
+The states a [[Quote]] moves through — **Draft → Submitted → Approved / Rejected** — modeled as a single state machine. Only the move a researcher makes, Draft → Submitted, exists in v1's first quote slice; the analyst verdicts (Approved/Rejected) are the same machine's later transitions. Every legal move is defined in one place; an undefined move (e.g. editing an approved quote) is rejected, not silently allowed.
+
 **Submitted**:
-A Quote a researcher has marked done and sent to the analyst's review queue. Internal-only — "submitted" never means client-visible.
+A Quote a researcher has marked done and sent to the analyst's review queue. Internal-only — "submitted" never means client-visible. The transition out of [[Draft]] is gated: a Quote can only become Submitted once all required-to-submit fields are present.
 
 **Approved / Rejected**:
 An analyst's per-quote verdict. Approved quotes await Country release; rejected quotes return to the same researcher with a reason. The review back-and-forth is never visible to the client.
