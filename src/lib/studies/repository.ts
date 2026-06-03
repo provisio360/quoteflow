@@ -19,12 +19,28 @@ export class StudyAccessError extends Error {
   }
 }
 
+/**
+ * A study as the app shell lists/displays it (issue #24): the study plus its
+ * Client's name, flattened so a screen needs no further joins. `clientId` is
+ * retained so tenant scoping stays assertable. This is a read-model — distinct
+ * from `getStudy`, which is the lean existence-gate the write paths use.
+ */
+export interface StudySummary {
+  readonly id: string;
+  readonly name: string;
+  readonly clientId: string;
+  readonly clientName: string;
+  readonly createdAt: Date;
+}
+
 /** Every study the principal may see — own tenant for clients, all for staff. */
-export function listStudies(principal: Principal): Promise<Study[]> {
-  return prisma.study.findMany({
+export async function listStudies(principal: Principal): Promise<StudySummary[]> {
+  const rows = await prisma.study.findMany({
     where: visibilityWhere(tenantVisibility(principal)),
     orderBy: { createdAt: "desc" },
+    include: { client: { select: { name: true } } },
   });
+  return rows.map(toSummary);
 }
 
 /**
@@ -40,6 +56,23 @@ export function getStudy(
   return prisma.study.findFirst({
     where: { AND: [visibilityWhere(tenantVisibility(principal)), { id }] },
   });
+}
+
+/**
+ * The shell's study-detail read-model (issue #24): the same principal-scoped,
+ * filter-first lookup as `getStudy` (out-of-tenant collapses to `null`,
+ * ADR-0008), but projected with the Client's name for display. Separate from
+ * `getStudy` so the write-path existence-gate stays a lean, join-free query.
+ */
+export async function getStudyDetail(
+  principal: Principal,
+  id: string,
+): Promise<StudySummary | null> {
+  const row = await prisma.study.findFirst({
+    where: { AND: [visibilityWhere(tenantVisibility(principal)), { id }] },
+    include: { client: { select: { name: true } } },
+  });
+  return row === null ? null : toSummary(row);
 }
 
 export interface CreateStudyInput {
@@ -67,4 +100,15 @@ export async function createStudy(
       createdById: principal.userId,
     },
   });
+}
+
+/** Flatten a study + its included client into the shell read-model. */
+function toSummary(row: Study & { client: { name: string } }): StudySummary {
+  return {
+    id: row.id,
+    name: row.name,
+    clientId: row.clientId,
+    clientName: row.client.name,
+    createdAt: row.createdAt,
+  };
 }
