@@ -310,12 +310,30 @@ enum QuoteState {
   Rejected
 }
 
+/// Where a Quote's currency conversion stands (CONTEXT.md: Conversion Status,
+/// ADR-0004). The column is NULLABLE; null = "unconverted" (a Draft, before
+/// conversion is attempted). `pending` = provider unreachable or no rate within
+/// the look-back window (no USD figures yet; blocks approval in #11); `auto` =
+/// a provider rate pinned; `manual` = analyst override for an uncovered currency
+/// (sticky — the retry job never overwrites it). Pure mirror of ConversionStatus
+/// in src/domains/quotes/conversion.
+enum ConversionStatus {
+  pending
+  auto
+  manual
+}
+
 /// A Quote against a Benchmark Item. The competitive fields are ALL nullable: a
 /// Draft saves with partial data, and "required to submit" is enforced only by
 /// the pure lifecycle core at the Draft→Submitted transition — never by a DB
-/// constraint (issue #8). Currency conversion columns (exchange rate, converted
-/// USD) are deliberately absent here; they arrive with #9. `price` is the
-/// dealer's final quoted price in `currency` (local). `quoteNumber` is the
+/// constraint (issue #8). The currency-conversion columns (#9) are also nullable
+/// and pin a HISTORICAL, immutable conversion (ADR-0004): `exchangeRate` (USD per
+/// 1 unit of `currency`) and `rateDate` (the date that rate is actually for — the
+/// nearest prior business day on a closed quote date), with `convertedUsdPrice`
+/// and `convertedUsdPricePerUnit` DERIVED from them, never hand-entered.
+/// `conversionStatus` is null until conversion runs at submit (wired in #11).
+/// `price` is the dealer's final quoted price in `currency` (local). `quoteNumber`
+/// is the
 /// per-item label allocated from BenchmarkItem.quoteSeq (ADR-0010); the @@unique
 /// is its backstop. `createdById` is the author — the only one who may edit,
 /// submit, or delete this Quote (owner-only writes), and the sole reader of it
@@ -340,6 +358,13 @@ model Quote {
   discount          String?
   notes             String?
   dateQuoteReceived DateTime?
+
+  // Pinned currency conversion (#9 / ADR-0004). Null until conversion runs.
+  exchangeRate             Decimal?          @db.Decimal(18, 8)
+  rateDate                 DateTime?
+  convertedUsdPrice        Decimal?          @db.Decimal(14, 4)
+  convertedUsdPricePerUnit Decimal?          @db.Decimal(14, 4)
+  conversionStatus         ConversionStatus?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
