@@ -8,6 +8,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # Postgres for the integration suite (*.integration.test.ts), which proves
+    # the spec -> Prisma/Kysely `where` translation actually filters in real SQL
+    # (ADR-0008). Unit tests don't need it, but a single service keeps CI simple.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: quoteflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/quoteflow_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/quoteflow_test
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,3 +41,8 @@ jobs:
       - run: npx prisma generate
       - run: npm run typecheck
       - run: npm run test
+      # Apply the committed migrations to the CI Postgres, then run integration
+      # tests against it. `migrate deploy` (not `dev`) is the CI-correct command:
+      # it applies prisma/migrations/ as-is without generating new ones.
+      - run: npm run db:deploy
+      - run: npm run test:integration
