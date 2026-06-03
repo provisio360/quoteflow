@@ -18,6 +18,11 @@ export default async function Home() {
               : `client user (tenant ${principal.tenantId})`}
             .
           </p>
+          {principal.kind === "internal" && (
+            <p>
+              <a href="/studies">Studies</a> — pick a study to import a brief.
+            </p>
+          )}
           <form action={logoutAction}>
             <button type="submit" style={{ padding: "0.4rem 0.9rem" }}>
               Sign out

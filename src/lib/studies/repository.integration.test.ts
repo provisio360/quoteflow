@@ -4,6 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import {
   createStudy,
   getStudy,
+  getStudyDetail,
   listStudies,
   StudyAccessError,
 } from "./repository";
@@ -84,6 +85,25 @@ describe("tenant isolation on reads", () => {
     expect(ids).toContain(studyA);
     expect(ids).toContain(studyB);
     expect((await getStudy(em, studyB))?.id).toBe(studyB);
+  });
+});
+
+describe("shell read projection (issue #24)", () => {
+  it("listStudies carries each study's client name for the shell", async () => {
+    const seen = await listStudies(em);
+    const a = seen.find((s) => s.id === studyA);
+    expect(a?.clientName).toBe("Tenant A (isolation test)");
+  });
+
+  it("getStudyDetail returns the study with its client name", async () => {
+    const detail = await getStudyDetail(em, studyA);
+    expect(detail?.id).toBe(studyA);
+    expect(detail?.clientName).toBe("Tenant A (isolation test)");
+  });
+
+  it("getStudyDetail is tenant-scoped — another tenant's study is not-found", async () => {
+    expect(await getStudyDetail(clientA, studyB)).toBeNull();
+    expect((await getStudyDetail(clientA, studyA))?.id).toBe(studyA);
   });
 });
 

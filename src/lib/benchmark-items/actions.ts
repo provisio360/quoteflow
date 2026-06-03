@@ -2,6 +2,7 @@
 
 import { requirePrincipal } from "@/lib/identity/current-principal";
 import { parseXlsx } from "./parse-xlsx";
+import { uploadProblem } from "./upload-validation";
 import {
   importBenchmarkItems,
   selfAssignBenchmarkItem,
@@ -22,16 +23,33 @@ export async function importBenchmarkItemsAction(
   const principal = await requirePrincipal();
 
   const studyId = String(formData.get("studyId") ?? "");
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) {
-    return { ok: false, errors: [{ row: null, field: null, message: "No spreadsheet uploaded" }] };
-  }
-  if (!file.name.toLowerCase().endsWith(".xlsx")) {
-    return { ok: false, errors: [{ row: null, field: null, message: "File must be a .xlsx spreadsheet" }] };
+
+  // Same gate the browser applies before submit (issue #24), so the message is
+  // identical whichever side catches it. A non-File form value is treated as no
+  // upload.
+  const formFile = formData.get("file");
+  const file = formFile instanceof File ? formFile : null;
+  const problem = uploadProblem(file);
+  if (problem !== null || file === null) {
+    return {
+      ok: false,
+      errors: [{ row: null, field: null, message: problem ?? "No spreadsheet uploaded" }],
+    };
   }
 
   const grid = await parseXlsx(await file.arrayBuffer());
   return importBenchmarkItems(principal, studyId, grid);
+}
+
+// Adapter to the React `useActionState` signature `(prevState, formData)` for
+// the upload form (issue #24). It only reshapes the call — the previous outcome
+// is irrelevant to the next import — so #5's tested `importBenchmarkItemsAction`
+// surface stays untouched.
+export async function importBenchmarkItemsFormAction(
+  _prevState: ImportOutcome | null,
+  formData: FormData,
+): Promise<ImportOutcome> {
+  return importBenchmarkItemsAction(formData);
 }
 
 // Server action backing the (future) researcher item-list "claim" control (#7).
