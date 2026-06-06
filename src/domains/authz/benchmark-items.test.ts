@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   canImportBenchmarkItems,
   canSelfAssignBenchmarkItem,
+  canMaintainClientPrice,
 } from "./benchmark-items";
 import type { InternalPrincipal, ClientPrincipal } from "./principal";
 
@@ -48,5 +49,27 @@ describe("canSelfAssignBenchmarkItem — a Researcher-only act", () => {
 
   it("forbids client users (viewer-only, never write)", () => {
     expect(canSelfAssignBenchmarkItem(clientUser)).toBe(false);
+  });
+});
+
+describe("canMaintainClientPrice — an Analyst-only QC act (ADR-0003/0015)", () => {
+  it("allows an Analyst (Client Price is the analyst's QC benchmark)", () => {
+    expect(canMaintainClientPrice(internal("Analyst"))).toBe(true);
+  });
+
+  it("forbids Engagement Managers (they run the study but don't curate Client Price)", () => {
+    expect(canMaintainClientPrice(internal("EngagementManager"))).toBe(false);
+  });
+
+  it("forbids Researchers (Client Price is hidden from them, ADR-0003)", () => {
+    expect(canMaintainClientPrice(internal("Researcher"))).toBe(false);
+  });
+
+  it("forbids the Admin (user-administration only)", () => {
+    expect(canMaintainClientPrice(internal("Admin"))).toBe(false);
+  });
+
+  it("forbids client users (viewer-only, never write)", () => {
+    expect(canMaintainClientPrice(clientUser)).toBe(false);
   });
 });

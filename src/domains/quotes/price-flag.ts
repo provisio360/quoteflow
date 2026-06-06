@@ -11,8 +11,12 @@
 export interface PriceFlagInput {
   /** The Quote's converted USD price-per-unit; null when not yet converted. */
   readonly usdPricePerUnit: number | null;
-  /** The Benchmark Item's expected USD price-per-unit (CONTEXT.md: Client Price). */
-  readonly clientPrice: number;
+  /**
+   * The Benchmark Item's expected USD price-per-unit (CONTEXT.md: Client Price).
+   * Null when the item has no Client Price set — an item the client never priced
+   * (ADR-0015); such an item is not comparable, exactly like an unconverted quote.
+   */
+  readonly clientPrice: number | null;
   /** The Pricing Study's QC Threshold, as a percentage (CONTEXT.md: QC Threshold). */
   readonly thresholdPct: number;
 }
@@ -37,7 +41,7 @@ export type PriceFlagResult =
  */
 export function evaluatePriceFlag(input: PriceFlagInput): PriceFlagResult {
   const { usdPricePerUnit, clientPrice, thresholdPct } = input;
-  if (usdPricePerUnit === null) return { comparable: false };
+  if (usdPricePerUnit === null || clientPrice === null) return { comparable: false };
 
   const a = usdPricePerUnit;
   const b = clientPrice;

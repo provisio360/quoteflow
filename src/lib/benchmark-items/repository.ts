@@ -4,6 +4,7 @@ import { isInternal } from "@/domains/authz/principal";
 import {
   canImportBenchmarkItems,
   canSelfAssignBenchmarkItem,
+  canMaintainClientPrice,
 } from "@/domains/authz/benchmark-items";
 import { getStudy } from "@/lib/studies/repository";
 import {
@@ -74,6 +75,11 @@ export async function importBenchmarkItems(
       });
     }
     for (const item of updates) {
+      // Re-import overwrites the brief fields but NEVER Client Price: it is
+      // analyst-owned after seeding (ADR-0015). Omit it from the update so the
+      // analyst's curated value survives a re-brief. (Do not "fix" this back to
+      // writing clientPrice — the omission is the point.)
+      const { clientPrice: _seedOnly, ...briefFields } = toRow(studyId, item);
       await tx.benchmarkItem.update({
         where: {
           studyId_country_clientPartNumberKey: {
@@ -82,7 +88,7 @@ export async function importBenchmarkItems(
             clientPartNumberKey: item.clientPartNumberKey,
           },
         },
-        data: toRow(studyId, item),
+        data: briefFields,
       });
     }
 
@@ -228,8 +234,94 @@ export async function selfAssignBenchmarkItem(
   );
 }
 
-/** Map a validated item to its persisted columns (file is the source of truth —
- *  every column is written, including Client Price; ADR-0009). */
+/**
+ * The Analyst's QC list view of a Benchmark Item. UNLIKE the researcher view
+ * (RESEARCHER_VIEW_SELECT), this DOES carry `clientPrice` — the analyst owns and
+ * reads it (ADR-0003/0015). `clientPrice` is null for an unpriced item.
+ */
+export interface AnalystItemView {
+  readonly id: string;
+  readonly country: string;
+  readonly clientPartNumber: string;
+  readonly itemDescription: string;
+  readonly requiredQuotes: number;
+  readonly clientPrice: number | null;
+}
+
+/**
+ * List a study's Benchmark Items for the analyst QC view (issue #12), including
+ * each item's Client Price. Analyst-only: this is the one read path that exposes
+ * Client Price, so the role gate lives on the server (ADR-0003 defense-in-depth)
+ * — a researcher or client never receives the value, not merely sees it hidden
+ * in the UI. Ordered by Country then Client Part Number for a stable display.
+ */
+export async function listBenchmarkItemsForAnalyst(
+  principal: Principal,
+  studyId: string,
+): Promise<AnalystItemView[]> {
+  if (!canMaintainClientPrice(principal)) {
+    throw new BenchmarkItemAccessError("Only Analysts may view Client Price");
+  }
+  const rows = await prisma.benchmarkItem.findMany({
+    where: { studyId },
+    orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
+    select: {
+      id: true,
+      country: true,
+      clientPartNumber: true,
+      itemDescription: true,
+      requiredQuotes: true,
+      clientPrice: true,
+    },
+  });
+  return rows.map((r) => ({
+    ...r,
+    clientPrice: r.clientPrice === null ? null : Number(r.clientPrice),
+  }));
+}
+
+export interface SetClientPriceResult {
+  /** The Client Price now on the item — a positive USD/unit value, or null (cleared). */
+  readonly clientPrice: number | null;
+}
+
+/**
+ * Set or clear a Benchmark Item's Client Price (issue #12 / ADR-0015).
+ *
+ * Analyst-only (ADR-0003 — the value is hidden from researchers; the EM runs the
+ * study but does not curate the QC benchmark). `value` is the already-parsed
+ * price: a number > 0, or null to clear it back to "unpriced". The repository
+ * re-checks the > 0 invariant as defense-in-depth so a bad caller can't persist a
+ * non-positive benchmark even if the pure parse is bypassed.
+ *
+ * Throws `BenchmarkItemAccessError` for a non-Analyst principal or an unknown
+ * item — neither of which changes any value.
+ */
+export async function setClientPrice(
+  principal: Principal,
+  itemId: string,
+  value: number | null,
+): Promise<SetClientPriceResult> {
+  if (!canMaintainClientPrice(principal)) {
+    throw new BenchmarkItemAccessError("Only Analysts may maintain Client Price");
+  }
+  if (value !== null && (!Number.isFinite(value) || value <= 0)) {
+    throw new BenchmarkItemAccessError("Client Price must be a number greater than 0");
+  }
+
+  const updated = await prisma.benchmarkItem.updateMany({
+    where: { id: itemId },
+    data: { clientPrice: value },
+  });
+  if (updated.count === 0) {
+    throw new BenchmarkItemAccessError(`Benchmark Item not found: ${itemId}`);
+  }
+  return { clientPrice: value };
+}
+
+/** Map a validated item to its persisted columns. Used in full for INSERTs; the
+ *  update path strips `clientPrice` first, because the brief only seeds Client
+ *  Price and the analyst owns it thereafter (ADR-0015). */
 function toRow(studyId: string, item: ValidatedBenchmarkItem) {
   return {
     studyId,

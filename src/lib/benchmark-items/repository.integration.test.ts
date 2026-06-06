@@ -63,9 +63,10 @@ describe("importBenchmarkItems — upsert (ADR-0009)", () => {
     expect(items).toHaveLength(2);
   });
 
-  it("re-import updates matched items (file overwrites), leaves absent items, adds new", async () => {
-    // PN-100 exists -> update (price 1000 -> 1500); PN-200 absent -> untouched;
-    // PN-300 new -> insert.
+  it("re-import overwrites brief fields but PRESERVES Client Price (analyst-owned, ADR-0015)", async () => {
+    // PN-100 exists -> update: Item Description overwrites, but Client Price is
+    // NOT touched by re-import (stays 1000 despite the sheet saying 1500).
+    // PN-200 absent -> untouched; PN-300 new -> insert.
     const grid = [
       HEADERS,
       row({ "Client Part Number": "PN-100", "Client Price": "1500", "Item Description": "Pump v2" }),
@@ -77,8 +78,8 @@ describe("importBenchmarkItems — upsert (ADR-0009)", () => {
     const pn100 = await prisma.benchmarkItem.findFirst({
       where: { studyId, clientPartNumberKey: "pn-100" },
     });
-    expect(Number(pn100?.clientPrice)).toBe(1500);
-    expect(pn100?.itemDescription).toBe("Pump v2");
+    expect(Number(pn100?.clientPrice)).toBe(1000); // preserved — re-import never writes it
+    expect(pn100?.itemDescription).toBe("Pump v2"); // other brief fields DO overwrite
     // PN-200 (absent from this file) still present — import never deletes.
     expect(await prisma.benchmarkItem.findFirst({ where: { studyId, clientPartNumberKey: "pn-200" } })).not.toBeNull();
     expect(await prisma.benchmarkItem.count({ where: { studyId } })).toBe(3);
@@ -98,7 +99,7 @@ describe("importBenchmarkItems — upsert (ADR-0009)", () => {
     expect(result.errors).toContainEqual(expect.objectContaining({ row: 3, field: "country" }));
     // The valid would-be update must NOT have been applied.
     const pn100 = await prisma.benchmarkItem.findFirst({ where: { studyId, clientPartNumberKey: "pn-100" } });
-    expect(Number(pn100?.clientPrice)).toBe(1500); // unchanged from previous test
+    expect(Number(pn100?.clientPrice)).toBe(1000); // unchanged: re-import never writes Client Price
     expect(await prisma.benchmarkItem.count({ where: { studyId } })).toBe(before);
   });
 });

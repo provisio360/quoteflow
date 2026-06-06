@@ -1,14 +1,17 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requirePrincipal } from "@/lib/identity/current-principal";
 import { parseXlsx } from "./parse-xlsx";
 import { uploadProblem } from "./upload-validation";
 import {
   importBenchmarkItems,
   selfAssignBenchmarkItem,
+  setClientPrice,
   BenchmarkItemAccessError,
   type ImportOutcome,
 } from "./repository";
+import { parseClientPrice } from "@/domains/benchmark-items/client-price";
 
 // Server action backing the (future) brief-upload form. It is pure wiring:
 // authenticate → parse the .xlsx to a raw grid (thin adapter) → hand to the
@@ -73,6 +76,39 @@ export async function selfAssignBenchmarkItemAction(
   } catch (error) {
     // The repository raises BenchmarkItemAccessError for permission/not-found/
     // not-in-pool/already-claimed — surface its message; anything else re-throws.
+    if (error instanceof BenchmarkItemAccessError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+}
+
+// Server action backing the analyst QC list's inline Client Price edit (issue
+// #12). Wiring plus the pure value rule: authenticate → parse the raw input
+// (blank clears to null, else a number > 0; ADR-0015) → hand the typed value to
+// the Analyst-gated repository. On success the study page is revalidated so the
+// list reflects the new (or cleared) benchmark. `studyId` is carried only to
+// target the revalidation, not for authorization (the repository owns that).
+export type SetClientPriceFormResult =
+  | { readonly ok: true; readonly clientPrice: number | null }
+  | { readonly ok: false; readonly message: string };
+
+export async function setClientPriceAction(
+  _prevState: SetClientPriceFormResult | null,
+  formData: FormData,
+): Promise<SetClientPriceFormResult> {
+  const principal = await requirePrincipal();
+  const itemId = String(formData.get("itemId") ?? "");
+  const studyId = String(formData.get("studyId") ?? "");
+
+  const parsed = parseClientPrice(String(formData.get("clientPrice") ?? ""));
+  if (!parsed.ok) return { ok: false, message: parsed.message };
+
+  try {
+    const { clientPrice } = await setClientPrice(principal, itemId, parsed.value);
+    if (studyId !== "") revalidatePath(`/studies/${studyId}`);
+    return { ok: true, clientPrice };
+  } catch (error) {
     if (error instanceof BenchmarkItemAccessError) {
       return { ok: false, message: error.message };
     }

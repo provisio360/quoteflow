@@ -33,6 +33,12 @@ describe("evaluatePriceFlag", () => {
     ).toEqual({ comparable: false });
   });
 
+  it("is not comparable when the Benchmark Item has no Client Price (unset, ADR-0015)", () => {
+    expect(
+      evaluatePriceFlag({ usdPricePerUnit: 110, clientPrice: null, thresholdPct: 25 }),
+    ).toEqual({ comparable: false });
+  });
+
   it("does not flag a quote exactly at the threshold (boundary is inclusive)", () => {
     // Choose a = 100, b = 60: percent_diff = 40 / 80 * 100 = 50%, threshold = 50%.
     expect(

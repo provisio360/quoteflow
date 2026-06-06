@@ -13,14 +13,14 @@ The client's part to be price-benchmarked, defined once and carrying the client'
 _Avoid_: Target part, subject part, line item, SKU
 
 **Client Price**:
-The expected USD price-per-unit benchmark for a Benchmark Item, entered by the analyst. Used purely as an internal QC reference: a [[Quote]] whose USD price-per-unit differs from it by more than the study's [[QC Threshold]] is **flagged** (see [[Price Flag]]). Hidden from researchers (to avoid biasing the quotes they collect) and never shown to clients or included in client exports. Powers the internal analyst QC view, not any client-facing dashboard.
+The expected USD price-per-unit benchmark for a Benchmark Item. Initially **seeded from the client brief** at study setup, but **owned and maintained by the analyst** thereafter — the brief is *not* its source of truth, so a re-import never overwrites it (the analyst corrects it in-app, ADR-0015). Used purely as an internal QC reference: a [[Quote]] whose USD price-per-unit differs from it by more than the study's [[QC Threshold]] is **flagged** (see [[Price Flag]]). **May be unset** — an item the client never priced has no Client Price and is *not comparable*, raising no flag (parallel to an unconverted [[Quote]]). Hidden from researchers (to avoid biasing the quotes they collect) and never shown to clients or included in client exports. Powers the internal analyst QC view, not any client-facing dashboard.
 
 **QC Threshold**:
 The per-[[Pricing Study]] percentage that defines how far a [[Quote]]'s USD price-per-unit may diverge from a Benchmark Item's [[Client Price]] before the quote is flagged for analyst attention. Defined by the [[Engagement Manager]] or [[Analyst]] as part of study setup (a required study attribute — a study without one is mis-configured). One threshold governs every item in the study; the difference measure itself is relative, so a single percentage works across cheap and expensive parts.
 _Avoid_: tolerance, variance limit
 
 **Price Flag**:
-The QC signal raised on a [[Quote]] whose USD price-per-unit diverges from its Benchmark Item's [[Client Price]] by more than the study's [[QC Threshold]]. Only computable once the quote is converted (an unconverted/pending quote is *not comparable*, never flagged). The flag is **advisory, not a hard block** — but approving a flagged quote requires the author's [[Justification]] first. The analyst sees the flag and its direction (higher/lower than expected); the researcher never does (the [[Client Price]] is hidden from them, ADR-0003).
+The QC signal raised on a [[Quote]] whose USD price-per-unit diverges from its Benchmark Item's [[Client Price]] by more than the study's [[QC Threshold]]. Only computable once the quote is converted **and** its Benchmark Item has a [[Client Price]] (lacking either, the quote is *not comparable*, never flagged). The flag is **advisory, not a hard block** — but approving a flagged quote requires the author's [[Justification]] first. The analyst sees the flag and its direction (higher/lower than expected); the researcher never does (the [[Client Price]] is hidden from them, ADR-0003).
 _Avoid_: alert, warning, exception
 
 **Justification**:

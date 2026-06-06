@@ -27,14 +27,15 @@ export const BENCHMARK_ITEM_FIELDS = [
 
 export type BenchmarkItemField = (typeof BENCHMARK_ITEM_FIELDS)[number];
 
-/** Fields whose column must be present; the rest (comment, quantity) are optional. */
+/** Fields whose column must be present; the rest (comment, quantity, clientPrice)
+ *  are optional. Client Price is only *seeded* by the brief (ADR-0015): an item
+ *  the client never priced may omit it, so the column is not required. */
 const REQUIRED_FIELDS = [
   "country",
   "clientPartNumber",
   "itemDescription",
   "machineModel",
   "requiredQuotes",
-  "clientPrice",
 ] as const satisfies readonly BenchmarkItemField[];
 
 /** The canonical spreadsheet header label for each field (matched loosely). */
@@ -60,7 +61,8 @@ export interface ValidatedBenchmarkItem {
   readonly quantity: number | null;
   readonly machineModel: string;
   readonly requiredQuotes: number;
-  readonly clientPrice: number;
+  /** USD/unit. Null when the brief left it blank — an unpriced item (ADR-0015). */
+  readonly clientPrice: number | null;
 }
 
 /** One problem with the file. `row` is the 1-based spreadsheet row (data starts
@@ -151,11 +153,12 @@ export function validateImport(grid: readonly (readonly string[])[]): ImportVali
     else if (!Number.isInteger(requiredQuotes) || requiredQuotes < 0)
       fail("requiredQuotes", "Required Quotes must be a whole number >= 0");
 
+    // Client Price is optional — the brief only seeds it (ADR-0015). Blank means
+    // an unpriced item (null). A value that IS present must be a number > 0.
     const clientPriceRaw = cell("clientPrice");
-    const clientPrice = Number(clientPriceRaw);
-    if (clientPriceRaw === "") fail("clientPrice", "Client Price is required");
-    else if (!Number.isFinite(clientPrice) || clientPrice <= 0)
-      fail("clientPrice", "Client Price must be a number greater than 0");
+    const clientPrice = clientPriceRaw === "" ? null : Number(clientPriceRaw);
+    if (clientPrice !== null && (!Number.isFinite(clientPrice) || clientPrice <= 0))
+      fail("clientPrice", "Client Price must be a number greater than 0 when provided");
 
     // Quantity is optional, but a value that IS present must be a positive whole
     // number (the client's own quantity for the part).
