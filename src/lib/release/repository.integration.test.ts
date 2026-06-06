@@ -141,6 +141,15 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  // Scoped teardown — delete only what this suite seeded, in FK-safe order:
+  // deleting the studies cascades their Benchmark Items, Quotes, and Country
+  // Releases (onDelete: Cascade); users and clients are Restrict-referenced by
+  // those rows, so they come after. Leaves every other suite's data untouched.
+  await prisma.study.deleteMany({ where: { id: { in: [studyA, studyB] } } });
+  await prisma.user.deleteMany({
+    where: { id: { in: [analyst.userId, em.userId, researcher.userId, clientUserA.userId] } },
+  });
+  await prisma.client.deleteMany({ where: { id: { in: [clientA, clientB] } } });
   await prisma.$disconnect();
 });
 
