@@ -95,6 +95,8 @@ model User {
   itemsAsPrimary     BenchmarkItem[]     @relation("PrimaryResearcher")
   quotesCreated      Quote[]             @relation("QuoteCreatedBy")
   quotesReviewed     Quote[]             @relation("QuoteReviewedBy")
+  countriesReleased  CountryRelease[]    @relation("ReleasedBy")
+  countriesReopened  CountryRelease[]    @relation("ReopenedBy")
 
   @@index([tenantId])
   @@map("user")
@@ -191,23 +193,24 @@ model Invite {
 /// filter or point at a vanished tenant (grilling Q4: the security-load-bearing
 /// part). The items/people/quotes a study "holds" arrive in later slices.
 model Study {
-  id          String   @id @default(cuid())
-  name        String
-  clientId    String
-  createdById String
+  id             String   @id @default(cuid())
+  name           String
+  clientId       String
+  createdById    String
   // The study's QC Threshold (CONTEXT.md / ADR-0014): the percentage a Quote's
   // USD price-per-unit may diverge from a Benchmark Item's Client Price before it
   // is flagged. Required — a study without one is mis-configured — and set at
   // study setup by the EM/Analyst. Stored as a percentage (e.g. 25.00 = 25%).
-  qcThresholdPct Decimal @db.Decimal(5, 2)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  qcThresholdPct Decimal  @db.Decimal(5, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   client    Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
   createdBy User   @relation("StudyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   benchmarkItems     BenchmarkItem[]
   countryAssignments CountryAssignment[]
+  countryReleases    CountryRelease[]
 
   @@index([clientId])
   @@index([createdById])
@@ -399,4 +402,52 @@ model Quote {
   @@index([createdById])
   @@index([reviewedById])
   @@map("quote")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Country Release (#13) — the second of the two release gates (ADR-0002): an
+// Analyst makes a Country's approved quotes visible to the client, as a set.
+// See CONTEXT.md (Released, Release Eligibility) and ADR-0016. A Country has no
+// row of its own (it is a string on BenchmarkItem); this is where its release
+// state lives, one row per (study, country).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Whether a Country's release is currently in effect. `released` = its approved
+/// quotes are client-visible; `reopened` = pulled back from client view pending
+/// re-release. The pure mirror of ReleaseState the repository persists.
+enum ReleaseState {
+  released
+  reopened
+}
+
+/// The release state of one Country within one study (ADR-0016). Keyed on
+/// (studyId, country) — the same country recurs across studies and each releases
+/// independently. The row is created on first release and MUTATED IN PLACE
+/// thereafter, never deleted: reopen flips `state` to `reopened` (keeping the
+/// release stamps) and re-release flips it back and re-stamps, so the row keeps
+/// its own provenance for the audit slice (#16/#42). "Currently released" ⇔
+/// `state = released`; no row ⇔ never released. `country` is a plain string (not
+/// an FK), consistent with CountryAssignment — the Benchmark Item identity is
+/// (study, country, partNumberKey), so there is no single row to reference; the
+/// repository enforces that the country has Benchmark Items. The eligibility
+/// precondition is a pure, derived judgement (src/domains/release), never stored.
+model CountryRelease {
+  id           String       @id @default(cuid())
+  studyId      String
+  country      String
+  state        ReleaseState
+  releasedById String
+  releasedAt   DateTime
+  reopenedById String?
+  reopenedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  study      Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  releasedBy User  @relation("ReleasedBy", fields: [releasedById], references: [id], onDelete: Restrict)
+  reopenedBy User? @relation("ReopenedBy", fields: [reopenedById], references: [id], onDelete: Restrict)
+
+  @@unique([studyId, country])
+  @@index([studyId])
+  @@map("country_release")
 }
