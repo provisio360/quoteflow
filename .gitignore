@@ -4,6 +4,10 @@
 # Local research / scratch notes — non-authoritative, never committed
 research/
 
+# Per-agent local memory store (path-keyed, machine-specific) — never committed.
+# The shared .claude/skills/ stays tracked; only this agent state is excluded.
+.claude/projects/
+
 # Secrets & local env — never commit connection strings or API keys
 .env
 .env.*
