@@ -224,8 +224,9 @@ model Study {
 /// country); `clientPartNumberKey` is the case-folded part number and `country`
 /// the canonical name, so the @@unique IS the upsert key a re-import resolves on
 /// (ADR-0009). `clientPartNumber` keeps the first-seen casing for display.
-/// `clientPrice` is the analyst's expected USD price-per-unit (ADR-0003) — NOT
-/// NULL because every import row must carry it.
+/// `clientPrice` is the analyst's expected USD price-per-unit (ADR-0003),
+/// nullable: the brief only *seeds* it and an unpriced item carries none
+/// (ADR-0015). The analyst owns it thereafter — a re-import never overwrites it.
 model BenchmarkItem {
   id                   String   @id @default(cuid())
   studyId              String
@@ -237,7 +238,7 @@ model BenchmarkItem {
   quantity             Int?
   machineModel         String
   requiredQuotes       Int
-  clientPrice          Decimal  @db.Decimal(14, 4)
+  clientPrice          Decimal? @db.Decimal(14, 4)
   // The single lead Researcher on this item (CONTEXT.md: Primary Researcher),
   // set when a researcher self-assigns (#7). Null = unclaimed. First-come and
   // never stolen: the claim is a conditional update on this being NULL. Restrict

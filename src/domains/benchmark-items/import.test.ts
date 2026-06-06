@@ -70,7 +70,6 @@ describe("validateImport — required fields", () => {
     ["Item Description", "itemDescription"],
     ["Machine/Model", "machineModel"],
     ["Required Quotes", "requiredQuotes"],
-    ["Client Price", "clientPrice"],
   ])("rejects a blank %s as a row error and yields no items", (header, field) => {
     const result = validateImport(gridOf({ [header]: "" }));
 
@@ -124,15 +123,24 @@ describe("validateImport — all-or-nothing", () => {
 
 describe("validateImport — file structure & headers", () => {
   it("reports a missing REQUIRED header as a file-level error (no row noise)", () => {
-    const headers = HEADERS.filter((h) => h !== "Client Price");
+    const headers = HEADERS.filter((h) => h !== "Required Quotes");
     const result = validateImport([headers, headers.map(() => "x")]);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors).toContainEqual(
-      expect.objectContaining({ row: null, message: expect.stringMatching(/Client Price/) }),
+      expect.objectContaining({ row: null, message: expect.stringMatching(/Required Quotes/) }),
     );
     // It must not also emit per-row "required" spam for the absent column.
     expect(result.errors.every((e) => e.row === null)).toBe(true);
+  });
+
+  it("accepts a file with no Client Price column at all (unpriced study, ADR-0015)", () => {
+    const cpIndex = HEADERS.indexOf("Client Price");
+    const drop = <T,>(arr: T[]) => arr.filter((_, i) => i !== cpIndex);
+    const result = validateImport([drop(HEADERS), drop(validRow)]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items[0].clientPrice).toBeNull();
   });
 
   it("ignores column order and unknown extra columns", () => {
@@ -179,14 +187,21 @@ describe("validateImport — Required Quotes (integer >= 0)", () => {
   });
 });
 
-describe("validateImport — Client Price (> 0)", () => {
-  it.each(["0", "-5", "abc"])("rejects %s", (value) => {
+describe("validateImport — Client Price (optional, > 0 when present, ADR-0015)", () => {
+  it.each(["0", "-5", "abc"])("rejects a present but non-positive value %s", (value) => {
     const result = validateImport(gridOf({ "Client Price": value }));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors).toContainEqual(
       expect.objectContaining({ row: 2, field: "clientPrice" }),
     );
+  });
+
+  it("accepts a blank Client Price as an unpriced item (clientPrice null)", () => {
+    const result = validateImport(gridOf({ "Client Price": "" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items[0].clientPrice).toBeNull();
   });
 });
 

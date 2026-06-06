@@ -291,9 +291,11 @@ export interface ReviewQueueItem {
   readonly country: string;
   readonly clientPartNumber: string;
   readonly itemDescription: string;
-  readonly clientPrice: string;
+  /** Null when the item is unpriced (ADR-0015) — then `flag.comparable` is false. */
+  readonly clientPrice: string | null;
   readonly qcThresholdPct: string;
-  /** The QC out-of-range evaluation (ADR-0014); `comparable: false` while pending. */
+  /** The QC out-of-range evaluation (ADR-0014); `comparable: false` while pending
+   *  OR when the item has no Client Price (ADR-0015). */
   readonly flag: PriceFlagResult;
 }
 
@@ -341,9 +343,10 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
 
   return rows.map((r) => {
     const usdPerUnit = r.convertedUsdPricePerUnit === null ? null : Number(r.convertedUsdPricePerUnit);
+    const clientPrice = r.benchmarkItem.clientPrice === null ? null : Number(r.benchmarkItem.clientPrice);
     const flag = evaluatePriceFlag({
       usdPricePerUnit: usdPerUnit,
-      clientPrice: Number(r.benchmarkItem.clientPrice),
+      clientPrice,
       thresholdPct: Number(r.benchmarkItem.study.qcThresholdPct),
     });
     return {
@@ -367,7 +370,7 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
       country: r.benchmarkItem.country,
       clientPartNumber: r.benchmarkItem.clientPartNumber,
       itemDescription: r.benchmarkItem.itemDescription,
-      clientPrice: r.benchmarkItem.clientPrice.toString(),
+      clientPrice: r.benchmarkItem.clientPrice === null ? null : r.benchmarkItem.clientPrice.toString(),
       qcThresholdPct: r.benchmarkItem.study.qcThresholdPct.toString(),
       flag,
     };
@@ -408,7 +411,8 @@ export async function approveQuote(
   const flag = evaluatePriceFlag({
     usdPricePerUnit:
       quote.convertedUsdPricePerUnit === null ? null : Number(quote.convertedUsdPricePerUnit),
-    clientPrice: Number(quote.benchmarkItem.clientPrice),
+    clientPrice:
+      quote.benchmarkItem.clientPrice === null ? null : Number(quote.benchmarkItem.clientPrice),
     thresholdPct: Number(quote.benchmarkItem.study.qcThresholdPct),
   });
   const flagged = flag.comparable && flag.flagged;

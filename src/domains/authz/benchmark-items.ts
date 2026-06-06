@@ -26,3 +26,14 @@ export function canImportBenchmarkItems(principal: Principal): boolean {
 export function canSelfAssignBenchmarkItem(principal: Principal): boolean {
   return principal.kind === "internal" && principal.role === "Researcher";
 }
+
+// Maintaining a Benchmark Item's Client Price (issue #12) is an Analyst-only QC
+// act — narrower than import (EM+Analyst). The brief only *seeds* the value;
+// thereafter the Analyst, who runs quality checks and reads the resulting Price
+// Flag, owns it (ADR-0015). It is deliberately NOT given to the EM (who runs the
+// study) and never to a Researcher, from whom Client Price is hidden to avoid
+// biasing their quotes (ADR-0003). Role-gated, not tenant-filtered: the target
+// item is resolved through the tenant-scoped repository (ADR-0008).
+export function canMaintainClientPrice(principal: Principal): boolean {
+  return principal.kind === "internal" && principal.role === "Analyst";
+}
