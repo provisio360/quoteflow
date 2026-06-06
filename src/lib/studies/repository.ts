@@ -79,12 +79,16 @@ export interface CreateStudyInput {
   name: string;
   /** The Client (tenant) the study is for — an explicit choice (grilling Q5). */
   clientId: string;
+  /** The study's QC Threshold percentage (ADR-0014) — set at study setup; a
+   *  study without one is mis-configured. e.g. 25 = 25%. */
+  qcThresholdPct: number;
 }
 
 /**
  * Create a study for a chosen Client. Role-gated (EM or Analyst), NOT
  * tenant-filtered — internal staff have no tenant, so the target Client is an
- * explicit input. The creator is recorded as `createdById` for provenance.
+ * explicit input. The creator is recorded as `createdById` for provenance. The
+ * QC Threshold is captured here because flagging needs it from day one (ADR-0014).
  */
 export async function createStudy(
   principal: Principal,
@@ -98,6 +102,7 @@ export async function createStudy(
       name: input.name,
       clientId: input.clientId,
       createdById: principal.userId,
+      qcThresholdPct: input.qcThresholdPct,
     },
   });
 }

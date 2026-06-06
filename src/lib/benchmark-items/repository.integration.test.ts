@@ -42,7 +42,7 @@ beforeAll(async () => {
   });
   em = { kind: "internal", userId: emUserId, role: "EngagementManager" };
   clientUser = { kind: "client", userId: randomUUID(), tenantId: tenant };
-  studyId = (await createStudy(em, { name: "Import study", clientId: tenant })).id;
+  studyId = (await createStudy(em, { name: "Import study", clientId: tenant, qcThresholdPct: 25 })).id;
 });
 
 afterAll(async () => {

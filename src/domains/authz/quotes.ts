@@ -18,3 +18,14 @@ import type { Principal } from "./principal";
 export function canCreateQuote(principal: Principal): boolean {
   return principal.kind === "internal" && principal.role === "Researcher";
 }
+
+/**
+ * May this principal review Quotes — see the queue and approve/reject (and return
+ * for justification)? Analysts only: quality-checking and approving quotes is the
+ * Analyst's defining act (CONTEXT.md: Analyst). Not the EM (who runs the study),
+ * not the Admin (user-administration only), never a client user. The author's own
+ * `revise` is a separate owner-only check at the data layer, not a review role.
+ */
+export function canReviewQuote(principal: Principal): boolean {
+  return principal.kind === "internal" && principal.role === "Analyst";
+}

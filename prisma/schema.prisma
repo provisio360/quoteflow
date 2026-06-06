@@ -94,6 +94,7 @@ model User {
   assignmentsMade    CountryAssignment[] @relation("AssignedBy")
   itemsAsPrimary     BenchmarkItem[]     @relation("PrimaryResearcher")
   quotesCreated      Quote[]             @relation("QuoteCreatedBy")
+  quotesReviewed     Quote[]             @relation("QuoteReviewedBy")
 
   @@index([tenantId])
   @@map("user")
@@ -194,6 +195,11 @@ model Study {
   name        String
   clientId    String
   createdById String
+  // The study's QC Threshold (CONTEXT.md / ADR-0014): the percentage a Quote's
+  // USD price-per-unit may diverge from a Benchmark Item's Client Price before it
+  // is flagged. Required — a study without one is mis-configured — and set at
+  // study setup by the EM/Analyst. Stored as a percentage (e.g. 25.00 = 25%).
+  qcThresholdPct Decimal @db.Decimal(5, 2)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -366,14 +372,30 @@ model Quote {
   convertedUsdPricePerUnit Decimal?          @db.Decimal(14, 4)
   conversionStatus         ConversionStatus?
 
+  // Analyst review (#11 / ADR-0014). `submittedAt` stamps the Draft→Submitted
+  // transition for FIFO queue ordering (stable under the conversion worker's
+  // writes, unlike updatedAt); cleared on revise and re-stamped on resubmit.
+  // `rejectionReason` carries the analyst's reason back to the author and is
+  // cleared on resubmit. `reviewedById`/`reviewedAt` record the latest verdict's
+  // analyst and time (full history is the audit slice #16/#42), also cleared on
+  // resubmit. `justification` is the author's explanation for a flagged price; it
+  // PERSISTS across resubmit (the analyst must read it to approve).
+  submittedAt     DateTime?
+  rejectionReason String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  justification   String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   benchmarkItem BenchmarkItem @relation(fields: [benchmarkItemId], references: [id], onDelete: Cascade)
   createdBy     User          @relation("QuoteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewedBy    User?         @relation("QuoteReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
 
   @@unique([benchmarkItemId, quoteNumber])
   @@index([benchmarkItemId])
   @@index([createdById])
+  @@index([reviewedById])
   @@map("quote")
 }

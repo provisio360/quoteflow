@@ -63,7 +63,7 @@ beforeAll(async () => {
   });
   em = { kind: "internal", userId: emId, role: "EngagementManager" };
 
-  studyId = (await createStudy(em, { name: "Assignment study", clientId: tenantId })).id;
+  studyId = (await createStudy(em, { name: "Assignment study", clientId: tenantId, qcThresholdPct: 25 })).id;
 
   // A study's countries are defined by its Benchmark Items (ADR-0009). Seed one
   // item in Germany so that country is assignable.
