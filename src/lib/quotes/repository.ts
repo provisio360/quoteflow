@@ -215,10 +215,13 @@ export async function submitQuote(
   const result = transition(quote.state, "submit", submittable);
   if (!result.ok) return result;
 
-  // Persist under a guard so a concurrent submit applies exactly once.
+  // Persist under a guard so a concurrent submit applies exactly once. Conversion
+  // is NOT fetched here — submit only marks it pending, and the background sweep
+  // pins the rate once the quote's date has closed (ADR-0013). This preserves the
+  // invariant "null ⇔ Draft; once Submitted, always pending → auto/manual".
   await prisma.quote.updateMany({
     where: { id: quoteId, state: "Draft" },
-    data: { state: "Submitted" },
+    data: { state: "Submitted", conversionStatus: "pending" },
   });
   return result;
 }
