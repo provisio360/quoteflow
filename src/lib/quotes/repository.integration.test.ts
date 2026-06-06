@@ -153,12 +153,14 @@ describe("submitQuote — guarded one-way transition", () => {
     expect(row?.state).toBe("Draft");
   });
 
-  it("submits a complete Draft and persists Submitted", async () => {
+  it("submits a complete Draft, persisting Submitted and marking conversion pending", async () => {
     const { id } = await createDraftQuote(researcherA, itemId, complete);
     const result = await submitQuote(researcherA, id);
     expect(result).toEqual({ ok: true, state: "Submitted" });
     const row = await prisma.quote.findUnique({ where: { id } });
     expect(row?.state).toBe("Submitted");
+    // Conversion is deferred to the worker, so submit only queues it (ADR-0013).
+    expect(row?.conversionStatus).toBe("pending");
   });
 
   it("rejects re-submitting an already-Submitted quote as an illegal transition", async () => {
