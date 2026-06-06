@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 import { getCurrentPrincipal } from "./current-principal";
-import { isInternal, type InternalPrincipal } from "@/domains/authz/principal";
+import {
+  isInternal,
+  type InternalPrincipal,
+  type Principal,
+} from "@/domains/authz/principal";
 
 // Page-level auth guards for Server Components (issue #24). Distinct from the
 // *throwing* `require*` helpers in current-principal.ts (which suit server
@@ -17,6 +21,20 @@ import { isInternal, type InternalPrincipal } from "@/domains/authz/principal";
 export async function requireInternalPage(): Promise<InternalPrincipal> {
   const principal = await getCurrentPrincipal();
   if (principal === null || !isInternal(principal)) {
+    redirect("/login");
+  }
+  return principal;
+}
+
+/**
+ * Gate a page to any authenticated principal — internal staff OR a Client User.
+ * Unauthenticated redirects to /login. Used by the client-facing dashboards
+ * (#14), where the actual tenant scoping is enforced downstream by the read
+ * (a Client User only ever resolves their own tenant's data, ADR-0008).
+ */
+export async function requirePage(): Promise<Principal> {
+  const principal = await getCurrentPrincipal();
+  if (principal === null) {
     redirect("/login");
   }
   return principal;

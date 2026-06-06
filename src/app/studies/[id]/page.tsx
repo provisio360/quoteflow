@@ -7,7 +7,9 @@ import {
   canMaintainClientPrice,
 } from "@/domains/authz/benchmark-items";
 import { listBenchmarkItemsForAnalyst } from "@/lib/benchmark-items/repository";
+import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
 import { ClientPriceList } from "./ClientPriceList";
+import { BenchmarkComparison } from "./BenchmarkComparison";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, lineHeight: 1.5 } as const;
 
@@ -33,6 +35,10 @@ export default async function StudyDetailPage({
   const qcItems = canMaintainClientPrice(principal)
     ? await listBenchmarkItemsForAnalyst(principal, study.id)
     : null;
+  // View D (issue #14): the released competitor ranges set beside Client Price.
+  // Internal-only — every viewer of this page is internal staff (the guard), and
+  // the Client Price it carries is never exposed on the client dashboard.
+  const benchmark = await getStudyBenchmarkComparison(principal, study.id);
 
   return (
     <main style={wrap}>
@@ -54,7 +60,16 @@ export default async function StudyDetailPage({
         </p>
       )}
 
+      <p style={{ marginTop: "1.5rem" }}>
+        <Link href={`/studies/${study.id}/dashboard`} style={{ fontWeight: 600 }}>
+          View client dashboard →
+        </Link>{" "}
+        <span style={{ color: "#777" }}>(released results, as the client sees them)</span>
+      </p>
+
       {qcItems !== null && <ClientPriceList studyId={study.id} items={qcItems} />}
+
+      <BenchmarkComparison items={benchmark} />
     </main>
   );
 }

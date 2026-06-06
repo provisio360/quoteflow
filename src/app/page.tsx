@@ -1,8 +1,13 @@
+import Link from "next/link";
 import { getCurrentPrincipal } from "@/lib/identity/current-principal";
 import { logoutAction } from "@/lib/identity/actions";
+import { listStudies } from "@/lib/studies/repository";
 
 export default async function Home() {
   const principal = await getCurrentPrincipal();
+  // A Client User's own studies (tenant-scoped) — their entry to the dashboards.
+  const clientStudies =
+    principal?.kind === "client" ? await listStudies(principal) : [];
 
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", lineHeight: 1.5 }}>
@@ -22,6 +27,24 @@ export default async function Home() {
             <p>
               <a href="/studies">Studies</a> — pick a study to import a brief.
             </p>
+          )}
+          {principal.kind === "client" && (
+            <div>
+              <p style={{ marginBottom: "0.25rem" }}>Your dashboards:</p>
+              {clientStudies.length === 0 ? (
+                <p style={{ color: "#777" }}>No studies yet.</p>
+              ) : (
+                <ul style={{ listStyle: "none", padding: 0 }}>
+                  {clientStudies.map((s) => (
+                    <li key={s.id} style={{ padding: "0.3rem 0" }}>
+                      <Link href={`/studies/${s.id}/dashboard`} style={{ fontWeight: 600 }}>
+                        {s.name}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
           <form action={logoutAction}>
             <button type="submit" style={{ padding: "0.4rem 0.9rem" }}>
