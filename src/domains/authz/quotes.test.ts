@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canCreateQuote } from "./quotes";
+import { canCreateQuote, canReviewQuote } from "./quotes";
 import type { Principal } from "./principal";
 
 const researcher: Principal = { kind: "internal", userId: "u1", role: "Researcher" };
@@ -18,5 +18,18 @@ describe("canCreateQuote", () => {
     expect(canCreateQuote(em)).toBe(false);
     expect(canCreateQuote(admin)).toBe(false);
     expect(canCreateQuote(clientUser)).toBe(false);
+  });
+});
+
+describe("canReviewQuote", () => {
+  it("permits an Analyst (reviewing/approving quotes is the Analyst's act)", () => {
+    expect(canReviewQuote(analyst)).toBe(true);
+  });
+
+  it("denies every non-Analyst role and the client user", () => {
+    expect(canReviewQuote(researcher)).toBe(false);
+    expect(canReviewQuote(em)).toBe(false);
+    expect(canReviewQuote(admin)).toBe(false);
+    expect(canReviewQuote(clientUser)).toBe(false);
   });
 });

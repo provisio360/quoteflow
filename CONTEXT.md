@@ -13,7 +13,19 @@ The client's part to be price-benchmarked, defined once and carrying the client'
 _Avoid_: Target part, subject part, line item, SKU
 
 **Client Price**:
-The expected price-per-unit benchmark for a Benchmark Item, entered by the analyst. Used purely as an internal QC reference: the system flags competitor quotes whose USD price-per-unit falls above or below the expected range around it. Hidden from researchers (to avoid biasing the quotes they collect) and never shown to clients or included in client exports. Powers the internal analyst QC view, not any client-facing dashboard.
+The expected USD price-per-unit benchmark for a Benchmark Item, entered by the analyst. Used purely as an internal QC reference: a [[Quote]] whose USD price-per-unit differs from it by more than the study's [[QC Threshold]] is **flagged** (see [[Price Flag]]). Hidden from researchers (to avoid biasing the quotes they collect) and never shown to clients or included in client exports. Powers the internal analyst QC view, not any client-facing dashboard.
+
+**QC Threshold**:
+The per-[[Pricing Study]] percentage that defines how far a [[Quote]]'s USD price-per-unit may diverge from a Benchmark Item's [[Client Price]] before the quote is flagged for analyst attention. Defined by the [[Engagement Manager]] or [[Analyst]] as part of study setup (a required study attribute — a study without one is mis-configured). One threshold governs every item in the study; the difference measure itself is relative, so a single percentage works across cheap and expensive parts.
+_Avoid_: tolerance, variance limit
+
+**Price Flag**:
+The QC signal raised on a [[Quote]] whose USD price-per-unit diverges from its Benchmark Item's [[Client Price]] by more than the study's [[QC Threshold]]. Only computable once the quote is converted (an unconverted/pending quote is *not comparable*, never flagged). The flag is **advisory, not a hard block** — but approving a flagged quote requires the author's [[Justification]] first. The analyst sees the flag and its direction (higher/lower than expected); the researcher never does (the [[Client Price]] is hidden from them, ADR-0003).
+_Avoid_: alert, warning, exception
+
+**Justification**:
+The author-supplied explanation that a flagged [[Quote]]'s price is genuinely correct despite diverging from the [[Client Price]]. Required before a flagged quote can be approved, and gathered only by returning the quote to its author (who is told the direction of the divergence, never the benchmark value). Distinct from the quote's free-text **notes**: a justification specifically answers a [[Price Flag]]. Persists on the quote across resubmission (unlike a rejection reason, which is cleared on resubmit).
+_Avoid_: explanation, comment, reason
 
 **Quote**:
 One competitive data point collected from a single distributor/dealer against a Benchmark Item — competitor brand, dealer, location, price (with currency conversion), stock status, lead time, warranty, discounts, and notes. Many Quotes per Benchmark Item, distinguished by quote number. A Quote's **Price** is always the dealer's final quoted price in the local currency — discount-inclusive when the dealer states a discount was applied (not all quotes have one).
@@ -48,7 +60,7 @@ An Admin's single-use, expiring offer to create one account for a specific email
 _Avoid_: Signup, registration, activation link
 
 **Quote Number**:
-A per-Benchmark-Item reference label for a Quote, auto-assigned in sequence. Stable and never reused — an abandoned or rejected quote leaves a permanent gap rather than renumbering, so "Item 12, Quote 3" always means the same quote. It is a display label, not the quote's internal identity.
+A per-Benchmark-Item reference label for a Quote, auto-assigned in sequence. Stable and never reused, so "Item 12, Quote 3" always means the same quote. A number is retained by its quote for life — a [[Rejected]] quote keeps its number through revision and resubmission rather than being renumbered. Only an **abandoned** (hard-deleted) [[Draft]] leaves a permanent gap. It is a display label, not the quote's internal identity.
 
 **Country**:
 The geographic focus of a Benchmark Item's pricing and the unit of client release.
@@ -79,7 +91,7 @@ The local-currency-to-USD rate applied to a Quote's price. Auto-fetched as the h
 System-computed values on a Quote: the local price converted to USD, and that figure divided by quantity quoted. Always derived, never hand-entered. USD is currently the fixed conversion target.
 
 **Conversion Status**:
-Where a Quote stands in pinning its [[Exchange Rate]]. A Quote is *unconverted* (null) only while it is a [[Draft]]; conversion is never attempted on a Draft. The moment a Quote is [[Submitted]] it becomes **pending** — conversion is **deferred by default** to a background worker, not fetched at submit (the historical rate for the quote's date may not even be published until that date has closed). So `pending` means "no USD figures yet, awaiting the worker," covering both the not-yet-attempted case and the attempted-but-unresolved cases (provider unreachable, no rate within the look-back window, or a currency the provider doesn't cover awaiting a manual rate). While pending, the analyst's approval is blocked. The worker resolves pending to **auto** (a provider rate was found and pinned) or it stays pending until a later run succeeds or an analyst supplies a **manual** rate (a currency the provider doesn't cover). `auto` and `manual` both carry pinned USD figures; the distinction is provenance, and a `manual` rate is sticky — the background worker never overwrites it. Invariant: **null ⇔ Draft; once Submitted, always pending → auto/manual**.
+Where a Quote stands in pinning its [[Exchange Rate]]. A Quote is *unconverted* (null) only while it is a [[Draft]]; conversion is never attempted on a Draft. The moment a Quote is [[Submitted]] it becomes **pending** — conversion is **deferred by default** to a background worker, not fetched at submit (the historical rate for the quote's date may not even be published until that date has closed). So `pending` means "no USD figures yet, awaiting the worker," covering both the not-yet-attempted case and the attempted-but-unresolved cases (provider unreachable, no rate within the look-back window, or a currency the provider doesn't cover awaiting a manual rate). While pending, the analyst's approval is blocked. The worker resolves pending to **auto** (a provider rate was found and pinned) or it stays pending until a later run succeeds or an analyst supplies a **manual** rate (a currency the provider doesn't cover). `auto` and `manual` both carry pinned USD figures; the distinction is provenance, and a `manual` rate is sticky — the background worker never overwrites it. Invariant: **null ⇔ Draft; once Submitted, always pending → auto/manual**. The [[Quote Lifecycle]]'s revise loop preserves this: sending a Rejected quote back to Draft returns its status to null, and a later resubmit makes it pending again (re-converted from scratch, since its date may have changed).
 _Avoid_: converted/not-converted (loses the pending and provenance distinctions); "fetched at submit" (conversion is deferred to the worker)
 
 **Draft**:
@@ -87,13 +99,18 @@ The state a Quote starts in: a researcher's in-progress working copy, saveable w
 _Avoid_: Incomplete, pending, unsaved
 
 **Quote Lifecycle**:
-The states a [[Quote]] moves through — **Draft → Submitted → Approved / Rejected** — modeled as a single state machine. Only the move a researcher makes, Draft → Submitted, exists in v1's first quote slice; the analyst verdicts (Approved/Rejected) are the same machine's later transitions. Every legal move is defined in one place; an undefined move (e.g. editing an approved quote) is rejected, not silently allowed.
+The states a [[Quote]] moves through — **Draft → Submitted → Approved / Rejected**, with a **Rejected → Draft** revise loop — modeled as a single state machine. The researcher's move (Draft → Submitted) is v1's first quote slice; the analyst verdicts and the revise loop are the same machine's later transitions:
+- **approve** (Submitted → Approved): blocked while the Quote's [[Conversion Status]] is pending (no Quote is approved without a real USD figure), and — if the Quote is flagged (see [[Price Flag]]) — blocked until its author has supplied a [[Justification]].
+- **reject** (Submitted → Rejected): requires a reason. The same edge also carries the analyst's act of returning a flagged Quote to its author **for justification** — the reason states only the direction ("higher/lower than expected"), never the [[Client Price]] value (ADR-0003).
+- **revise** (Rejected → Draft): the **only** way out of Rejected, performed by the quote's author. The revised quote is a Draft again — therefore unconverted — and re-enters the normal Draft → Submitted path keeping its [[Quote Number]].
+
+Every legal move is defined in one place; an undefined move (e.g. editing an Approved quote, or approving a Draft) is rejected, not silently allowed.
 
 **Submitted**:
 A Quote a researcher has marked done and sent to the analyst's review queue. Internal-only — "submitted" never means client-visible. The transition out of [[Draft]] is gated: a Quote can only become Submitted once all required-to-submit fields are present.
 
 **Approved / Rejected**:
-An analyst's per-quote verdict. Approved quotes await Country release; rejected quotes return to the same researcher with a reason. The review back-and-forth is never visible to the client.
+An [[Analyst]]'s per-quote verdict. Approved quotes await Country release. A rejected quote returns to its **author** — the [[Researcher]] who created it (`createdById`), not necessarily the item's [[Primary Researcher]] — carrying the rejection reason. The author may then **revise** it (back to [[Draft]], same [[Quote Number]]) and resubmit; only the latest rejection reason is retained. The review back-and-forth is never visible to the client.
 
 **Competitor**:
 The rival company and brand whose equivalent part is being priced against the client's Benchmark Item.

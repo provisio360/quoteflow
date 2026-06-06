@@ -64,7 +64,7 @@ beforeAll(async () => {
   });
   em = { kind: "internal", userId: emId, role: "EngagementManager" };
 
-  studyId = (await createStudy(em, { name: "Researcher view study", clientId: tenantId })).id;
+  studyId = (await createStudy(em, { name: "Researcher view study", clientId: tenantId, qcThresholdPct: 25 })).id;
 
   germanyItemId = (
     await prisma.benchmarkItem.create({

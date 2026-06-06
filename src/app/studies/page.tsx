@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireInternalPage } from "@/lib/identity/page-guards";
+import { canReviewQuote } from "@/domains/authz/quotes";
 import { listStudies } from "@/lib/studies/repository";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, lineHeight: 1.5 } as const;
@@ -14,6 +15,11 @@ export default async function StudiesPage() {
 
   return (
     <main style={wrap}>
+      {canReviewQuote(principal) && (
+        <p style={{ marginTop: 0 }}>
+          <Link href="/review">→ Review queue</Link>
+        </p>
+      )}
       <h1>Studies</h1>
       {studies.length === 0 ? (
         <p>No studies yet.</p>

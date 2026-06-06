@@ -1,12 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import type { Principal } from "@/domains/authz/principal";
 import { isInternal } from "@/domains/authz/principal";
-import { canCreateQuote } from "@/domains/authz/quotes";
+import { canCreateQuote, canReviewQuote } from "@/domains/authz/quotes";
 import {
   transition,
   type SubmittableQuote,
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
+import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
 
 // Tenant-aware data-access adapter for the Quote lifecycle (issue #8). It owns
 // the gates the pure core can't: the Researcher role (canCreateQuote), the
@@ -41,6 +42,9 @@ export interface QuoteFields {
   readonly discount?: string | null;
   readonly notes?: string | null;
   readonly dateQuoteReceived?: Date | null;
+  /** The author's explanation for a flagged price (ADR-0014). Editable while the
+   *  quote is a Draft (typically added during a revise after a flag-rejection). */
+  readonly justification?: string | null;
 }
 
 /** A Quote as a pool member may read it (issue #8 read AC). Client Price is not a
@@ -212,16 +216,28 @@ export async function submitQuote(
     dateQuoteReceived: quote.dateQuoteReceived,
   };
 
-  const result = transition(quote.state, "submit", submittable);
+  const result = transition(quote.state, { kind: "submit", quote: submittable });
   if (!result.ok) return result;
 
   // Persist under a guard so a concurrent submit applies exactly once. Conversion
   // is NOT fetched here — submit only marks it pending, and the background sweep
   // pins the rate once the quote's date has closed (ADR-0013). This preserves the
   // invariant "null ⇔ Draft; once Submitted, always pending → auto/manual".
+  //
+  // `submittedAt` stamps FIFO queue position (#11). On a RESUBMIT (after revise)
+  // this also clears the prior verdict — reason/reviewer/time — so a re-queued
+  // quote carries no stale verdict; the author's `justification` is deliberately
+  // left intact (the analyst must read it to approve a still-flagged quote).
   await prisma.quote.updateMany({
     where: { id: quoteId, state: "Draft" },
-    data: { state: "Submitted", conversionStatus: "pending" },
+    data: {
+      state: "Submitted",
+      conversionStatus: "pending",
+      submittedAt: new Date(),
+      rejectionReason: null,
+      reviewedById: null,
+      reviewedAt: null,
+    },
   });
   return result;
 }
@@ -248,6 +264,243 @@ export async function listQuotesForItem(
     orderBy: { quoteNumber: "asc" },
   });
   return rows.map((r) => ({ ...r, price: r.price === null ? null : r.price.toString() }));
+}
+
+/** One row of the analyst review queue (#11): the Quote plus the Benchmark Item
+ *  context and the computed QC flag the analyst needs to render a verdict. The
+ *  Client Price is shown to the analyst (never to researchers; ADR-0003), so it
+ *  is safe to surface here behind the Analyst-only gate. */
+export interface ReviewQueueItem {
+  readonly id: string;
+  readonly quoteNumber: number;
+  readonly competitorBrand: string | null;
+  readonly dealerName: string | null;
+  readonly dealerLocation: string | null;
+  readonly price: string | null;
+  readonly currency: string | null;
+  readonly quantityQuoted: number | null;
+  readonly convertedUsdPrice: string | null;
+  readonly convertedUsdPricePerUnit: string | null;
+  readonly conversionStatus: "pending" | "auto" | "manual" | null;
+  readonly justification: string | null;
+  readonly submittedAt: Date | null;
+  readonly authorName: string;
+  // Benchmark Item / study context:
+  readonly studyName: string;
+  readonly clientName: string;
+  readonly country: string;
+  readonly clientPartNumber: string;
+  readonly itemDescription: string;
+  readonly clientPrice: string;
+  readonly qcThresholdPct: string;
+  /** The QC out-of-range evaluation (ADR-0014); `comparable: false` while pending. */
+  readonly flag: PriceFlagResult;
+}
+
+/**
+ * The analyst review queue: every Submitted Quote across all studies and tenants
+ * (analysts are not tenant-scoped — CONTEXT.md: Analyst), oldest-submitted first
+ * so nothing starves (FIFO by `submittedAt`). Analyst-only. Each row carries the
+ * computed QC flag (ADR-0014): a pending quote is `comparable: false` (no USD
+ * figure yet), an `auto`/`manual` quote is compared against its item's Client
+ * Price using the study's QC Threshold.
+ */
+export async function listReviewQueue(principal: Principal): Promise<ReviewQueueItem[]> {
+  if (!canReviewQuote(principal)) {
+    throw new QuoteAccessError("Only Analysts may review quotes");
+  }
+  const rows = await prisma.quote.findMany({
+    where: { state: "Submitted" },
+    orderBy: { submittedAt: "asc" },
+    select: {
+      id: true,
+      quoteNumber: true,
+      competitorBrand: true,
+      dealerName: true,
+      dealerLocation: true,
+      price: true,
+      currency: true,
+      quantityQuoted: true,
+      convertedUsdPrice: true,
+      convertedUsdPricePerUnit: true,
+      conversionStatus: true,
+      justification: true,
+      submittedAt: true,
+      createdBy: { select: { name: true } },
+      benchmarkItem: {
+        select: {
+          country: true,
+          clientPartNumber: true,
+          itemDescription: true,
+          clientPrice: true,
+          study: { select: { name: true, qcThresholdPct: true, client: { select: { name: true } } } },
+        },
+      },
+    },
+  });
+
+  return rows.map((r) => {
+    const usdPerUnit = r.convertedUsdPricePerUnit === null ? null : Number(r.convertedUsdPricePerUnit);
+    const flag = evaluatePriceFlag({
+      usdPricePerUnit: usdPerUnit,
+      clientPrice: Number(r.benchmarkItem.clientPrice),
+      thresholdPct: Number(r.benchmarkItem.study.qcThresholdPct),
+    });
+    return {
+      id: r.id,
+      quoteNumber: r.quoteNumber,
+      competitorBrand: r.competitorBrand,
+      dealerName: r.dealerName,
+      dealerLocation: r.dealerLocation,
+      price: r.price === null ? null : r.price.toString(),
+      currency: r.currency,
+      quantityQuoted: r.quantityQuoted,
+      convertedUsdPrice: r.convertedUsdPrice === null ? null : r.convertedUsdPrice.toString(),
+      convertedUsdPricePerUnit:
+        r.convertedUsdPricePerUnit === null ? null : r.convertedUsdPricePerUnit.toString(),
+      conversionStatus: r.conversionStatus,
+      justification: r.justification,
+      submittedAt: r.submittedAt,
+      authorName: r.createdBy.name,
+      studyName: r.benchmarkItem.study.name,
+      clientName: r.benchmarkItem.study.client.name,
+      country: r.benchmarkItem.country,
+      clientPartNumber: r.benchmarkItem.clientPartNumber,
+      itemDescription: r.benchmarkItem.itemDescription,
+      clientPrice: r.benchmarkItem.clientPrice.toString(),
+      qcThresholdPct: r.benchmarkItem.study.qcThresholdPct.toString(),
+      flag,
+    };
+  });
+}
+
+/**
+ * Approve a Submitted Quote (Analyst verdict). The approve guard is the pure
+ * core's (`transition`): blocked while conversion is `pending` (ADR-0013), and —
+ * if the quote is flagged against its Client Price — blocked until the author has
+ * supplied a Justification (ADR-0014). On success, the verdict and its analyst/
+ * time are pinned under a `state = Submitted` guard so a concurrent verdict can't
+ * double-apply.
+ */
+export async function approveQuote(
+  principal: Principal,
+  quoteId: string,
+): Promise<TransitionResult> {
+  if (!canReviewQuote(principal)) {
+    throw new QuoteAccessError("Only Analysts may review quotes");
+  }
+  const quote = await prisma.quote.findUnique({
+    where: { id: quoteId },
+    select: {
+      state: true,
+      conversionStatus: true,
+      convertedUsdPricePerUnit: true,
+      justification: true,
+      benchmarkItem: {
+        select: { clientPrice: true, study: { select: { qcThresholdPct: true } } },
+      },
+    },
+  });
+  if (quote === null) {
+    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+  }
+
+  const flag = evaluatePriceFlag({
+    usdPricePerUnit:
+      quote.convertedUsdPricePerUnit === null ? null : Number(quote.convertedUsdPricePerUnit),
+    clientPrice: Number(quote.benchmarkItem.clientPrice),
+    thresholdPct: Number(quote.benchmarkItem.study.qcThresholdPct),
+  });
+  const flagged = flag.comparable && flag.flagged;
+  const hasJustification = quote.justification !== null && quote.justification.trim() !== "";
+
+  const result = transition(quote.state, {
+    kind: "approve",
+    conversionStatus: quote.conversionStatus,
+    flagged,
+    hasJustification,
+  });
+  if (!result.ok) return result;
+
+  await prisma.quote.updateMany({
+    where: { id: quoteId, state: "Submitted" },
+    data: { state: "Approved", reviewedById: principal.userId, reviewedAt: new Date() },
+  });
+  return result;
+}
+
+/**
+ * Reject a Submitted Quote with a reason (Analyst verdict). Also the vehicle for
+ * "return for justification": the reason states the divergence direction, never
+ * the Client Price value (ADR-0003). The reason is required (the pure core's
+ * `missing-reason` guard). On success the quote returns to its author as Rejected
+ * under a `state = Submitted` guard.
+ */
+export async function rejectQuote(
+  principal: Principal,
+  quoteId: string,
+  reason: string,
+): Promise<TransitionResult> {
+  if (!canReviewQuote(principal)) {
+    throw new QuoteAccessError("Only Analysts may review quotes");
+  }
+  const quote = await prisma.quote.findUnique({
+    where: { id: quoteId },
+    select: { state: true },
+  });
+  if (quote === null) {
+    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+  }
+
+  const result = transition(quote.state, { kind: "reject", reason });
+  if (!result.ok) return result;
+
+  await prisma.quote.updateMany({
+    where: { id: quoteId, state: "Submitted" },
+    data: {
+      state: "Rejected",
+      rejectionReason: reason,
+      reviewedById: principal.userId,
+      reviewedAt: new Date(),
+    },
+  });
+  return result;
+}
+
+/**
+ * Revise a Rejected Quote back to Draft (the author's return path; ADR-0014). The
+ * ONLY way out of Rejected. Owner-only — only the author may revise their own
+ * quote. Resets conversion to unconverted (null) and clears the FIFO stamp, so a
+ * later resubmit re-converts from scratch and re-queues at the back; the Quote
+ * Number is retained. The rejection reason is left visible while the author works
+ * the Draft (it is cleared on resubmit, in submitQuote).
+ */
+export async function reviseQuote(
+  principal: Principal,
+  quoteId: string,
+): Promise<TransitionResult> {
+  if (!isInternal(principal)) {
+    throw new QuoteAccessError("Internal staff only");
+  }
+  const quote = await prisma.quote.findUnique({
+    where: { id: quoteId },
+    select: { createdById: true, state: true },
+  });
+  if (quote === null) {
+    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+  }
+  if (quote.createdById !== principal.userId) {
+    throw new QuoteAccessError("Only the author may revise their Quote");
+  }
+
+  const result = transition(quote.state, { kind: "revise" });
+  if (!result.ok) return result;
+
+  await prisma.quote.updateMany({
+    where: { id: quoteId, state: "Rejected", createdById: principal.userId },
+    data: { state: "Draft", conversionStatus: null, submittedAt: null },
+  });
+  return result;
 }
 
 /** Load a Quote and assert the caller owns it and it is still a Draft. The single

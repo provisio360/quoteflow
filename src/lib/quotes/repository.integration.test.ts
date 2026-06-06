@@ -7,6 +7,10 @@ import {
   deleteDraftQuote,
   submitQuote,
   listQuotesForItem,
+  listReviewQueue,
+  approveQuote,
+  rejectQuote,
+  reviseQuote,
   QuoteAccessError,
   type QuoteFields,
 } from "./repository";
@@ -30,6 +34,31 @@ let itemId: string;
 let researcherA: InternalPrincipal; // in Germany pool
 let researcherB: InternalPrincipal; // in Germany pool
 let researcherC: InternalPrincipal; // NOT in Germany pool
+let analyst: InternalPrincipal; // reviews the queue
+
+// Drive a Quote to Submitted-and-converted, simulating the deferred worker
+// (ADR-0013) by pinning USD figures directly. `usdPerUnit` controls the QC flag
+// against the item's Client Price (123.45) under the study's 25% threshold.
+async function submittedConverted(
+  researcher: InternalPrincipal,
+  usdPerUnit: number,
+  justification?: string,
+): Promise<string> {
+  const { id } = await createDraftQuote(researcher, itemId, complete);
+  await submitQuote(researcher, id);
+  await prisma.quote.update({
+    where: { id },
+    data: {
+      conversionStatus: "auto",
+      exchangeRate: "1.00000000",
+      rateDate: new Date("2026-06-01"),
+      convertedUsdPrice: usdPerUnit.toFixed(4),
+      convertedUsdPricePerUnit: usdPerUnit.toFixed(4),
+      ...(justification === undefined ? {} : { justification }),
+    },
+  });
+  return id;
+}
 
 // Every required-to-submit field present.
 const complete: QuoteFields = {
@@ -76,7 +105,7 @@ beforeAll(async () => {
   });
   em = { kind: "internal", userId: emId, role: "EngagementManager" };
 
-  studyId = (await createStudy(em, { name: "Quote study", clientId: tenantId })).id;
+  studyId = (await createStudy(em, { name: "Quote study", clientId: tenantId, qcThresholdPct: 25 })).id;
 
   itemId = (
     await prisma.benchmarkItem.create({
@@ -97,6 +126,20 @@ beforeAll(async () => {
   researcherB = await seedResearcher("Researcher B");
   researcherC = await seedResearcher("Researcher C");
   await assignResearchers(em, studyId, "Germany", [researcherA.userId, researcherB.userId]);
+
+  const analystId = randomUUID();
+  await prisma.user.create({
+    data: {
+      id: analystId,
+      name: "Analyst (quote test)",
+      email: `analyst-${analystId}@example.test`,
+      emailVerified: true,
+      kind: "internal",
+      role: "Analyst",
+      status: "active",
+    },
+  });
+  analyst = { kind: "internal", userId: analystId, role: "Analyst" };
 });
 
 afterAll(async () => {
@@ -105,7 +148,11 @@ afterAll(async () => {
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   await prisma.study.deleteMany({ where: { clientId: tenantId } });
   await prisma.user.deleteMany({
-    where: { id: { in: [em.userId, researcherA.userId, researcherB.userId, researcherC.userId] } },
+    where: {
+      id: {
+        in: [em.userId, researcherA.userId, researcherB.userId, researcherC.userId, analyst.userId],
+      },
+    },
   });
   await prisma.client.deleteMany({ where: { id: tenantId } });
   await prisma.$disconnect();
@@ -208,5 +255,153 @@ describe("listQuotesForItem — Draft privacy (ADR-0011)", () => {
   it("denies a client user (this read path is internal-only)", async () => {
     const clientUser = { kind: "client", userId: randomUUID(), tenantId } as const;
     await expect(listQuotesForItem(clientUser, itemId)).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+});
+
+describe("listReviewQueue — analyst-only, FIFO, with the QC flag (ADR-0014)", () => {
+  it("denies non-analysts (only the Analyst reviews quotes)", async () => {
+    await expect(listReviewQueue(researcherA)).rejects.toBeInstanceOf(QuoteAccessError);
+    await expect(listReviewQueue(em)).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+
+  it("computes no flag for a converted quote within threshold of the Client Price", async () => {
+    const id = await submittedConverted(researcherA, 123.45); // == clientPrice
+    const row = (await listReviewQueue(analyst)).find((q) => q.id === id);
+    expect(row?.flag).toEqual({ comparable: true, flagged: false, direction: "equal", percentDiff: 0 });
+  });
+
+  it("flags a converted quote that diverges beyond the threshold, with direction", async () => {
+    const id = await submittedConverted(researcherA, 400); // far above 123.45 @ 25%
+    const row = (await listReviewQueue(analyst)).find((q) => q.id === id);
+    expect(row?.flag.comparable).toBe(true);
+    if (row?.flag.comparable) {
+      expect(row.flag.flagged).toBe(true);
+      expect(row.flag.direction).toBe("above");
+    }
+  });
+
+  it("marks a still-pending quote not comparable (no USD figure yet)", async () => {
+    const { id } = await createDraftQuote(researcherA, itemId, complete);
+    await submitQuote(researcherA, id); // Submitted, conversion pending
+    const row = (await listReviewQueue(analyst)).find((q) => q.id === id);
+    expect(row?.flag).toEqual({ comparable: false });
+  });
+
+  it("orders the queue oldest-submitted first (FIFO)", async () => {
+    const older = await submittedConverted(researcherA, 123.45);
+    const newer = await submittedConverted(researcherA, 123.45);
+    // Pin distinct submission times regardless of clock resolution.
+    await prisma.quote.update({ where: { id: older }, data: { submittedAt: new Date("2026-06-01T00:00:00Z") } });
+    await prisma.quote.update({ where: { id: newer }, data: { submittedAt: new Date("2026-06-02T00:00:00Z") } });
+    const ids = (await listReviewQueue(analyst)).map((q) => q.id);
+    expect(ids.indexOf(older)).toBeLessThan(ids.indexOf(newer));
+  });
+});
+
+describe("approveQuote — conversion + justification gates (ADR-0013/0014)", () => {
+  it("blocks approval while conversion is pending, leaving the quote Submitted", async () => {
+    const { id } = await createDraftQuote(researcherA, itemId, complete);
+    await submitQuote(researcherA, id);
+    expect(await approveQuote(analyst, id)).toEqual({ ok: false, reason: "conversion-pending" });
+    expect((await prisma.quote.findUnique({ where: { id } }))?.state).toBe("Submitted");
+  });
+
+  it("approves a converted, unflagged quote, pinning the reviewer", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    expect(await approveQuote(analyst, id)).toEqual({ ok: true, state: "Approved" });
+    const row = await prisma.quote.findUnique({ where: { id } });
+    expect(row?.state).toBe("Approved");
+    expect(row?.reviewedById).toBe(analyst.userId);
+    expect(row?.reviewedAt).not.toBeNull();
+  });
+
+  it("blocks approval of a flagged quote with no justification", async () => {
+    const id = await submittedConverted(researcherA, 400); // flagged
+    expect(await approveQuote(analyst, id)).toEqual({ ok: false, reason: "needs-justification" });
+    expect((await prisma.quote.findUnique({ where: { id } }))?.state).toBe("Submitted");
+  });
+
+  it("approves a flagged quote once the author has justified it", async () => {
+    const id = await submittedConverted(researcherA, 400, "Premium OEM dealer, price confirmed");
+    expect(await approveQuote(analyst, id)).toEqual({ ok: true, state: "Approved" });
+  });
+
+  it("denies a non-analyst", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    await expect(approveQuote(researcherA, id)).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+});
+
+describe("rejectQuote — verdict returns to the author with a reason", () => {
+  it("rejects a quote with a reason, pinning the verdict", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    expect(await rejectQuote(analyst, id, "Dealer location missing")).toEqual({
+      ok: true,
+      state: "Rejected",
+    });
+    const row = await prisma.quote.findUnique({ where: { id } });
+    expect(row?.state).toBe("Rejected");
+    expect(row?.rejectionReason).toBe("Dealer location missing");
+    expect(row?.reviewedById).toBe(analyst.userId);
+  });
+
+  it("can reject a still-pending quote (rejection is not gated by conversion)", async () => {
+    const { id } = await createDraftQuote(researcherA, itemId, complete);
+    await submitQuote(researcherA, id);
+    expect(await rejectQuote(analyst, id, "Obvious junk")).toEqual({ ok: true, state: "Rejected" });
+  });
+
+  it("blocks rejection with a blank reason", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    expect(await rejectQuote(analyst, id, "   ")).toEqual({ ok: false, reason: "missing-reason" });
+    expect((await prisma.quote.findUnique({ where: { id } }))?.state).toBe("Submitted");
+  });
+
+  it("denies a non-analyst", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    await expect(rejectQuote(researcherA, id, "no")).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+});
+
+describe("reviseQuote — author returns a Rejected quote to Draft (ADR-0014)", () => {
+  it("returns to Draft, resets conversion and FIFO stamp, keeps the Quote Number", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    const before = await prisma.quote.findUnique({ where: { id } });
+    await rejectQuote(analyst, id, "Please re-check the dealer");
+    expect(await reviseQuote(researcherA, id)).toEqual({ ok: true, state: "Draft" });
+    const row = await prisma.quote.findUnique({ where: { id } });
+    expect(row?.state).toBe("Draft");
+    expect(row?.conversionStatus).toBeNull();
+    expect(row?.submittedAt).toBeNull();
+    expect(row?.quoteNumber).toBe(before?.quoteNumber); // number retained
+  });
+
+  it("only the author may revise their own quote", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    await rejectQuote(analyst, id, "redo");
+    await expect(reviseQuote(researcherB, id)).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+
+  it("cannot revise a quote that is not Rejected", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    expect(await reviseQuote(researcherA, id)).toEqual({ ok: false, reason: "illegal-transition" });
+  });
+});
+
+describe("resubmit after revise clears the verdict but keeps the justification", () => {
+  it("re-queues with a fresh stamp, no stale verdict, justification intact", async () => {
+    const id = await submittedConverted(researcherA, 400); // flagged
+    await rejectQuote(analyst, id, "Price higher than expected — please justify");
+    await reviseQuote(researcherA, id);
+    await updateDraftQuote(researcherA, id, { justification: "Sole regional distributor" });
+    expect(await submitQuote(researcherA, id)).toEqual({ ok: true, state: "Submitted" });
+
+    const row = await prisma.quote.findUnique({ where: { id } });
+    expect(row?.state).toBe("Submitted");
+    expect(row?.rejectionReason).toBeNull();
+    expect(row?.reviewedById).toBeNull();
+    expect(row?.reviewedAt).toBeNull();
+    expect(row?.submittedAt).not.toBeNull();
+    expect(row?.justification).toBe("Sole regional distributor"); // persists
   });
 });

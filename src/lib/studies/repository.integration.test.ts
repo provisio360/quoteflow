@@ -54,8 +54,8 @@ beforeAll(async () => {
   clientB = { kind: "client", userId: randomUUID(), tenantId: tenantB };
 
   // Seed one study per tenant *through the repository* (also exercises create).
-  studyA = (await createStudy(em, { name: "Study A", clientId: tenantA })).id;
-  studyB = (await createStudy(em, { name: "Study B", clientId: tenantB })).id;
+  studyA = (await createStudy(em, { name: "Study A", clientId: tenantA, qcThresholdPct: 25 })).id;
+  studyB = (await createStudy(em, { name: "Study B", clientId: tenantB, qcThresholdPct: 25 })).id;
 });
 
 afterAll(async () => {
@@ -110,7 +110,7 @@ describe("shell read projection (issue #24)", () => {
 describe("creation authorization", () => {
   it("a client user cannot create a study", async () => {
     await expect(
-      createStudy(clientA, { name: "Nope", clientId: tenantA }),
+      createStudy(clientA, { name: "Nope", clientId: tenantA, qcThresholdPct: 25 }),
     ).rejects.toBeInstanceOf(StudyAccessError);
   });
 
@@ -123,8 +123,10 @@ describe("creation authorization", () => {
     const created = await createStudy(analyst, {
       name: "Analyst study",
       clientId: tenantA,
+      qcThresholdPct: 30,
     });
     expect(created.clientId).toBe(tenantA);
     expect(created.createdById).toBe(emUserId);
+    expect(Number(created.qcThresholdPct)).toBe(30);
   });
 });
