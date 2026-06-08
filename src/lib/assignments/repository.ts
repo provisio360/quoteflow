@@ -4,6 +4,8 @@ import type { Principal } from "@/domains/authz/principal";
 import { isInternal } from "@/domains/authz/principal";
 import { canAssignResearchers } from "@/domains/authz/assignments";
 import { getStudy } from "@/lib/studies/repository";
+import { recordAuditEvents } from "@/lib/audit/repository";
+import { auditAssign } from "@/domains/audit/events";
 
 // Tenant-aware data-access adapter for Country assignment (issue #6). The ONLY
 // sanctioned write/read path. The write role-gates the principal (EM-only —
@@ -77,15 +79,42 @@ export async function assignResearchers(
     );
   }
 
-  // Additive upsert on the unique key — re-assigning is a no-op (#6 never removes).
-  await prisma.countryAssignment.createMany({
-    data: ids.map((researcherId) => ({
-      studyId,
-      country,
-      researcherId,
-      assignedById: principal.userId,
-    })),
-    skipDuplicates: true,
+  await prisma.$transaction(async (tx) => {
+    // Which of the requested researchers are NOT already on the country: only
+    // these are genuinely new assignments, and only they are audited (ADR-0019:
+    // one event per real change — an idempotent re-assign records nothing).
+    const already = await tx.countryAssignment.findMany({
+      where: { studyId, country, researcherId: { in: ids } },
+      select: { researcherId: true },
+    });
+    const alreadyAssigned = new Set(already.map((a) => a.researcherId));
+    const newIds = ids.filter((id) => !alreadyAssigned.has(id));
+
+    // Additive upsert on the unique key — re-assigning is a no-op (#6 never
+    // removes); skipDuplicates also guards a concurrent assign of the same pair.
+    await tx.countryAssignment.createMany({
+      data: ids.map((researcherId) => ({
+        studyId,
+        country,
+        researcherId,
+        assignedById: principal.userId,
+      })),
+      skipDuplicates: true,
+    });
+
+    if (newIds.length > 0) {
+      // Resolve the just-created rows' ids to use as the audit subject.
+      const created = await tx.countryAssignment.findMany({
+        where: { studyId, country, researcherId: { in: newIds } },
+        select: { id: true },
+      });
+      await recordAuditEvents(
+        tx,
+        created.map((a) =>
+          auditAssign({ actorId: principal.userId, studyId, assignmentId: a.id }),
+        ),
+      );
+    }
   });
 
   return { assigned: ids.length };

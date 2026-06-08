@@ -8,6 +8,8 @@ import {
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
 import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
+import { recordAuditEvents } from "@/lib/audit/repository";
+import { auditQuoteLifecycle } from "@/domains/audit/events";
 
 // Tenant-aware data-access adapter for the Quote lifecycle (issue #8). It owns
 // the gates the pure core can't: the Researcher role (canCreateQuote), the
@@ -197,6 +199,7 @@ export async function submitQuote(
       currency: true,
       quantityQuoted: true,
       dateQuoteReceived: true,
+      benchmarkItem: { select: { studyId: true } },
     },
   });
   if (quote === null) {
@@ -228,16 +231,30 @@ export async function submitQuote(
   // this also clears the prior verdict — reason/reviewer/time — so a re-queued
   // quote carries no stale verdict; the author's `justification` is deliberately
   // left intact (the analyst must read it to approve a still-flagged quote).
-  await prisma.quote.updateMany({
-    where: { id: quoteId, state: "Draft" },
-    data: {
-      state: "Submitted",
-      conversionStatus: "pending",
-      submittedAt: new Date(),
-      rejectionReason: null,
-      reviewedById: null,
-      reviewedAt: null,
-    },
+  await prisma.$transaction(async (tx) => {
+    const applied = await tx.quote.updateMany({
+      where: { id: quoteId, state: "Draft" },
+      data: {
+        state: "Submitted",
+        conversionStatus: "pending",
+        submittedAt: new Date(),
+        rejectionReason: null,
+        reviewedById: null,
+        reviewedAt: null,
+      },
+    });
+    // Record only if the guarded update actually transitioned a row — a raced
+    // concurrent submit that matched 0 rows changed nothing and logs nothing
+    // (ADR-0019: one event per real change, atomic with the transition).
+    if (applied.count === 1) {
+      await recordAuditEvents(tx, [
+        auditQuoteLifecycle("submit", {
+          actorId: principal.userId,
+          studyId: quote.benchmarkItem.studyId,
+          quoteId,
+        }),
+      ]);
+    }
   });
   return result;
 }
@@ -400,7 +417,7 @@ export async function approveQuote(
       convertedUsdPricePerUnit: true,
       justification: true,
       benchmarkItem: {
-        select: { clientPrice: true, study: { select: { qcThresholdPct: true } } },
+        select: { studyId: true, clientPrice: true, study: { select: { qcThresholdPct: true } } },
       },
     },
   });
@@ -426,9 +443,20 @@ export async function approveQuote(
   });
   if (!result.ok) return result;
 
-  await prisma.quote.updateMany({
-    where: { id: quoteId, state: "Submitted" },
-    data: { state: "Approved", reviewedById: principal.userId, reviewedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    const applied = await tx.quote.updateMany({
+      where: { id: quoteId, state: "Submitted" },
+      data: { state: "Approved", reviewedById: principal.userId, reviewedAt: new Date() },
+    });
+    if (applied.count === 1) {
+      await recordAuditEvents(tx, [
+        auditQuoteLifecycle("approve", {
+          actorId: principal.userId,
+          studyId: quote.benchmarkItem.studyId,
+          quoteId,
+        }),
+      ]);
+    }
   });
   return result;
 }
@@ -450,7 +478,7 @@ export async function rejectQuote(
   }
   const quote = await prisma.quote.findUnique({
     where: { id: quoteId },
-    select: { state: true },
+    select: { state: true, benchmarkItem: { select: { studyId: true } } },
   });
   if (quote === null) {
     throw new QuoteAccessError(`Quote not found: ${quoteId}`);
@@ -459,14 +487,25 @@ export async function rejectQuote(
   const result = transition(quote.state, { kind: "reject", reason });
   if (!result.ok) return result;
 
-  await prisma.quote.updateMany({
-    where: { id: quoteId, state: "Submitted" },
-    data: {
-      state: "Rejected",
-      rejectionReason: reason,
-      reviewedById: principal.userId,
-      reviewedAt: new Date(),
-    },
+  await prisma.$transaction(async (tx) => {
+    const applied = await tx.quote.updateMany({
+      where: { id: quoteId, state: "Submitted" },
+      data: {
+        state: "Rejected",
+        rejectionReason: reason,
+        reviewedById: principal.userId,
+        reviewedAt: new Date(),
+      },
+    });
+    if (applied.count === 1) {
+      await recordAuditEvents(tx, [
+        auditQuoteLifecycle("reject", {
+          actorId: principal.userId,
+          studyId: quote.benchmarkItem.studyId,
+          quoteId,
+        }),
+      ]);
+    }
   });
   return result;
 }

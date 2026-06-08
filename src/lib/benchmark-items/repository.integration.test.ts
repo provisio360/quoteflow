@@ -46,6 +46,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Imports now write audit events (issue #16) pinning the actor; clear them
+  // before the user they reference (onDelete: Restrict).
+  await prisma.auditEvent.deleteMany({ where: { studyId } });
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   await prisma.study.deleteMany({ where: { clientId: tenant } });
   await prisma.user.deleteMany({ where: { id: emUserId } });
@@ -115,5 +118,46 @@ describe("importBenchmarkItems — authorization", () => {
     await expect(importBenchmarkItems(em, "nonexistent", [HEADERS, row()])).rejects.toBeInstanceOf(
       BenchmarkItemAccessError,
     );
+  });
+});
+
+describe("importBenchmarkItems — audit recording, per affected row (issue #16 / ADR-0019)", () => {
+  const importEvents = () =>
+    prisma.auditEvent.findMany({ where: { studyId, action: "import" } });
+
+  it("records one import event per inserted item, on the item as subject", async () => {
+    const before = (await importEvents()).length;
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Part Number": "PN-700" }),
+      row({ "Client Part Number": "PN-800" }),
+    ]);
+    const events = await importEvents();
+    expect(events.length - before).toBe(2);
+
+    const inserted = await prisma.benchmarkItem.findMany({
+      where: { studyId, clientPartNumberKey: { in: ["pn-700", "pn-800"] } },
+      select: { id: true },
+    });
+    const subjects = new Set(events.map((e) => e.subjectId));
+    for (const item of inserted) expect(subjects.has(item.id)).toBe(true);
+    expect(events.every((e) => e.subjectType === "BenchmarkItem" && e.actorId === em.userId)).toBe(true);
+  });
+
+  it("records one import event per updated item on re-import (a row was written)", async () => {
+    const before = (await importEvents()).length;
+    await importBenchmarkItems(em, studyId, [HEADERS, row({ "Client Part Number": "PN-700" })]);
+    expect((await importEvents()).length - before).toBe(1);
+  });
+
+  it("writes no audit event when the file is invalid (all-or-nothing)", async () => {
+    const before = await prisma.auditEvent.count({ where: { studyId } });
+    const result = await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Part Number": "PN-700" }), // valid would-be update
+      row({ "Client Part Number": "PN-901", Country: "Atlantis" }), // invalid
+    ]);
+    expect(result.ok).toBe(false);
+    expect(await prisma.auditEvent.count({ where: { studyId } })).toBe(before);
   });
 });

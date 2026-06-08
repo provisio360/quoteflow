@@ -145,6 +145,10 @@ afterAll(async () => {
   // deleting the studies cascades their Benchmark Items, Quotes, and Country
   // Releases (onDelete: Cascade); users and clients are Restrict-referenced by
   // those rows, so they come after. Leaves every other suite's data untouched.
+  // Audit events (issue #16) aren't FK-tied to the study (their subject is
+  // polymorphic), so the study cascade doesn't reach them; clear them before the
+  // users they pin via actorId (onDelete: Restrict).
+  await prisma.auditEvent.deleteMany({ where: { studyId: { in: [studyA, studyB] } } });
   await prisma.study.deleteMany({ where: { id: { in: [studyA, studyB] } } });
   await prisma.user.deleteMany({
     where: { id: { in: [analyst.userId, em.userId, researcher.userId, clientUserA.userId] } },
@@ -220,6 +224,40 @@ describe("release / reopen / re-release and the client read path", () => {
     // …but a Tenant-A client user reading Study B sees nothing (out-of-tenant
     // collapses to not-found, ADR-0008).
     expect(await listReleasedQuotesForStudy(clientUserA, studyB)).toEqual([]);
+  });
+});
+
+describe("audit recording — release / reopen (issue #16 / ADR-0019)", () => {
+  const auditForRow = (studyId: string, countryReleaseId: string) =>
+    prisma.auditEvent.findMany({
+      where: { studyId, subjectType: "CountryRelease", subjectId: countryReleaseId },
+      orderBy: { createdAt: "asc" },
+    });
+
+  it("records a release event on the CountryRelease row, pinning the analyst", async () => {
+    await releaseCountry(analyst, studyB, "Italy"); // eligible per the seed
+    const row = await prisma.countryRelease.findUnique({
+      where: { studyId_country: { studyId: studyB, country: "Italy" } },
+    });
+    const events = await auditForRow(studyB, row!.id);
+    const release = events.find((e) => e.action === "release");
+    expect(release).toBeDefined();
+    expect(release!.actorId).toBe(analyst.userId);
+  });
+
+  it("records a reopen event, and a withheld release records nothing", async () => {
+    await releaseCountry(analyst, studyB, "Italy"); // ensure released
+    await reopenCountry(analyst, studyB, "Italy");
+    const row = await prisma.countryRelease.findUnique({
+      where: { studyId_country: { studyId: studyB, country: "Italy" } },
+    });
+    const events = await auditForRow(studyB, row!.id);
+    expect(events.some((e) => e.action === "reopen")).toBe(true);
+
+    // A withheld release writes no row and no audit event.
+    const before = await prisma.auditEvent.count({ where: { studyId: studyA } });
+    await releaseCountry(analyst, studyA, "France"); // short of Required Quotes
+    expect(await prisma.auditEvent.count({ where: { studyId: studyA } })).toBe(before);
   });
 });
 

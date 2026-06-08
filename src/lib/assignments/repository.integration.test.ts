@@ -85,6 +85,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Assignments now write audit events (issue #16) pinning the EM actor; clear
+  // them before the users they reference (onDelete: Restrict).
+  await prisma.auditEvent.deleteMany({ where: { studyId } });
   await prisma.countryAssignment.deleteMany({ where: { studyId } });
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   await prisma.study.deleteMany({ where: { clientId: tenantId } });
@@ -224,5 +227,36 @@ describe("listAssignmentsForStudy — internal only", () => {
     await expect(
       listAssignmentsForStudy(client, studyId),
     ).rejects.toBeInstanceOf(AssignmentAccessError);
+  });
+});
+
+describe("assignResearchers — audit recording, per new assignment (issue #16 / ADR-0019)", () => {
+  const assignEvents = () =>
+    prisma.auditEvent.findMany({ where: { studyId, action: "assign" } });
+
+  it("records one event per newly-created assignment and none for an idempotent re-assign", async () => {
+    const fresh = await seedResearcher("Audit researcher");
+
+    const before = (await assignEvents()).length;
+    await assignResearchers(em, studyId, "Germany", [fresh]);
+    const after = await assignEvents();
+    expect(after.length - before).toBe(1);
+
+    const row = await prisma.countryAssignment.findFirst({
+      where: { studyId, country: "Germany", researcherId: fresh },
+    });
+    const ev = after.find((e) => e.subjectId === row!.id);
+    expect(ev).toBeDefined();
+    expect(ev!.subjectType).toBe("CountryAssignment");
+    expect(ev!.actorId).toBe(em.userId);
+
+    // Re-assigning the same researcher is idempotent — it records nothing new.
+    await assignResearchers(em, studyId, "Germany", [fresh]);
+    expect((await assignEvents()).length).toBe(after.length);
+
+    // The fixed-seed afterAll doesn't know this researcher; clean it up here.
+    await prisma.auditEvent.deleteMany({ where: { studyId, subjectId: row!.id } });
+    await prisma.countryAssignment.deleteMany({ where: { researcherId: fresh } });
+    await prisma.user.deleteMany({ where: { id: fresh } });
   });
 });

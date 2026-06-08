@@ -57,6 +57,9 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  // Client Price changes now write audit events (issue #16) whose actorId pins
+  // the user (onDelete: Restrict), so clear them before deleting users.
+  await prisma.auditEvent.deleteMany({ where: { studyId } });
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   await prisma.study.deleteMany({ where: { clientId: tenant } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -79,6 +82,37 @@ describe("setClientPrice — Analyst maintenance (ADR-0015)", () => {
     expect(result).toEqual({ clientPrice: null });
     const stored = await prisma.benchmarkItem.findUnique({ where: { id: itemId } });
     expect(stored?.clientPrice).toBeNull();
+  });
+});
+
+describe("setClientPrice — audit recording (issue #16 / ADR-0019)", () => {
+  it("records a clientPriceChange event with actor, subject, and before/after", async () => {
+    await setClientPrice(analyst, itemId, 1500);
+
+    const events = await prisma.auditEvent.findMany({ where: { studyId, subjectId: itemId } });
+    expect(events).toHaveLength(1);
+    const e = events[0];
+    expect(e.action).toBe("clientPriceChange");
+    expect(e.actorId).toBe(analyst.userId);
+    expect(e.subjectType).toBe("BenchmarkItem");
+    expect(Number(e.beforeValue)).toBe(1000);
+    expect(Number(e.afterValue)).toBe(1500);
+    expect(e.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("records before=seed when setting and after=null when clearing", async () => {
+    await setClientPrice(analyst, itemId, null);
+    const cleared = await prisma.auditEvent.findFirst({
+      where: { studyId, subjectId: itemId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(Number(cleared!.beforeValue)).toBe(1000);
+    expect(cleared!.afterValue).toBeNull();
+  });
+
+  it("does not record an event for a refused change", async () => {
+    await expect(setClientPrice(em, itemId, 1500)).rejects.toBeInstanceOf(BenchmarkItemAccessError);
+    expect(await prisma.auditEvent.count({ where: { studyId, subjectId: itemId } })).toBe(0);
   });
 });
 
