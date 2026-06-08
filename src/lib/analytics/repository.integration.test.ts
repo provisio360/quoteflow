@@ -150,6 +150,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  await prisma.notification.deleteMany({ where: { studyId: { in: [studyA, studyB] } } });
   await prisma.auditEvent.deleteMany({ where: { studyId: { in: [studyA, studyB] } } });
   await prisma.study.deleteMany({ where: { id: { in: [studyA, studyB] } } });
   await prisma.user.deleteMany({

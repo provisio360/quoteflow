@@ -15,6 +15,10 @@ export default defineConfig({
     environment: "node",
     // Load DATABASE_URL/DIRECT_URL from .env (same as the project's scripts).
     setupFiles: ["./vitest.integration.setup.ts"],
+    // Install graphile-worker's schema once before any test — the notification
+    // outbox (#17) enqueues jobs transactionally and Prisma migrations don't
+    // create that schema.
+    globalSetup: ["./vitest.integration.globalsetup.ts"],
     // DB tests share one schema; run serially to avoid cross-test interference.
     fileParallelism: false,
     hookTimeout: 30_000,

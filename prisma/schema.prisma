@@ -99,6 +99,7 @@ model User {
   countriesReopened  CountryRelease[]    @relation("ReopenedBy")
   exportsRun         ExportAudit[]       @relation("ExportRunBy")
   auditEvents        AuditEvent[]        @relation("AuditActor")
+  notifications      Notification[]      @relation("NotificationRecipient")
 
   @@index([tenantId])
   @@map("user")
@@ -442,6 +443,11 @@ model CountryRelease {
   releasedAt   DateTime
   reopenedById String?
   reopenedAt   DateTime?
+  // First time this (study, country) was ever released — set once, NEVER cleared
+  // by a reopen or re-release (releasedAt re-stamps; this does not). Its presence
+  // is the in-transaction guard that suppresses re-release client notifications,
+  // so the tenant is told a Country is released exactly once (#17 / ADR-0020).
+  clientNotifiedAt DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
@@ -541,4 +547,55 @@ model AuditEvent {
   @@index([subjectType, subjectId])
   @@index([actorId])
   @@map("audit_event")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notifications (#17) — the only two v1 events that PUSH rather than wait to be
+// pulled: a Quote rejected (to its author) and a Country released (to the
+// tenant's Client Users). See CONTEXT.md (Notification) and ADR-0020. One row is
+// one in-app notification AND the outbox entry the worker emails from; the in-app
+// row is written in the transition's own transaction (like AuditEvent), email is
+// a deferred graphile-worker job. Snapshots its display text so it survives the
+// source mutating (a rejection reason is cleared on resubmit).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The two push events. The pure mirror of NotificationKind in src/domains.
+enum NotificationKind {
+  quoteRejected
+  countryReleased
+}
+
+/// What a Notification links back to. Polymorphic plain-string subjectId, like
+/// AuditEvent — no FK (the source may change or be revised after the snapshot).
+enum NotificationSubjectType {
+  Quote
+  CountryRelease
+}
+
+/// One push signal to one recipient (ADR-0020). `recipientId` is the only FK (a
+/// recipient is always a live User; deactivated users are never written). `kind`
+/// + `subjectType`/`subjectId` link back; `studyId` is denormalized for scoping.
+/// `reason` snapshots a rejection's reason (ephemeral — cleared on resubmit);
+/// `country` snapshots a release's country; each is null for the other kind.
+/// `readAt` is in-app read state (marked on inbox open); `emailedAt` is delivery
+/// provenance the worker stamps after Resend succeeds (NOT a polling cursor —
+/// at-least-once delivery is owned by the graphile job, ADR-0020).
+model Notification {
+  id          String                  @id @default(cuid())
+  recipientId String
+  kind        NotificationKind
+  studyId     String
+  subjectType NotificationSubjectType
+  subjectId   String
+  reason      String?
+  country     String?
+  readAt      DateTime?
+  emailedAt   DateTime?
+  createdAt   DateTime                @default(now())
+
+  recipient User @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+
+  @@index([recipientId, readAt])
+  @@index([recipientId, createdAt])
+  @@map("notification")
 }
