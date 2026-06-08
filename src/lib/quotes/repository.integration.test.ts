@@ -143,6 +143,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Lifecycle moves now write audit events (issue #16) pinning the actor
+  // (onDelete: Restrict), so clear them before deleting users.
+  await prisma.auditEvent.deleteMany({ where: { studyId } });
   await prisma.quote.deleteMany({ where: { benchmarkItem: { studyId } } });
   await prisma.countryAssignment.deleteMany({ where: { studyId } });
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
@@ -360,6 +363,52 @@ describe("rejectQuote — verdict returns to the author with a reason", () => {
   it("denies a non-analyst", async () => {
     const id = await submittedConverted(researcherA, 123.45);
     await expect(rejectQuote(researcherA, id, "no")).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+});
+
+describe("audit recording — submit / approve / reject (issue #16 / ADR-0019)", () => {
+  const auditFor = (quoteId: string) =>
+    prisma.auditEvent.findMany({ where: { studyId, subjectType: "Quote", subjectId: quoteId } });
+
+  it("records a submit event pinning the researcher, no before/after", async () => {
+    const { id } = await createDraftQuote(researcherA, itemId, complete);
+    await submitQuote(researcherA, id);
+    const events = await auditFor(id);
+    expect(events).toHaveLength(1);
+    expect(events[0].action).toBe("submit");
+    expect(events[0].actorId).toBe(researcherA.userId);
+    expect(events[0].beforeValue).toBeNull();
+    expect(events[0].afterValue).toBeNull();
+  });
+
+  it("does not record a second submit for an already-Submitted quote (no real change)", async () => {
+    const { id } = await createDraftQuote(researcherA, itemId, complete);
+    await submitQuote(researcherA, id);
+    await submitQuote(researcherA, id); // illegal transition — changes nothing
+    expect(await auditFor(id)).toHaveLength(1);
+  });
+
+  it("records an approve event pinning the analyst", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    await approveQuote(analyst, id);
+    const approve = (await auditFor(id)).filter((e) => e.action === "approve");
+    expect(approve).toHaveLength(1);
+    expect(approve[0].actorId).toBe(analyst.userId);
+  });
+
+  it("records nothing for a blocked approval (conversion pending)", async () => {
+    const { id } = await createDraftQuote(researcherA, itemId, complete);
+    await submitQuote(researcherA, id);
+    await approveQuote(analyst, id); // blocked — still Submitted
+    expect((await auditFor(id)).some((e) => e.action === "approve")).toBe(false);
+  });
+
+  it("records a reject event pinning the analyst", async () => {
+    const id = await submittedConverted(researcherA, 123.45);
+    await rejectQuote(analyst, id, "Dealer location missing");
+    const reject = (await auditFor(id)).filter((e) => e.action === "reject");
+    expect(reject).toHaveLength(1);
+    expect(reject[0].actorId).toBe(analyst.userId);
   });
 });
 

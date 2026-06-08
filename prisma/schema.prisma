@@ -98,6 +98,7 @@ model User {
   countriesReleased  CountryRelease[]    @relation("ReleasedBy")
   countriesReopened  CountryRelease[]    @relation("ReopenedBy")
   exportsRun         ExportAudit[]       @relation("ExportRunBy")
+  auditEvents        AuditEvent[]        @relation("AuditActor")
 
   @@index([tenantId])
   @@map("user")
@@ -481,4 +482,63 @@ model ExportAudit {
   @@index([studyId])
   @@index([userId])
   @@map("export_audit")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit Event (#16) — the append-only internal trail of significant state
+// transitions. See CONTEXT.md (Audit Event, Audit Action) and ADR-0019: ONE
+// generic table written ATOMICALLY inside each transition's transaction, the
+// persisted mirror of the typed union in src/domains/audit. Distinct from the
+// standalone ExportAudit (ADR-0018), which records data access, not change.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The closed set of audited transitions (CONTEXT.md: Audit Action). Each fixes
+/// the subject type it applies to and whether it carries a before/after value.
+enum AuditAction {
+  submit
+  approve
+  reject
+  release
+  reopen
+  import
+  clientPriceChange
+  assign
+}
+
+/// The kind of entity an Audit Event is about. The subject id is a plain string,
+/// not an FK (polymorphic) — append-only history may outlive its subject, and
+/// integrity is enforced app-layer-first (ADR-0008), as with the country strings
+/// on CountryAssignment/CountryRelease.
+enum AuditSubjectType {
+  Quote
+  BenchmarkItem
+  CountryRelease
+  CountryAssignment
+}
+
+/// One append-only record that a significant transition happened (ADR-0019).
+/// `actorId` is the User who did it (the one real FK; an actor is always a live
+/// user). `studyId` is denormalized so a study's timeline is one indexed query
+/// (mirroring ExportAudit.clientId). `subjectType`/`subjectId` are polymorphic.
+/// `beforeValue`/`afterValue` carry a monetary delta for the transitions that
+/// change one — in v1 only `clientPriceChange` writes them (Decimal(14,4) matches
+/// BenchmarkItem.clientPrice); null for every other action. Rows are written,
+/// never updated or deleted — a correction is a new event.
+model AuditEvent {
+  id          String           @id @default(cuid())
+  action      AuditAction
+  actorId     String
+  studyId     String
+  subjectType AuditSubjectType
+  subjectId   String
+  beforeValue Decimal?         @db.Decimal(14, 4)
+  afterValue  Decimal?         @db.Decimal(14, 4)
+  createdAt   DateTime         @default(now())
+
+  actor User @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([studyId, createdAt])
+  @@index([subjectType, subjectId])
+  @@index([actorId])
+  @@map("audit_event")
 }

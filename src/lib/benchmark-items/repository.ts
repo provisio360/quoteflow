@@ -13,6 +13,8 @@ import {
   type ValidatedBenchmarkItem,
 } from "@/domains/benchmark-items/import";
 import { resolveUpserts, benchmarkItemKey } from "@/domains/benchmark-items/resolve";
+import { recordAuditEvents } from "@/lib/audit/repository";
+import { auditClientPriceChange, auditImport } from "@/domains/audit/events";
 
 // Tenant-aware data-access adapter for the Benchmark Item bulk import (issue #5).
 // The ONLY sanctioned write path: it role-gates the principal, resolves the
@@ -90,6 +92,31 @@ export async function importBenchmarkItems(
         },
         data: briefFields,
       });
+    }
+
+    // One audit event per item actually written (ADR-0019: per affected row). A
+    // no-op re-import (no inserts and no updates) touches nothing and logs
+    // nothing. createMany returns no ids, so resolve the affected rows' ids by
+    // their upsert keys in one query. Import never changes Client Price, so no
+    // before/after.
+    const affected = [...inserts, ...updates];
+    if (affected.length > 0) {
+      const rows = await tx.benchmarkItem.findMany({
+        where: {
+          studyId,
+          OR: affected.map((item) => ({
+            country: item.country,
+            clientPartNumberKey: item.clientPartNumberKey,
+          })),
+        },
+        select: { id: true },
+      });
+      await recordAuditEvents(
+        tx,
+        rows.map((r) =>
+          auditImport({ actorId: principal.userId, studyId, itemId: r.id }),
+        ),
+      );
     }
 
     return { inserted: inserts.length, updated: updates.length };
@@ -309,13 +336,35 @@ export async function setClientPrice(
     throw new BenchmarkItemAccessError("Client Price must be a number greater than 0");
   }
 
-  const updated = await prisma.benchmarkItem.updateMany({
-    where: { id: itemId },
-    data: { clientPrice: value },
+  await prisma.$transaction(async (tx) => {
+    // Read the prior value first — both to record the before/after delta and to
+    // assert the item exists, inside the same transaction as the change (ADR-0019:
+    // the audit write is atomic with the transition). A re-import never overwrites
+    // Client Price, so this path is the only writer of its before/after.
+    const before = await tx.benchmarkItem.findUnique({
+      where: { id: itemId },
+      select: { clientPrice: true, studyId: true },
+    });
+    if (before === null) {
+      throw new BenchmarkItemAccessError(`Benchmark Item not found: ${itemId}`);
+    }
+
+    await tx.benchmarkItem.update({
+      where: { id: itemId },
+      data: { clientPrice: value },
+    });
+
+    await recordAuditEvents(tx, [
+      auditClientPriceChange({
+        actorId: principal.userId,
+        studyId: before.studyId,
+        itemId,
+        before: before.clientPrice === null ? null : Number(before.clientPrice),
+        after: value,
+      }),
+    ]);
   });
-  if (updated.count === 0) {
-    throw new BenchmarkItemAccessError(`Benchmark Item not found: ${itemId}`);
-  }
+
   return { clientPrice: value };
 }
 

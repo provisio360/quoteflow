@@ -110,6 +110,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await prisma.auditEvent.deleteMany({ where: { studyId } });
   await prisma.countryAssignment.deleteMany({ where: { studyId } });
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   await prisma.study.deleteMany({ where: { clientId: tenantId } });

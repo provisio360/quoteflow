@@ -9,6 +9,8 @@ import {
   type ItemReleaseStatus,
   type ReleaseEligibility,
 } from "@/domains/release/eligibility";
+import { recordAuditEvents } from "@/lib/audit/repository";
+import { auditRelease } from "@/domains/audit/events";
 
 // Tenant-aware data-access adapter for the Country Release gate (issue #13). It
 // owns what the pure evaluator can't: the Analyst role gate, computing each
@@ -116,7 +118,7 @@ export async function releaseCountry(
     if (!eligibility.releasable) return eligibility;
 
     const now = new Date();
-    await tx.countryRelease.upsert({
+    const row = await tx.countryRelease.upsert({
       where: { studyId_country: { studyId, country } },
       create: {
         studyId,
@@ -131,6 +133,13 @@ export async function releaseCountry(
         releasedAt: now,
       },
     });
+    await recordAuditEvents(tx, [
+      auditRelease("release", {
+        actorId: principal.userId,
+        studyId,
+        countryReleaseId: row.id,
+      }),
+    ]);
     return eligibility;
   });
 }
@@ -152,14 +161,23 @@ export async function reopenCountry(
   }
   const existing = await prisma.countryRelease.findUnique({
     where: { studyId_country: { studyId, country } },
-    select: { state: true },
+    select: { id: true, state: true },
   });
   if (existing === null || existing.state !== "released") {
     throw new ReleaseAccessError(`Country "${country}" is not currently released`);
   }
-  await prisma.countryRelease.update({
-    where: { studyId_country: { studyId, country } },
-    data: { state: "reopened", reopenedById: principal.userId, reopenedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    await tx.countryRelease.update({
+      where: { studyId_country: { studyId, country } },
+      data: { state: "reopened", reopenedById: principal.userId, reopenedAt: new Date() },
+    });
+    await recordAuditEvents(tx, [
+      auditRelease("reopen", {
+        actorId: principal.userId,
+        studyId,
+        countryReleaseId: existing.id,
+      }),
+    ]);
   });
 }
 
