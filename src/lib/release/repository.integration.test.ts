@@ -148,6 +148,7 @@ afterAll(async () => {
   // Audit events (issue #16) aren't FK-tied to the study (their subject is
   // polymorphic), so the study cascade doesn't reach them; clear them before the
   // users they pin via actorId (onDelete: Restrict).
+  await prisma.notification.deleteMany({ where: { studyId: { in: [studyA, studyB] } } });
   await prisma.auditEvent.deleteMany({ where: { studyId: { in: [studyA, studyB] } } });
   await prisma.study.deleteMany({ where: { id: { in: [studyA, studyB] } } });
   await prisma.user.deleteMany({

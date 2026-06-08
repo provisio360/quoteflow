@@ -10,6 +10,8 @@ import {
 import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
 import { recordAuditEvents } from "@/lib/audit/repository";
 import { auditQuoteLifecycle } from "@/domains/audit/events";
+import { recordNotifications } from "@/lib/notifications/dispatch";
+import { notifyQuoteRejected } from "@/domains/notifications/events";
 
 // Tenant-aware data-access adapter for the Quote lifecycle (issue #8). It owns
 // the gates the pure core can't: the Researcher role (canCreateQuote), the
@@ -478,7 +480,12 @@ export async function rejectQuote(
   }
   const quote = await prisma.quote.findUnique({
     where: { id: quoteId },
-    select: { state: true, benchmarkItem: { select: { studyId: true } } },
+    select: {
+      state: true,
+      createdById: true,
+      createdBy: { select: { status: true } },
+      benchmarkItem: { select: { studyId: true } },
+    },
   });
   if (quote === null) {
     throw new QuoteAccessError(`Quote not found: ${quoteId}`);
@@ -505,6 +512,19 @@ export async function rejectQuote(
           quoteId,
         }),
       ]);
+      // Push the rejection to its AUTHOR — the one who can revise it (createdById,
+      // not necessarily the item's Primary Researcher; ADR-0020). Only an active
+      // author is notified; a deactivated (offboarded) author is skipped.
+      if (quote.createdBy.status === "active") {
+        await recordNotifications(tx, [
+          notifyQuoteRejected({
+            recipientId: quote.createdById,
+            studyId: quote.benchmarkItem.studyId,
+            quoteId,
+            reason,
+          }),
+        ]);
+      }
     }
   });
   return result;

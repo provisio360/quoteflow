@@ -11,6 +11,8 @@ import {
 } from "@/domains/release/eligibility";
 import { recordAuditEvents } from "@/lib/audit/repository";
 import { auditRelease } from "@/domains/audit/events";
+import { recordNotifications } from "@/lib/notifications/dispatch";
+import { notifyCountryReleased } from "@/domains/notifications/events";
 
 // Tenant-aware data-access adapter for the Country Release gate (issue #13). It
 // owns what the pure evaluator can't: the Analyst role gate, computing each
@@ -117,6 +119,15 @@ export async function releaseCountry(
     const eligibility = evaluateRelease(items.map(toItemStatus));
     if (!eligibility.releasable) return eligibility;
 
+    // First release of this (study, country) ever? releasedAt re-stamps on every
+    // release, so it can't tell us — the persistent clientNotifiedAt marker can
+    // (set once here, never cleared by reopen/re-release; ADR-0020).
+    const existing = await tx.countryRelease.findUnique({
+      where: { studyId_country: { studyId, country } },
+      select: { clientNotifiedAt: true },
+    });
+    const firstRelease = existing === null || existing.clientNotifiedAt === null;
+
     const now = new Date();
     const row = await tx.countryRelease.upsert({
       where: { studyId_country: { studyId, country } },
@@ -126,11 +137,13 @@ export async function releaseCountry(
         state: "released",
         releasedById: principal.userId,
         releasedAt: now,
+        clientNotifiedAt: now,
       },
       update: {
         state: "released",
         releasedById: principal.userId,
         releasedAt: now,
+        ...(firstRelease ? { clientNotifiedAt: now } : {}),
       },
     });
     await recordAuditEvents(tx, [
@@ -140,6 +153,33 @@ export async function releaseCountry(
         countryReleaseId: row.id,
       }),
     ]);
+    // Tell the tenant its Country is released — ONCE, on first release only
+    // (ADR-0020). Recipients are the tenant's ACTIVE Client Users; a reopen and
+    // any re-release stay silent.
+    if (firstRelease) {
+      const study = await tx.study.findUnique({
+        where: { id: studyId },
+        select: { clientId: true },
+      });
+      const recipients =
+        study === null
+          ? []
+          : await tx.user.findMany({
+              where: { tenantId: study.clientId, kind: "client", status: "active" },
+              select: { id: true },
+            });
+      await recordNotifications(
+        tx,
+        recipients.map((u) =>
+          notifyCountryReleased({
+            recipientId: u.id,
+            studyId,
+            countryReleaseId: row.id,
+            country,
+          }),
+        ),
+      );
+    }
     return eligibility;
   });
 }

@@ -145,6 +145,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // Lifecycle moves now write audit events (issue #16) pinning the actor
   // (onDelete: Restrict), so clear them before deleting users.
+  await prisma.notification.deleteMany({ where: { studyId } });
   await prisma.auditEvent.deleteMany({ where: { studyId } });
   await prisma.quote.deleteMany({ where: { benchmarkItem: { studyId } } });
   await prisma.countryAssignment.deleteMany({ where: { studyId } });

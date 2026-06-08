@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentPrincipal } from "@/lib/identity/current-principal";
 import { logoutAction } from "@/lib/identity/actions";
 import { listStudies } from "@/lib/studies/repository";
+import { NotificationsLink } from "@/app/notifications/NotificationsLink";
 
 export default async function Home() {
   const principal = await getCurrentPrincipal();
@@ -22,6 +23,9 @@ export default async function Home() {
               ? `internal staff (${principal.role})`
               : `client user (tenant ${principal.tenantId})`}
             .
+          </p>
+          <p>
+            <NotificationsLink />
           </p>
           {principal.kind === "internal" && (
             <p>
