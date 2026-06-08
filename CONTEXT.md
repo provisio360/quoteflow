@@ -126,3 +126,15 @@ The rival company and brand whose equivalent part is being priced against the cl
 **Distributor/Dealer**:
 The source a researcher contacts for a Quote — the company that sells the competitor's part and would ship it to the customer. Carries a name, physical location, and URL.
 _Avoid_: Vendor, supplier, source
+
+**Export**:
+A downloadable spreadsheet of a [[Pricing Study]]'s data (Excel only in v1 — no PDF). Comes in two flavours distinguished by who runs it and what it may contain: the [[Client Export]] and the [[Internal Export]]. Both respect [[Client]] tenant isolation absolutely. There is no aggregate-vs-detail divide in the *format* — both are workbooks; the divide is in the **population and columns** each flavour is allowed.
+_Avoid_: Download, report, dump
+
+**Client Export**:
+The workbook a [[Client User]] downloads of their own tenant's **released + approved** data — the same population every client dashboard aggregates ([[Competitor Price Range]]). Two sheets: a detail sheet (one row per released+approved [[Quote]]) and a summary sheet (per-[[Benchmark Item]] min/median/max). **Never includes [[Client Price]]** (ADR-0003) and never crosses tenants. Not audited — a tenant pulling its own released data is not a sensitive access.
+_Avoid_: Client report, released export
+
+**Internal Export**:
+The fuller workbook an [[Analyst]] or [[Engagement Manager]] downloads of a whole study: **every non-[[Draft]] [[Quote]]** ([[Submitted]]/[[Approved]]/[[Rejected]]) across **all countries** regardless of release, *including* the [[Client Price]], [[Price Flag]] direction, and [[Justification]]. Drafts stay out (they are private to their author, ADR-0011). Gated to **Analyst + Engagement Manager only** — never a [[Researcher]] (the Client Price is hidden from them, ADR-0003) and never an [[Admin]] (user-administration only) or [[Client User]]. Every successful run is **audited** (ADR-0018).
+_Avoid_: Full export, admin export, staff dump
