@@ -33,6 +33,15 @@ export default async function StudyDashboardPage({
       <h1>{study.name}</h1>
       <p style={{ color: "#555" }}>Released competitive pricing (USD per unit).</p>
 
+      {/* Exports (issue #15): the client Excel of released data (no Client Price);
+          internal staff also get the full audited export of all non-Draft quotes. */}
+      <p style={{ margin: "0.5rem 0 0", display: "flex", gap: "1rem" }}>
+        <a href={`/api/studies/${study.id}/export?type=client`}>⬇ Export released data (Excel)</a>
+        {principal.kind === "internal" && (
+          <a href={`/api/studies/${study.id}/export?type=internal`}>⬇ Full export (internal)</a>
+        )}
+      </p>
+
       {items.length === 0 ? (
         <p>No released results yet.</p>
       ) : (

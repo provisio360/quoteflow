@@ -97,6 +97,7 @@ model User {
   quotesReviewed     Quote[]             @relation("QuoteReviewedBy")
   countriesReleased  CountryRelease[]    @relation("ReleasedBy")
   countriesReopened  CountryRelease[]    @relation("ReopenedBy")
+  exportsRun         ExportAudit[]       @relation("ExportRunBy")
 
   @@index([tenantId])
   @@map("user")
@@ -450,4 +451,34 @@ model CountryRelease {
   @@unique([studyId, country])
   @@index([studyId])
   @@map("country_release")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Export Audit (#15) — a record that a sensitive Internal Export of a study's
+// full data actually happened. See CONTEXT.md (Internal Export) and ADR-0018:
+// this is a STANDALONE audit row, deliberately not waiting for the general audit
+// log (#16/#42). Only Internal Exports are audited — a Client Export of a
+// tenant's own released data is not a sensitive access.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One successful Internal Export. `clientId` is the exported tenant, denormalized
+/// so "who exported tenant X's data" is a direct query (an Internal Export is run
+/// by cross-tenant internal staff, so the tenant isn't implied by the user). The
+/// row is written only AFTER the workbook is generated (ADR-0018): an export that
+/// errored produced no bytes and logs nothing. `exportType` is "internal" today;
+/// the column leaves room should an audited Client Export ever be added.
+model ExportAudit {
+  id         String   @id @default(cuid())
+  userId     String
+  clientId   String
+  studyId    String
+  exportType String
+  createdAt  DateTime @default(now())
+
+  user User @relation("ExportRunBy", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([clientId])
+  @@index([studyId])
+  @@index([userId])
+  @@map("export_audit")
 }
