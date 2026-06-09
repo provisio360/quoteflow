@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { requireInternalPage } from "@/lib/identity/page-guards";
 import { canReviewQuote } from "@/domains/authz/quotes";
+import { canCreateStudy } from "@/domains/authz/studies";
 import { listStudies } from "@/lib/studies/repository";
+import { listClients } from "@/lib/clients/repository";
 import { NotificationsLink } from "@/app/notifications/NotificationsLink";
+import { NewStudyForm } from "./NewStudyForm";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, lineHeight: 1.5 } as const;
 
@@ -13,6 +16,8 @@ const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 7
 export default async function StudiesPage() {
   const principal = await requireInternalPage();
   const studies = await listStudies(principal);
+  const mayCreate = canCreateStudy(principal);
+  const clients = mayCreate ? await listClients(principal) : [];
 
   return (
     <main style={wrap}>
@@ -21,6 +26,7 @@ export default async function StudiesPage() {
         <NotificationsLink />
       </p>
       <h1>Studies</h1>
+      {mayCreate && <NewStudyForm clients={clients} />}
       {studies.length === 0 ? (
         <p>No studies yet.</p>
       ) : (
