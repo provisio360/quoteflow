@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { withTenant, type TenantClient } from "@/lib/tenant-context";
 import type { Prisma } from "@prisma/client";
 import type { Principal } from "@/domains/authz/principal";
 import { tenantVisibility } from "@/domains/authz/visibility";
@@ -70,21 +71,26 @@ export async function exportClientWorkbook(
   principal: Principal,
   studyId: string,
 ): Promise<Buffer> {
-  const study = await scopedStudy(principal, studyId);
-  const items: ClientExportItem[] = study === null ? [] : await loadReleasedItems(studyId);
+  const items = await withTenant(principal, async (tx) => {
+    const study = await scopedStudy(tx, principal, studyId);
+    return study === null ? [] : await loadReleasedItems(tx, studyId);
+  });
   return renderWorkbook(buildClientExport(items));
 }
 
 /** Load every Benchmark Item in a study's CURRENTLY-released countries with its
  *  Approved quotes nested. Same population as the client dashboard (ADR-0017). */
-async function loadReleasedItems(studyId: string): Promise<ClientExportItem[]> {
-  const released = await prisma.countryRelease.findMany({
+async function loadReleasedItems(
+  tx: TenantClient,
+  studyId: string,
+): Promise<ClientExportItem[]> {
+  const released = await tx.countryRelease.findMany({
     where: { studyId, state: "released" },
     select: { country: true },
   });
   if (released.length === 0) return [];
 
-  const rows = await prisma.benchmarkItem.findMany({
+  const rows = await tx.benchmarkItem.findMany({
     where: { studyId, country: { in: released.map((r) => r.country) } },
     orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
     select: CLIENT_ITEM_SELECT,
@@ -157,10 +163,12 @@ export async function exportInternalWorkbook(
     throw new ExportAccessError("Only an Analyst or Engagement Manager may run the internal export");
   }
 
-  const study = await prisma.study.findUnique({
-    where: { id: studyId },
-    select: { clientId: true, qcThresholdPct: true, benchmarkItems: { orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }], select: INTERNAL_ITEM_SELECT } },
-  });
+  const study = await withTenant(principal, (tx) =>
+    tx.study.findUnique({
+      where: { id: studyId },
+      select: { clientId: true, qcThresholdPct: true, benchmarkItems: { orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }], select: INTERNAL_ITEM_SELECT } },
+    }),
+  );
   if (study === null) throw new ExportAccessError("Study not found");
 
   const quotes: InternalExportQuote[] = [];
@@ -206,8 +214,8 @@ export async function exportInternalWorkbook(
 
 /** Filter-first tenant lookup: an out-of-tenant or unknown study collapses to
  *  null → an empty client workbook (ADR-0008). */
-async function scopedStudy(principal: Principal, studyId: string) {
-  return prisma.study.findFirst({
+async function scopedStudy(tx: TenantClient, principal: Principal, studyId: string) {
+  return tx.study.findFirst({
     where: { AND: [visibilityWhere(tenantVisibility(principal)), { id: studyId }] },
     select: { id: true },
   });

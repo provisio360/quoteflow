@@ -1,5 +1,5 @@
 import type { CountryAssignment } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { withTenant } from "@/lib/tenant-context";
 import type { Principal } from "@/domains/authz/principal";
 import { isInternal } from "@/domains/authz/principal";
 import { canAssignResearchers } from "@/domains/authz/assignments";
@@ -49,37 +49,38 @@ export async function assignResearchers(
     );
   }
 
-  // Tenant-scoped existence — out-of-tenant / missing both resolve to null.
-  const study = await getStudy(principal, studyId);
-  if (study === null) {
-    throw new AssignmentAccessError(`Study not found: ${studyId}`);
-  }
-
-  // The country must already exist in the study (its Benchmark Items define its
-  // countries; ADR-0009). Match on the canonical name stored at import time.
-  const countryItem = await prisma.benchmarkItem.findFirst({
-    where: { studyId, country },
-    select: { id: true },
-  });
-  if (countryItem === null) {
-    throw new AssignmentAccessError(
-      `Country "${country}" has no Benchmark Items in study ${studyId}`,
-    );
-  }
-
-  // Every target must be an active, internal Researcher — all-or-nothing.
   const ids = [...new Set(researcherIds)];
-  const eligible = await prisma.user.findMany({
-    where: { id: { in: ids }, kind: "internal", role: "Researcher", status: "active" },
-    select: { id: true },
-  });
-  if (eligible.length !== ids.length) {
-    throw new AssignmentAccessError(
-      "Every assignee must be an active internal Researcher",
-    );
-  }
+  return withTenant(principal, async (tx) => {
+    // Tenant-scoped existence — out-of-tenant / missing both resolve to null.
+    // getStudy re-enters this same transaction/context (ADR-0021).
+    const study = await getStudy(principal, studyId);
+    if (study === null) {
+      throw new AssignmentAccessError(`Study not found: ${studyId}`);
+    }
 
-  await prisma.$transaction(async (tx) => {
+    // The country must already exist in the study (its Benchmark Items define its
+    // countries; ADR-0009). Match on the canonical name stored at import time.
+    const countryItem = await tx.benchmarkItem.findFirst({
+      where: { studyId, country },
+      select: { id: true },
+    });
+    if (countryItem === null) {
+      throw new AssignmentAccessError(
+        `Country "${country}" has no Benchmark Items in study ${studyId}`,
+      );
+    }
+
+    // Every target must be an active, internal Researcher — all-or-nothing.
+    const eligible = await tx.user.findMany({
+      where: { id: { in: ids }, kind: "internal", role: "Researcher", status: "active" },
+      select: { id: true },
+    });
+    if (eligible.length !== ids.length) {
+      throw new AssignmentAccessError(
+        "Every assignee must be an active internal Researcher",
+      );
+    }
+
     // Which of the requested researchers are NOT already on the country: only
     // these are genuinely new assignments, and only they are audited (ADR-0019:
     // one event per real change — an idempotent re-assign records nothing).
@@ -95,6 +96,8 @@ export async function assignResearchers(
     await tx.countryAssignment.createMany({
       data: ids.map((researcherId) => ({
         studyId,
+        // Denormalized RLS tenant column (ADR-0021), copied from the parent study.
+        clientId: study.clientId,
         country,
         researcherId,
         assignedById: principal.userId,
@@ -115,9 +118,9 @@ export async function assignResearchers(
         ),
       );
     }
-  });
 
-  return { assigned: ids.length };
+    return { assigned: ids.length };
+  });
 }
 
 /**
@@ -128,10 +131,12 @@ export async function assignResearchers(
 export function listAssignmentsForResearcher(
   principal: Principal,
 ): Promise<CountryAssignment[]> {
-  return prisma.countryAssignment.findMany({
-    where: { researcherId: principal.userId },
-    orderBy: { createdAt: "desc" },
-  });
+  return withTenant(principal, (tx) =>
+    tx.countryAssignment.findMany({
+      where: { researcherId: principal.userId },
+      orderBy: { createdAt: "desc" },
+    }),
+  );
 }
 
 /**
@@ -146,12 +151,14 @@ export async function listAssignmentsForStudy(
   if (!isInternal(principal)) {
     throw new AssignmentAccessError("Internal staff only");
   }
-  const study = await getStudy(principal, studyId);
-  if (study === null) {
-    throw new AssignmentAccessError(`Study not found: ${studyId}`);
-  }
-  return prisma.countryAssignment.findMany({
-    where: { studyId },
-    orderBy: [{ country: "asc" }, { createdAt: "asc" }],
+  return withTenant(principal, async (tx) => {
+    const study = await getStudy(principal, studyId);
+    if (study === null) {
+      throw new AssignmentAccessError(`Study not found: ${studyId}`);
+    }
+    return tx.countryAssignment.findMany({
+      where: { studyId },
+      orderBy: [{ country: "asc" }, { createdAt: "asc" }],
+    });
   });
 }

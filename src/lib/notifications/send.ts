@@ -7,6 +7,10 @@ import { renderNotificationEmail } from "@/domains/notifications/render";
 // testable without the worker runtime, mirroring conversion-fill. Resolves a
 // notification to its recipient + study, renders, delivers via the sendEmail
 // port, and stamps emailedAt.
+//
+// Runs in the BACKGROUND WORKER on the OWNER connection, which bypasses RLS by
+// design (ADR-0021) — so the `study` lookup here needs no tenant GUC. The
+// worker's environment must NOT set APP_DATABASE_URL (see the #21 runbook).
 
 /**
  * Deliver one notification's email, by id. At-least-once: the graphile job may

@@ -9,6 +9,12 @@ import {
 // `pending`; this fills the USD figures once the quote's date has closed. Thin
 // glue: the decision logic (resolve + convert, or stay pending) lives in the
 // pure core's computeConversion — here we only select, call, and persist.
+//
+// Runs in the BACKGROUND WORKER, a cross-tenant system actor on the OWNER
+// connection, which bypasses the RLS backstop by design (ADR-0021). It therefore
+// uses `prisma` directly with no tenant GUC. IMPORTANT: the worker's environment
+// must NOT set APP_DATABASE_URL — connecting as the non-owner role here would
+// make this sweep silently see zero quotes (fail-closed). See the #21 runbook.
 
 export interface FillSummary {
   /** Pending quotes whose date had closed and were attempted this run. */

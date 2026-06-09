@@ -1,5 +1,5 @@
-import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { withTenant } from "@/lib/tenant-context";
 import type { Principal } from "@/domains/authz/principal";
 import { canReleaseCountry } from "@/domains/authz/release";
 import { tenantVisibility } from "@/domains/authz/visibility";
@@ -109,7 +109,7 @@ export async function releaseCountry(
   if (!canReleaseCountry(principal)) {
     throw new ReleaseAccessError("Only Analysts may release a Country");
   }
-  return prisma.$transaction(async (tx) => {
+  return withTenant(principal, async (tx) => {
     const items = await tx.benchmarkItem.findMany({
       where: { studyId, country },
       select: ITEM_COUNT_SELECT,
@@ -118,6 +118,14 @@ export async function releaseCountry(
     // releasable, exactly like an empty Country (ADR-0016). No silent no-op row.
     const eligibility = evaluateRelease(items.map(toItemStatus));
     if (!eligibility.releasable) return eligibility;
+
+    // The owning tenant — needed for the denormalized RLS clientId (ADR-0021) on
+    // a first-release insert, and reused for the notification recipients below.
+    // A releasable Country has Benchmark Items, so the study exists.
+    const { clientId } = await tx.study.findUniqueOrThrow({
+      where: { id: studyId },
+      select: { clientId: true },
+    });
 
     // First release of this (study, country) ever? releasedAt re-stamps on every
     // release, so it can't tell us — the persistent clientNotifiedAt marker can
@@ -133,6 +141,7 @@ export async function releaseCountry(
       where: { studyId_country: { studyId, country } },
       create: {
         studyId,
+        clientId,
         country,
         state: "released",
         releasedById: principal.userId,
@@ -157,17 +166,10 @@ export async function releaseCountry(
     // (ADR-0020). Recipients are the tenant's ACTIVE Client Users; a reopen and
     // any re-release stay silent.
     if (firstRelease) {
-      const study = await tx.study.findUnique({
-        where: { id: studyId },
-        select: { clientId: true },
+      const recipients = await tx.user.findMany({
+        where: { tenantId: clientId, kind: "client", status: "active" },
+        select: { id: true },
       });
-      const recipients =
-        study === null
-          ? []
-          : await tx.user.findMany({
-              where: { tenantId: study.clientId, kind: "client", status: "active" },
-              select: { id: true },
-            });
       await recordNotifications(
         tx,
         recipients.map((u) =>
@@ -199,14 +201,14 @@ export async function reopenCountry(
   if (!canReleaseCountry(principal)) {
     throw new ReleaseAccessError("Only Analysts may reopen a Country");
   }
-  const existing = await prisma.countryRelease.findUnique({
-    where: { studyId_country: { studyId, country } },
-    select: { id: true, state: true },
-  });
-  if (existing === null || existing.state !== "released") {
-    throw new ReleaseAccessError(`Country "${country}" is not currently released`);
-  }
-  await prisma.$transaction(async (tx) => {
+  await withTenant(principal, async (tx) => {
+    const existing = await tx.countryRelease.findUnique({
+      where: { studyId_country: { studyId, country } },
+      select: { id: true, state: true },
+    });
+    if (existing === null || existing.state !== "released") {
+      throw new ReleaseAccessError(`Country "${country}" is not currently released`);
+    }
     await tx.countryRelease.update({
       where: { studyId_country: { studyId, country } },
       data: { state: "reopened", reopenedById: principal.userId, reopenedAt: new Date() },
@@ -233,52 +235,53 @@ export async function listReleasedQuotesForStudy(
   principal: Principal,
   studyId: string,
 ): Promise<ReleasedQuoteView[]> {
-  // Tenant gate first: same filter-first lookup the study read paths use, so a
-  // wrong-tenant (or unknown) studyId returns null and we expose nothing.
-  const study = await prisma.study.findFirst({
-    where: { AND: [visibilityWhere(tenantVisibility(principal)), { id: studyId }] },
-    select: { id: true },
-  });
-  if (study === null) return [];
+  return withTenant(principal, async (tx) => {
+    // Tenant gate first: same filter-first lookup the study read paths use, so a
+    // wrong-tenant (or unknown) studyId returns null and we expose nothing.
+    const study = await tx.study.findFirst({
+      where: { AND: [visibilityWhere(tenantVisibility(principal)), { id: studyId }] },
+      select: { id: true },
+    });
+    if (study === null) return [];
 
-  const released = await prisma.countryRelease.findMany({
-    where: { studyId, state: "released" },
-    select: { country: true },
-  });
-  if (released.length === 0) return [];
-  const releasedCountries = released.map((r) => r.country);
+    const released = await tx.countryRelease.findMany({
+      where: { studyId, state: "released" },
+      select: { country: true },
+    });
+    if (released.length === 0) return [];
+    const releasedCountries = released.map((r) => r.country);
 
-  const rows = await prisma.quote.findMany({
-    where: {
-      state: "Approved",
-      benchmarkItem: { studyId, country: { in: releasedCountries } },
-    },
-    orderBy: [{ benchmarkItem: { country: "asc" } }, { quoteNumber: "asc" }],
-    select: {
-      id: true,
-      quoteNumber: true,
-      competitorBrand: true,
-      dealerName: true,
-      dealerLocation: true,
-      dealerUrl: true,
-      price: true,
-      currency: true,
-      quantityQuoted: true,
-      convertedUsdPrice: true,
-      convertedUsdPricePerUnit: true,
-      stockStatus: true,
-      leadTime: true,
-      warranty: true,
-      discount: true,
-      notes: true,
-      dateQuoteReceived: true,
-      benchmarkItem: {
-        select: { country: true, clientPartNumber: true, itemDescription: true },
+    const rows = await tx.quote.findMany({
+      where: {
+        state: "Approved",
+        benchmarkItem: { studyId, country: { in: releasedCountries } },
       },
-    },
-  });
+      orderBy: [{ benchmarkItem: { country: "asc" } }, { quoteNumber: "asc" }],
+      select: {
+        id: true,
+        quoteNumber: true,
+        competitorBrand: true,
+        dealerName: true,
+        dealerLocation: true,
+        dealerUrl: true,
+        price: true,
+        currency: true,
+        quantityQuoted: true,
+        convertedUsdPrice: true,
+        convertedUsdPricePerUnit: true,
+        stockStatus: true,
+        leadTime: true,
+        warranty: true,
+        discount: true,
+        notes: true,
+        dateQuoteReceived: true,
+        benchmarkItem: {
+          select: { country: true, clientPartNumber: true, itemDescription: true },
+        },
+      },
+    });
 
-  return rows.map((r) => ({
+    return rows.map((r) => ({
     id: r.id,
     quoteNumber: r.quoteNumber,
     country: r.benchmarkItem.country,
@@ -300,6 +303,7 @@ export async function listReleasedQuotesForStudy(
     notes: r.notes,
     dateQuoteReceived: r.dateQuoteReceived,
   }));
+  });
 }
 
 /**
@@ -316,14 +320,16 @@ export async function listCountryReleaseStatus(
   if (!canReleaseCountry(principal)) {
     throw new ReleaseAccessError("Only Analysts may view release status");
   }
-  const items = await prisma.benchmarkItem.findMany({
-    where: { studyId },
-    select: { country: true, ...ITEM_COUNT_SELECT },
-  });
-  const releases = await prisma.countryRelease.findMany({
-    where: { studyId },
-    select: { country: true, state: true },
-  });
+  const { items, releases } = await withTenant(principal, async (tx) => ({
+    items: await tx.benchmarkItem.findMany({
+      where: { studyId },
+      select: { country: true, ...ITEM_COUNT_SELECT },
+    }),
+    releases: await tx.countryRelease.findMany({
+      where: { studyId },
+      select: { country: true, state: true },
+    }),
+  }));
   const stateByCountry = new Map<string, CountryReleaseState>(
     releases.map((r) => [r.country, r.state]),
   );

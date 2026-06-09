@@ -236,6 +236,11 @@ model Study {
 model BenchmarkItem {
   id                   String   @id @default(cuid())
   studyId              String
+  // Denormalized owning tenant, the RLS backstop column (ADR-0021). Immutable,
+  // copied from the parent study on insert; the WITH CHECK policy verifies it
+  // equals the request's tenant GUC. Not an FK — a plain scoping scalar, like
+  // the other denormalized study/client ids on the audit/export trails.
+  clientId             String
   country              String
   clientPartNumber     String
   clientPartNumberKey  String
@@ -267,6 +272,7 @@ model BenchmarkItem {
   @@unique([studyId, country, clientPartNumberKey])
   @@index([studyId])
   @@index([primaryResearcherId])
+  @@index([clientId])
   @@map("benchmark_item")
 }
 
@@ -290,6 +296,9 @@ model BenchmarkItem {
 model CountryAssignment {
   id           String   @id @default(cuid())
   studyId      String
+  // Denormalized owning tenant — the RLS backstop column (ADR-0021). Immutable,
+  // copied from the parent study on insert; verified by WITH CHECK.
+  clientId     String
   country      String
   researcherId String
   assignedById String
@@ -302,6 +311,7 @@ model CountryAssignment {
   @@unique([studyId, country, researcherId])
   @@index([researcherId])
   @@index([studyId])
+  @@index([clientId])
   @@map("country_assignment")
 }
 
@@ -354,6 +364,9 @@ enum ConversionStatus {
 model Quote {
   id              String     @id @default(cuid())
   benchmarkItemId String
+  // Denormalized owning tenant — the RLS backstop column (ADR-0021). Immutable,
+  // copied from the parent Benchmark Item on insert; verified by WITH CHECK.
+  clientId        String
   quoteNumber     Int
   state           QuoteState @default(Draft)
   createdById     String
@@ -404,6 +417,7 @@ model Quote {
   @@index([benchmarkItemId])
   @@index([createdById])
   @@index([reviewedById])
+  @@index([clientId])
   @@map("quote")
 }
 
@@ -437,6 +451,9 @@ enum ReleaseState {
 model CountryRelease {
   id           String       @id @default(cuid())
   studyId      String
+  // Denormalized owning tenant — the RLS backstop column (ADR-0021). Immutable,
+  // copied from the parent study on insert; verified by WITH CHECK.
+  clientId     String
   country      String
   state        ReleaseState
   releasedById String
@@ -457,6 +474,7 @@ model CountryRelease {
 
   @@unique([studyId, country])
   @@index([studyId])
+  @@index([clientId])
   @@map("country_release")
 }
 
