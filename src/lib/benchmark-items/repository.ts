@@ -215,6 +215,28 @@ export async function getBenchmarkItemForResearcher(
   );
 }
 
+/**
+ * A study's Benchmark Items as a Researcher sees them (#7): the guidance view
+ * with NO Client Price (RESEARCHER_VIEW_SELECT never selects it), carrying
+ * `primaryResearcherId` so the UI can show claim / mine / claimed-by-other.
+ * Ordered by Country then Client Part Number. Internal-only.
+ */
+export async function listBenchmarkItemsForResearcher(
+  principal: Principal,
+  studyId: string,
+): Promise<ResearcherItemView[]> {
+  if (!isInternal(principal)) {
+    throw new BenchmarkItemAccessError("Internal staff only");
+  }
+  return withTenant(principal, (tx) =>
+    tx.benchmarkItem.findMany({
+      where: { studyId },
+      orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
+      select: RESEARCHER_VIEW_SELECT,
+    }),
+  );
+}
+
 export interface SelfAssignResult {
   /** The Primary Researcher now on the item — always the calling researcher. */
   readonly primaryResearcherId: string;

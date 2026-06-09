@@ -72,6 +72,11 @@ export interface QuoteView {
   readonly discount: string | null;
   readonly notes: string | null;
   readonly dateQuoteReceived: Date | null;
+  /** The analyst's reason on a Rejected quote — the author needs it to revise
+   *  (also pushed via notification). Null unless rejected. */
+  readonly rejectionReason: string | null;
+  /** The author's explanation for a flagged price; persists across resubmit. */
+  readonly justification: string | null;
 }
 
 const QUOTE_VIEW_SELECT = {
@@ -93,6 +98,8 @@ const QUOTE_VIEW_SELECT = {
   discount: true,
   notes: true,
   dateQuoteReceived: true,
+  rejectionReason: true,
+  justification: true,
 } as const;
 
 /**

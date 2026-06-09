@@ -47,7 +47,10 @@ export default async function StudyDetailPage({
   // View D (issue #14): the released competitor ranges set beside Client Price.
   // Internal-only — every viewer of this page is internal staff (the guard), and
   // the Client Price it carries is never exposed on the client dashboard.
-  const benchmark = await getStudyBenchmarkComparison(principal, study.id);
+  // View D carries Client Price → Analyst-only (ADR-0003), same gate as the QC list.
+  const benchmark = canMaintainClientPrice(principal)
+    ? await getStudyBenchmarkComparison(principal, study.id)
+    : null;
 
   // EM-only staffing view (#6): each Country with who's assigned and which active
   // researchers remain to add. Derived from the study's Benchmark Items, so a
@@ -105,7 +108,7 @@ export default async function StudyDetailPage({
 
       {qcItems !== null && <ClientPriceList studyId={study.id} items={qcItems} />}
 
-      <BenchmarkComparison items={benchmark} />
+      {benchmark !== null && <BenchmarkComparison items={benchmark} />}
     </main>
   );
 }
