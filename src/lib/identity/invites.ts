@@ -70,6 +70,59 @@ export async function createInvite(input: CreateInviteInput): Promise<CreateInvi
   return { ok: true, inviteId: invite.id, rawToken: raw, expiresAt };
 }
 
+/** An invite's display state for the Admin list. */
+export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
+
+/** One invite as the Admin invites screen lists it. Only `pending` invites are
+ *  actionable (revoke / resend). */
+export interface InviteSummary {
+  readonly id: string;
+  readonly email: string;
+  readonly kind: "internal" | "client";
+  readonly role: InternalRole | null;
+  readonly tenantId: string | null;
+  readonly status: InviteStatus;
+  readonly expiresAt: Date;
+  readonly createdAt: Date;
+}
+
+/** Derive display status, reusing evaluateInvite's tested precedence (a revoked
+ *  or accepted invite is terminal; expiry only matters while otherwise open). */
+function inviteStatus(
+  invite: { expiresAt: Date; acceptedAt: Date | null; revokedAt: Date | null; kind: "internal" | "client"; role: InternalRole | null; tenantId: string | null },
+  now: Date,
+): InviteStatus {
+  const verdict = evaluateInvite(
+    { kind: invite.kind, role: invite.role, tenantId: invite.tenantId, expiresAt: invite.expiresAt, acceptedAt: invite.acceptedAt, revokedAt: invite.revokedAt },
+    now,
+  );
+  if (verdict.ok) return "pending";
+  switch (verdict.reason) {
+    case "already-accepted":
+      return "accepted";
+    case "revoked":
+      return "revoked";
+    default:
+      return "expired"; // expired or malformed — terminal, not actionable
+  }
+}
+
+/** Every invite, newest first, with derived status — the Admin invites list. */
+export async function listInvites(): Promise<InviteSummary[]> {
+  const now = new Date();
+  const rows = await prisma.invite.findMany({ orderBy: { createdAt: "desc" } });
+  return rows.map((r) => ({
+    id: r.id,
+    email: r.email,
+    kind: r.kind,
+    role: r.role,
+    tenantId: r.tenantId,
+    status: inviteStatus(r, now),
+    expiresAt: r.expiresAt,
+    createdAt: r.createdAt,
+  }));
+}
+
 export type AcceptInviteResult =
   | { ok: true; userId: string }
   | { ok: false; error: "invalid-token" | "revoked" | "already-accepted" | "expired" | "malformed" | "email-in-use" };
