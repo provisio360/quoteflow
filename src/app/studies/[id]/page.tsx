@@ -20,10 +20,13 @@ import {
 } from "@/lib/assignments/repository";
 import { listQuotesForItem, type QuoteView } from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
+import { canReleaseCountry } from "@/domains/authz/release";
+import { listCountryReleaseStatus } from "@/lib/release/repository";
 import { ClientPriceList } from "./ClientPriceList";
 import { BenchmarkComparison } from "./BenchmarkComparison";
 import { CountryAssignRow } from "./CountryAssignRow";
 import { ResearcherItem, type ItemMode } from "./ResearcherItem";
+import { CountryReleaseRow } from "./CountryReleaseRow";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, lineHeight: 1.5 } as const;
 
@@ -67,6 +70,10 @@ export default async function StudyDetailPage({
   // per-item mode (mine / claimable / claimed / locked). Client Price never loaded.
   const mayResearch = canSelfAssignBenchmarkItem(principal);
   const research = mayResearch ? await buildResearcherView(principal, study.id) : [];
+
+  // Analyst release gate (#13): each Country's eligibility + current release state.
+  const mayRelease = canReleaseCountry(principal);
+  const releaseStatus = mayRelease ? await listCountryReleaseStatus(principal, study.id) : [];
 
   return (
     <main style={wrap}>
@@ -137,6 +144,27 @@ export default async function StudyDetailPage({
                 </ul>
               </div>
             ))
+          )}
+        </section>
+      )}
+
+      {mayRelease && (
+        <section style={{ marginTop: "2rem" }}>
+          <h2 style={{ fontSize: "1.1rem" }}>Release to client</h2>
+          {releaseStatus.length === 0 ? (
+            <p style={{ color: "#777" }}>No Countries yet.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0 }}>
+              {releaseStatus.map((s) => (
+                <CountryReleaseRow
+                  key={s.country}
+                  studyId={study.id}
+                  country={s.country}
+                  eligibility={s.eligibility}
+                  releaseState={s.releaseState}
+                />
+              ))}
+            </ul>
           )}
         </section>
       )}
