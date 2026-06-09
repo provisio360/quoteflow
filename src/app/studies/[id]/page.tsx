@@ -5,20 +5,25 @@ import { getStudyDetail } from "@/lib/studies/repository";
 import {
   canImportBenchmarkItems,
   canMaintainClientPrice,
+  canSelfAssignBenchmarkItem,
 } from "@/domains/authz/benchmark-items";
 import { canAssignResearchers } from "@/domains/authz/assignments";
 import {
   listBenchmarkItemsForAnalyst,
+  listBenchmarkItemsForResearcher,
   listStudyCountries,
 } from "@/lib/benchmark-items/repository";
 import {
   listActiveResearchers,
+  listAssignmentsForResearcher,
   listAssignmentsForStudy,
 } from "@/lib/assignments/repository";
+import { listQuotesForItem, type QuoteView } from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
 import { ClientPriceList } from "./ClientPriceList";
 import { BenchmarkComparison } from "./BenchmarkComparison";
 import { CountryAssignRow } from "./CountryAssignRow";
+import { ResearcherItem, type ItemMode } from "./ResearcherItem";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, lineHeight: 1.5 } as const;
 
@@ -57,6 +62,11 @@ export default async function StudyDetailPage({
   // Country with no items never appears.
   const mayAssign = canAssignResearchers(principal);
   const staffing = mayAssign ? await buildStaffing(principal, study.id) : [];
+
+  // Researcher work surface (#7/#8): the study's items grouped by Country, with a
+  // per-item mode (mine / claimable / claimed / locked). Client Price never loaded.
+  const mayResearch = canSelfAssignBenchmarkItem(principal);
+  const research = mayResearch ? await buildResearcherView(principal, study.id) : [];
 
   return (
     <main style={wrap}>
@@ -106,6 +116,31 @@ export default async function StudyDetailPage({
         </section>
       )}
 
+      {mayResearch && (
+        <section style={{ marginTop: "2rem" }}>
+          <h2 style={{ fontSize: "1.1rem" }}>Your quote collection</h2>
+          {research.length === 0 ? (
+            <p style={{ color: "#777" }}>No Benchmark Items yet.</p>
+          ) : (
+            research.map((group) => (
+              <div key={group.country} style={{ marginTop: "1rem" }}>
+                <h3 style={{ fontSize: "1rem", margin: "0 0 0.25rem" }}>{group.country}</h3>
+                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                  {group.items.map((entry) => (
+                    <ResearcherItem
+                      key={entry.item.id}
+                      item={entry.item}
+                      mode={entry.mode}
+                      quotes={entry.quotes}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))
+          )}
+        </section>
+      )}
+
       {qcItems !== null && <ClientPriceList studyId={study.id} items={qcItems} />}
 
       {benchmark !== null && <BenchmarkComparison items={benchmark} />}
@@ -146,4 +181,47 @@ async function buildStaffing(
       available: researchers.filter((r) => !assignedIds.has(r.id)),
     };
   });
+}
+
+type ResearcherItemEntry = {
+  item: { id: string; country: string; clientPartNumber: string; itemDescription: string; requiredQuotes: number };
+  mode: ItemMode;
+  quotes: QuoteView[];
+};
+type ResearcherGroup = { country: string; items: ResearcherItemEntry[] };
+
+/** The researcher's per-Country items with their work mode and (for owned items)
+ *  their quotes. Mode: mine (I'm Primary) / claimable (unclaimed + I'm assigned to
+ *  the Country) / claimed (someone else's) / locked (unclaimed, not my Country). */
+async function buildResearcherView(
+  principal: Parameters<typeof listBenchmarkItemsForResearcher>[0] & { userId: string },
+  studyId: string,
+): Promise<ResearcherGroup[]> {
+  const [items, assignments] = await Promise.all([
+    listBenchmarkItemsForResearcher(principal, studyId),
+    listAssignmentsForResearcher(principal),
+  ]);
+  const myCountries = new Set(
+    assignments.filter((a) => a.studyId === studyId).map((a) => a.country),
+  );
+
+  const entries: ResearcherItemEntry[] = await Promise.all(
+    items.map(async (item) => {
+      let mode: ItemMode;
+      if (item.primaryResearcherId === principal.userId) mode = "mine";
+      else if (item.primaryResearcherId !== null) mode = "claimed";
+      else if (myCountries.has(item.country)) mode = "claimable";
+      else mode = "locked";
+      const quotes = mode === "mine" ? await listQuotesForItem(principal, item.id) : [];
+      return { item, mode, quotes };
+    }),
+  );
+
+  const byCountry = new Map<string, ResearcherItemEntry[]>();
+  for (const e of entries) {
+    const list = byCountry.get(e.item.country) ?? [];
+    list.push(e);
+    byCountry.set(e.item.country, list);
+  }
+  return [...byCountry.entries()].map(([country, list]) => ({ country, items: list }));
 }
