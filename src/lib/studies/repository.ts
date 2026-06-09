@@ -1,8 +1,8 @@
 import type { Study } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
 import type { Principal } from "@/domains/authz/principal";
 import { canCreateStudy } from "@/domains/authz/studies";
 import { tenantVisibility } from "@/domains/authz/visibility";
+import { withTenant } from "@/lib/tenant-context";
 import { visibilityWhere } from "./where";
 
 // Tenant-aware data-access adapter for Pricing Studies — the ONLY sanctioned way
@@ -35,12 +35,14 @@ export interface StudySummary {
 
 /** Every study the principal may see — own tenant for clients, all for staff. */
 export async function listStudies(principal: Principal): Promise<StudySummary[]> {
-  const rows = await prisma.study.findMany({
-    where: visibilityWhere(tenantVisibility(principal)),
-    orderBy: { createdAt: "desc" },
-    include: { client: { select: { name: true } } },
+  return withTenant(principal, async (tx) => {
+    const rows = await tx.study.findMany({
+      where: visibilityWhere(tenantVisibility(principal)),
+      orderBy: { createdAt: "desc" },
+      include: { client: { select: { name: true } } },
+    });
+    return rows.map(toSummary);
   });
-  return rows.map(toSummary);
 }
 
 /**
@@ -53,9 +55,11 @@ export function getStudy(
   principal: Principal,
   id: string,
 ): Promise<Study | null> {
-  return prisma.study.findFirst({
-    where: { AND: [visibilityWhere(tenantVisibility(principal)), { id }] },
-  });
+  return withTenant(principal, (tx) =>
+    tx.study.findFirst({
+      where: { AND: [visibilityWhere(tenantVisibility(principal)), { id }] },
+    }),
+  );
 }
 
 /**
@@ -68,11 +72,13 @@ export async function getStudyDetail(
   principal: Principal,
   id: string,
 ): Promise<StudySummary | null> {
-  const row = await prisma.study.findFirst({
-    where: { AND: [visibilityWhere(tenantVisibility(principal)), { id }] },
-    include: { client: { select: { name: true } } },
+  return withTenant(principal, async (tx) => {
+    const row = await tx.study.findFirst({
+      where: { AND: [visibilityWhere(tenantVisibility(principal)), { id }] },
+      include: { client: { select: { name: true } } },
+    });
+    return row === null ? null : toSummary(row);
   });
-  return row === null ? null : toSummary(row);
 }
 
 export interface CreateStudyInput {
@@ -97,14 +103,16 @@ export async function createStudy(
   if (!canCreateStudy(principal)) {
     throw new StudyAccessError("Only Engagement Managers and Analysts may create a study");
   }
-  return prisma.study.create({
-    data: {
-      name: input.name,
-      clientId: input.clientId,
-      createdById: principal.userId,
-      qcThresholdPct: input.qcThresholdPct,
-    },
-  });
+  return withTenant(principal, (tx) =>
+    tx.study.create({
+      data: {
+        name: input.name,
+        clientId: input.clientId,
+        createdById: principal.userId,
+        qcThresholdPct: input.qcThresholdPct,
+      },
+    }),
+  );
 }
 
 /** Flatten a study + its included client into the shell read-model. */

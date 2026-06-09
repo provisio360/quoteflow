@@ -61,9 +61,14 @@ async function seedItem(
   clientPrice: string | null,
   quotes: QuoteSpec[],
 ): Promise<void> {
+  const { clientId } = await prisma.study.findUniqueOrThrow({
+    where: { id: studyId },
+    select: { clientId: true },
+  });
   const item = await prisma.benchmarkItem.create({
     data: {
       studyId,
+      clientId,
       country,
       clientPartNumber,
       clientPartNumberKey: randomUUID().slice(0, 8),
@@ -79,6 +84,7 @@ async function seedItem(
     await prisma.quote.create({
       data: {
         benchmarkItemId: item.id,
+        clientId,
         quoteNumber: i + 1,
         state: q.state,
         createdById: researcher.userId,

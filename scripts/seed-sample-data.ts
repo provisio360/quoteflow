@@ -120,6 +120,7 @@ async function main() {
     const item = await prisma.benchmarkItem.create({
       data: {
         studyId: study.id,
+        clientId: client.id,
         country: it.country,
         clientPartNumber: it.clientPartNumber,
         clientPartNumberKey: it.clientPartNumber.toLowerCase(),
@@ -137,8 +138,8 @@ async function main() {
   // ── Country assignments (EM puts researchers on countries) ──────────────
   await prisma.countryAssignment.createMany({
     data: [
-      { studyId: study.id, country: "Germany", researcherId: researcher1Id, assignedById: emId },
-      { studyId: study.id, country: "France", researcherId: researcher2Id, assignedById: emId },
+      { studyId: study.id, clientId: client.id, country: "Germany", researcherId: researcher1Id, assignedById: emId },
+      { studyId: study.id, clientId: client.id, country: "France", researcherId: researcher2Id, assignedById: emId },
     ],
   });
 
@@ -157,6 +158,7 @@ async function main() {
     return prisma.quote.create({
       data: {
         benchmarkItemId: itemId,
+        clientId: client.id,
         quoteNumber: item.quoteSeq,
         createdById,
         ...data,
@@ -279,6 +281,7 @@ async function main() {
   await prisma.countryRelease.create({
     data: {
       studyId: study.id,
+      clientId: client.id,
       country: "Germany",
       state: "released",
       releasedById: analystId,

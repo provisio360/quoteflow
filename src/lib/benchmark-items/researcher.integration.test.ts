@@ -70,6 +70,7 @@ beforeAll(async () => {
     await prisma.benchmarkItem.create({
       data: {
         studyId,
+        clientId: tenantId,
         country: "Germany",
         clientPartNumber: "PN-1",
         clientPartNumberKey: "pn-1",
@@ -87,6 +88,7 @@ beforeAll(async () => {
     await prisma.benchmarkItem.create({
       data: {
         studyId,
+        clientId: tenantId,
         country: "Germany",
         clientPartNumber: "PN-2",
         clientPartNumberKey: "pn-2",

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenant, type TenantClient } from "@/lib/tenant-context";
 import type { Principal } from "@/domains/authz/principal";
 import { isInternal } from "@/domains/authz/principal";
 import { canCreateQuote, canReviewQuote } from "@/domains/authz/quotes";
@@ -112,25 +112,25 @@ export async function createDraftQuote(
     throw new QuoteAccessError("Only Researchers may create a Quote");
   }
 
-  const item = await prisma.benchmarkItem.findUnique({
-    where: { id: itemId },
-    select: { id: true, studyId: true, country: true },
-  });
-  if (item === null) {
-    throw new QuoteAccessError(`Benchmark Item not found: ${itemId}`);
-  }
+  return withTenant(principal, async (tx) => {
+    const item = await tx.benchmarkItem.findUnique({
+      where: { id: itemId },
+      select: { id: true, studyId: true, country: true, clientId: true },
+    });
+    if (item === null) {
+      throw new QuoteAccessError(`Benchmark Item not found: ${itemId}`);
+    }
 
-  const membership = await prisma.countryAssignment.findFirst({
-    where: { studyId: item.studyId, country: item.country, researcherId: principal.userId },
-    select: { id: true },
-  });
-  if (membership === null) {
-    throw new QuoteAccessError(
-      `Not assigned to Country "${item.country}" — ask the Engagement Manager`,
-    );
-  }
+    const membership = await tx.countryAssignment.findFirst({
+      where: { studyId: item.studyId, country: item.country, researcherId: principal.userId },
+      select: { id: true },
+    });
+    if (membership === null) {
+      throw new QuoteAccessError(
+        `Not assigned to Country "${item.country}" — ask the Engagement Manager`,
+      );
+    }
 
-  return prisma.$transaction(async (tx) => {
     // Atomic monotonic allocation: the increment takes a row lock on the item,
     // so concurrent creators can't collide on a number (ADR-0010).
     const { quoteSeq } = await tx.benchmarkItem.update({
@@ -141,6 +141,8 @@ export async function createDraftQuote(
     return tx.quote.create({
       data: {
         benchmarkItemId: itemId,
+        // Denormalized RLS tenant column (ADR-0021), copied from the parent item.
+        clientId: item.clientId,
         quoteNumber: quoteSeq,
         createdById: principal.userId,
         state: "Draft",
@@ -161,8 +163,10 @@ export async function updateDraftQuote(
   quoteId: string,
   fields: QuoteFields,
 ): Promise<void> {
-  await requireOwnDraft(principal, quoteId);
-  await prisma.quote.update({ where: { id: quoteId }, data: toData(fields) });
+  await withTenant(principal, async (tx) => {
+    await requireOwnDraft(tx, principal, quoteId);
+    await tx.quote.update({ where: { id: quoteId }, data: toData(fields) });
+  });
 }
 
 /**
@@ -171,8 +175,10 @@ export async function updateDraftQuote(
  * is never reused (ADR-0010).
  */
 export async function deleteDraftQuote(principal: Principal, quoteId: string): Promise<void> {
-  await requireOwnDraft(principal, quoteId);
-  await prisma.quote.delete({ where: { id: quoteId } });
+  await withTenant(principal, async (tx) => {
+    await requireOwnDraft(tx, principal, quoteId);
+    await tx.quote.delete({ where: { id: quoteId } });
+  });
 }
 
 /**
@@ -189,51 +195,51 @@ export async function submitQuote(
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
-  const quote = await prisma.quote.findUnique({
-    where: { id: quoteId },
-    select: {
-      createdById: true,
-      state: true,
-      competitorBrand: true,
-      dealerName: true,
-      dealerLocation: true,
-      price: true,
-      currency: true,
-      quantityQuoted: true,
-      dateQuoteReceived: true,
-      benchmarkItem: { select: { studyId: true } },
-    },
-  });
-  if (quote === null) {
-    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
-  }
-  if (quote.createdById !== principal.userId) {
-    throw new QuoteAccessError("Only the author may submit their Quote");
-  }
+  return withTenant(principal, async (tx) => {
+    const quote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      select: {
+        createdById: true,
+        state: true,
+        competitorBrand: true,
+        dealerName: true,
+        dealerLocation: true,
+        price: true,
+        currency: true,
+        quantityQuoted: true,
+        dateQuoteReceived: true,
+        benchmarkItem: { select: { studyId: true } },
+      },
+    });
+    if (quote === null) {
+      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    }
+    if (quote.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the author may submit their Quote");
+    }
 
-  const submittable: SubmittableQuote = {
-    competitorBrand: quote.competitorBrand,
-    dealerName: quote.dealerName,
-    dealerLocation: quote.dealerLocation,
-    price: quote.price === null ? null : Number(quote.price),
-    currency: quote.currency,
-    quantityQuoted: quote.quantityQuoted,
-    dateQuoteReceived: quote.dateQuoteReceived,
-  };
+    const submittable: SubmittableQuote = {
+      competitorBrand: quote.competitorBrand,
+      dealerName: quote.dealerName,
+      dealerLocation: quote.dealerLocation,
+      price: quote.price === null ? null : Number(quote.price),
+      currency: quote.currency,
+      quantityQuoted: quote.quantityQuoted,
+      dateQuoteReceived: quote.dateQuoteReceived,
+    };
 
-  const result = transition(quote.state, { kind: "submit", quote: submittable });
-  if (!result.ok) return result;
+    const result = transition(quote.state, { kind: "submit", quote: submittable });
+    if (!result.ok) return result;
 
-  // Persist under a guard so a concurrent submit applies exactly once. Conversion
-  // is NOT fetched here — submit only marks it pending, and the background sweep
-  // pins the rate once the quote's date has closed (ADR-0013). This preserves the
-  // invariant "null ⇔ Draft; once Submitted, always pending → auto/manual".
-  //
-  // `submittedAt` stamps FIFO queue position (#11). On a RESUBMIT (after revise)
-  // this also clears the prior verdict — reason/reviewer/time — so a re-queued
-  // quote carries no stale verdict; the author's `justification` is deliberately
-  // left intact (the analyst must read it to approve a still-flagged quote).
-  await prisma.$transaction(async (tx) => {
+    // Persist under a guard so a concurrent submit applies exactly once. Conversion
+    // is NOT fetched here — submit only marks it pending, and the background sweep
+    // pins the rate once the quote's date has closed (ADR-0013). This preserves the
+    // invariant "null ⇔ Draft; once Submitted, always pending → auto/manual".
+    //
+    // `submittedAt` stamps FIFO queue position (#11). On a RESUBMIT (after revise)
+    // this also clears the prior verdict — reason/reviewer/time — so a re-queued
+    // quote carries no stale verdict; the author's `justification` is deliberately
+    // left intact (the analyst must read it to approve a still-flagged quote).
     const applied = await tx.quote.updateMany({
       where: { id: quoteId, state: "Draft" },
       data: {
@@ -257,8 +263,8 @@ export async function submitQuote(
         }),
       ]);
     }
+    return result;
   });
-  return result;
 }
 
 /**
@@ -274,14 +280,16 @@ export async function listQuotesForItem(
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
-  const rows = await prisma.quote.findMany({
-    where: {
-      benchmarkItemId: itemId,
-      OR: [{ createdById: principal.userId }, { state: { not: "Draft" } }],
-    },
-    select: QUOTE_VIEW_SELECT,
-    orderBy: { quoteNumber: "asc" },
-  });
+  const rows = await withTenant(principal, (tx) =>
+    tx.quote.findMany({
+      where: {
+        benchmarkItemId: itemId,
+        OR: [{ createdById: principal.userId }, { state: { not: "Draft" } }],
+      },
+      select: QUOTE_VIEW_SELECT,
+      orderBy: { quoteNumber: "asc" },
+    }),
+  );
   return rows.map((r) => ({ ...r, price: r.price === null ? null : r.price.toString() }));
 }
 
@@ -330,7 +338,8 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
   if (!canReviewQuote(principal)) {
     throw new QuoteAccessError("Only Analysts may review quotes");
   }
-  const rows = await prisma.quote.findMany({
+  const rows = await withTenant(principal, (tx) =>
+    tx.quote.findMany({
     where: { state: "Submitted" },
     orderBy: { submittedAt: "asc" },
     select: {
@@ -358,7 +367,7 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
         },
       },
     },
-  });
+  }));
 
   return rows.map((r) => {
     const usdPerUnit = r.convertedUsdPricePerUnit === null ? null : Number(r.convertedUsdPricePerUnit);
@@ -411,41 +420,41 @@ export async function approveQuote(
   if (!canReviewQuote(principal)) {
     throw new QuoteAccessError("Only Analysts may review quotes");
   }
-  const quote = await prisma.quote.findUnique({
-    where: { id: quoteId },
-    select: {
-      state: true,
-      conversionStatus: true,
-      convertedUsdPricePerUnit: true,
-      justification: true,
-      benchmarkItem: {
-        select: { studyId: true, clientPrice: true, study: { select: { qcThresholdPct: true } } },
+  return withTenant(principal, async (tx) => {
+    const quote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      select: {
+        state: true,
+        conversionStatus: true,
+        convertedUsdPricePerUnit: true,
+        justification: true,
+        benchmarkItem: {
+          select: { studyId: true, clientPrice: true, study: { select: { qcThresholdPct: true } } },
+        },
       },
-    },
-  });
-  if (quote === null) {
-    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
-  }
+    });
+    if (quote === null) {
+      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    }
 
-  const flag = evaluatePriceFlag({
-    usdPricePerUnit:
-      quote.convertedUsdPricePerUnit === null ? null : Number(quote.convertedUsdPricePerUnit),
-    clientPrice:
-      quote.benchmarkItem.clientPrice === null ? null : Number(quote.benchmarkItem.clientPrice),
-    thresholdPct: Number(quote.benchmarkItem.study.qcThresholdPct),
-  });
-  const flagged = flag.comparable && flag.flagged;
-  const hasJustification = quote.justification !== null && quote.justification.trim() !== "";
+    const flag = evaluatePriceFlag({
+      usdPricePerUnit:
+        quote.convertedUsdPricePerUnit === null ? null : Number(quote.convertedUsdPricePerUnit),
+      clientPrice:
+        quote.benchmarkItem.clientPrice === null ? null : Number(quote.benchmarkItem.clientPrice),
+      thresholdPct: Number(quote.benchmarkItem.study.qcThresholdPct),
+    });
+    const flagged = flag.comparable && flag.flagged;
+    const hasJustification = quote.justification !== null && quote.justification.trim() !== "";
 
-  const result = transition(quote.state, {
-    kind: "approve",
-    conversionStatus: quote.conversionStatus,
-    flagged,
-    hasJustification,
-  });
-  if (!result.ok) return result;
+    const result = transition(quote.state, {
+      kind: "approve",
+      conversionStatus: quote.conversionStatus,
+      flagged,
+      hasJustification,
+    });
+    if (!result.ok) return result;
 
-  await prisma.$transaction(async (tx) => {
     const applied = await tx.quote.updateMany({
       where: { id: quoteId, state: "Submitted" },
       data: { state: "Approved", reviewedById: principal.userId, reviewedAt: new Date() },
@@ -459,8 +468,8 @@ export async function approveQuote(
         }),
       ]);
     }
+    return result;
   });
-  return result;
 }
 
 /**
@@ -478,23 +487,23 @@ export async function rejectQuote(
   if (!canReviewQuote(principal)) {
     throw new QuoteAccessError("Only Analysts may review quotes");
   }
-  const quote = await prisma.quote.findUnique({
-    where: { id: quoteId },
-    select: {
-      state: true,
-      createdById: true,
-      createdBy: { select: { status: true } },
-      benchmarkItem: { select: { studyId: true } },
-    },
-  });
-  if (quote === null) {
-    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
-  }
+  return withTenant(principal, async (tx) => {
+    const quote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      select: {
+        state: true,
+        createdById: true,
+        createdBy: { select: { status: true } },
+        benchmarkItem: { select: { studyId: true } },
+      },
+    });
+    if (quote === null) {
+      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    }
 
-  const result = transition(quote.state, { kind: "reject", reason });
-  if (!result.ok) return result;
+    const result = transition(quote.state, { kind: "reject", reason });
+    if (!result.ok) return result;
 
-  await prisma.$transaction(async (tx) => {
     const applied = await tx.quote.updateMany({
       where: { id: quoteId, state: "Submitted" },
       data: {
@@ -526,8 +535,8 @@ export async function rejectQuote(
         ]);
       }
     }
+    return result;
   });
-  return result;
 }
 
 /**
@@ -545,34 +554,40 @@ export async function reviseQuote(
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
-  const quote = await prisma.quote.findUnique({
-    where: { id: quoteId },
-    select: { createdById: true, state: true },
-  });
-  if (quote === null) {
-    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
-  }
-  if (quote.createdById !== principal.userId) {
-    throw new QuoteAccessError("Only the author may revise their Quote");
-  }
+  return withTenant(principal, async (tx) => {
+    const quote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      select: { createdById: true, state: true },
+    });
+    if (quote === null) {
+      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    }
+    if (quote.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the author may revise their Quote");
+    }
 
-  const result = transition(quote.state, { kind: "revise" });
-  if (!result.ok) return result;
+    const result = transition(quote.state, { kind: "revise" });
+    if (!result.ok) return result;
 
-  await prisma.quote.updateMany({
-    where: { id: quoteId, state: "Rejected", createdById: principal.userId },
-    data: { state: "Draft", conversionStatus: null, submittedAt: null },
+    await tx.quote.updateMany({
+      where: { id: quoteId, state: "Rejected", createdById: principal.userId },
+      data: { state: "Draft", conversionStatus: null, submittedAt: null },
+    });
+    return result;
   });
-  return result;
 }
 
 /** Load a Quote and assert the caller owns it and it is still a Draft. The single
  *  gate behind every researcher write that mutates an existing Quote. */
-async function requireOwnDraft(principal: Principal, quoteId: string): Promise<void> {
+async function requireOwnDraft(
+  tx: TenantClient,
+  principal: Principal,
+  quoteId: string,
+): Promise<void> {
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
-  const quote = await prisma.quote.findUnique({
+  const quote = await tx.quote.findUnique({
     where: { id: quoteId },
     select: { createdById: true, state: true },
   });

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { withTenant } from "@/lib/tenant-context";
 import type { Principal } from "@/domains/authz/principal";
 import { isInternal } from "@/domains/authz/principal";
 import {
@@ -62,7 +62,7 @@ export async function importBenchmarkItems(
   const validation = validateImport(grid);
   if (!validation.ok) return { ok: false, errors: validation.errors };
 
-  const { inserted, updated } = await prisma.$transaction(async (tx) => {
+  const { inserted, updated } = await withTenant(principal, async (tx) => {
     const existing = await tx.benchmarkItem.findMany({
       where: { studyId },
       select: { country: true, clientPartNumberKey: true },
@@ -73,7 +73,10 @@ export async function importBenchmarkItems(
 
     if (inserts.length > 0) {
       await tx.benchmarkItem.createMany({
-        data: inserts.map((item) => toRow(studyId, item)),
+        // clientId is the denormalized RLS tenant column (ADR-0021), copied from
+        // the parent study; the upsert key never changes tenant, so updates leave
+        // it untouched.
+        data: inserts.map((item) => ({ ...toRow(studyId, item), clientId: study.clientId })),
       });
     }
     for (const item of updates) {
@@ -180,10 +183,12 @@ export async function getBenchmarkItemForResearcher(
   if (!isInternal(principal)) {
     throw new BenchmarkItemAccessError("Internal staff only");
   }
-  return prisma.benchmarkItem.findUnique({
-    where: { id: itemId },
-    select: RESEARCHER_VIEW_SELECT,
-  });
+  return withTenant(principal, (tx) =>
+    tx.benchmarkItem.findUnique({
+      where: { id: itemId },
+      select: RESEARCHER_VIEW_SELECT,
+    }),
+  );
 }
 
 export interface SelfAssignResult {
@@ -215,50 +220,52 @@ export async function selfAssignBenchmarkItem(
     );
   }
 
-  const item = await prisma.benchmarkItem.findUnique({
-    where: { id: itemId },
-    select: { id: true, studyId: true, country: true },
-  });
-  if (item === null) {
-    throw new BenchmarkItemAccessError(`Benchmark Item not found: ${itemId}`);
-  }
+  return withTenant(principal, async (tx) => {
+    const item = await tx.benchmarkItem.findUnique({
+      where: { id: itemId },
+      select: { id: true, studyId: true, country: true },
+    });
+    if (item === null) {
+      throw new BenchmarkItemAccessError(`Benchmark Item not found: ${itemId}`);
+    }
 
-  // The caller must be in the item's Country pool (#6). Only Researchers are ever
-  // in a pool, so this also re-confirms the role at the data layer.
-  const membership = await prisma.countryAssignment.findFirst({
-    where: {
-      studyId: item.studyId,
-      country: item.country,
-      researcherId: principal.userId,
-    },
-    select: { id: true },
-  });
-  if (membership === null) {
+    // The caller must be in the item's Country pool (#6). Only Researchers are ever
+    // in a pool, so this also re-confirms the role at the data layer.
+    const membership = await tx.countryAssignment.findFirst({
+      where: {
+        studyId: item.studyId,
+        country: item.country,
+        researcherId: principal.userId,
+      },
+      select: { id: true },
+    });
+    if (membership === null) {
+      throw new BenchmarkItemAccessError(
+        `Not assigned to Country "${item.country}" — ask the Engagement Manager`,
+      );
+    }
+
+    // Atomic first-come claim: writes only while the lead is still unclaimed.
+    const claimed = await tx.benchmarkItem.updateMany({
+      where: { id: itemId, primaryResearcherId: null },
+      data: { primaryResearcherId: principal.userId },
+    });
+    if (claimed.count === 1) {
+      return { primaryResearcherId: principal.userId };
+    }
+
+    // The claim matched no row: the item already has a primary researcher.
+    const current = await tx.benchmarkItem.findUnique({
+      where: { id: itemId },
+      select: { primaryResearcherId: true },
+    });
+    if (current?.primaryResearcherId === principal.userId) {
+      return { primaryResearcherId: principal.userId }; // idempotent re-claim
+    }
     throw new BenchmarkItemAccessError(
-      `Not assigned to Country "${item.country}" — ask the Engagement Manager`,
+      `Benchmark Item ${itemId} already has a primary researcher`,
     );
-  }
-
-  // Atomic first-come claim: writes only while the lead is still unclaimed.
-  const claimed = await prisma.benchmarkItem.updateMany({
-    where: { id: itemId, primaryResearcherId: null },
-    data: { primaryResearcherId: principal.userId },
   });
-  if (claimed.count === 1) {
-    return { primaryResearcherId: principal.userId };
-  }
-
-  // The claim matched no row: the item already has a primary researcher.
-  const current = await prisma.benchmarkItem.findUnique({
-    where: { id: itemId },
-    select: { primaryResearcherId: true },
-  });
-  if (current?.primaryResearcherId === principal.userId) {
-    return { primaryResearcherId: principal.userId }; // idempotent re-claim
-  }
-  throw new BenchmarkItemAccessError(
-    `Benchmark Item ${itemId} already has a primary researcher`,
-  );
 }
 
 /**
@@ -289,18 +296,20 @@ export async function listBenchmarkItemsForAnalyst(
   if (!canMaintainClientPrice(principal)) {
     throw new BenchmarkItemAccessError("Only Analysts may view Client Price");
   }
-  const rows = await prisma.benchmarkItem.findMany({
-    where: { studyId },
-    orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
-    select: {
-      id: true,
-      country: true,
-      clientPartNumber: true,
-      itemDescription: true,
-      requiredQuotes: true,
-      clientPrice: true,
-    },
-  });
+  const rows = await withTenant(principal, (tx) =>
+    tx.benchmarkItem.findMany({
+      where: { studyId },
+      orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
+      select: {
+        id: true,
+        country: true,
+        clientPartNumber: true,
+        itemDescription: true,
+        requiredQuotes: true,
+        clientPrice: true,
+      },
+    }),
+  );
   return rows.map((r) => ({
     ...r,
     clientPrice: r.clientPrice === null ? null : Number(r.clientPrice),
@@ -336,7 +345,7 @@ export async function setClientPrice(
     throw new BenchmarkItemAccessError("Client Price must be a number greater than 0");
   }
 
-  await prisma.$transaction(async (tx) => {
+  await withTenant(principal, async (tx) => {
     // Read the prior value first — both to record the before/after delta and to
     // assert the item exists, inside the same transaction as the change (ADR-0019:
     // the audit write is atomic with the transition). A re-import never overwrites

@@ -50,7 +50,7 @@ beforeEach(async () => {
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   itemId = (await prisma.benchmarkItem.create({
     data: {
-      studyId, country: "Germany", clientPartNumber: "PN-1", clientPartNumberKey: "pn-1",
+      studyId, clientId: tenant, country: "Germany", clientPartNumber: "PN-1", clientPartNumberKey: "pn-1",
       itemDescription: "Pump", machineModel: "X1", requiredQuotes: 3, clientPrice: 1000,
     },
   })).id;

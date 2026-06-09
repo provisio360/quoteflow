@@ -87,6 +87,7 @@ async function seedCountry(country: string): Promise<string> {
     await prisma.benchmarkItem.create({
       data: {
         studyId,
+        clientId: tenantId,
         country,
         clientPartNumber: `PN-${country}`,
         clientPartNumberKey: `pn-${country.toLowerCase()}`,
@@ -152,6 +153,7 @@ beforeAll(async () => {
     await prisma.benchmarkItem.create({
       data: {
         studyId,
+        clientId: tenantId,
         country: "Germany",
         clientPartNumber: "PN-1",
         clientPartNumberKey: "pn-1",
