@@ -45,4 +45,26 @@ jobs:
       # tests against it. `migrate deploy` (not `dev`) is the CI-correct command:
       # it applies prisma/migrations/ as-is without generating new ones.
       - run: npm run db:deploy
+      # Provision the LOGIN role the RLS proof connects as (#21 / ADR-0021). The
+      # migration above created the NOLOGIN group `quoteflow_app` + the policies;
+      # here we add a login role and grant it into the group. CI's `postgres` user
+      # is the table owner and bypasses RLS, so the policies only bite for this
+      # non-owner role. The CI database is ephemeral, so a plain CREATE ROLE is
+      # fine (no shadow-DB / re-run concern).
+      - name: Provision RLS app-role login
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE quoteflow_app_login LOGIN PASSWORD 'apppw'" \
+            -c "GRANT quoteflow_app TO quoteflow_app_login"
+      # The main integration suite runs as the owner; its fixtures seed via the
+      # repository/Prisma singleton without a tenant context, so it must NOT use
+      # the app role (the RLS proof test detects the missing APP_DATABASE_URL and
+      # skips here).
       - run: npm run test:integration
+      # Run the RLS proof on its own, as the non-owner app role, so it actually
+      # exercises the backstop. APP_DATABASE_URL is set for THIS step only — job-
+      # wide it would fail-close the owner-seeded fixtures above.
+      - name: RLS tenant-isolation proof (as the app role)
+        env:
+          APP_DATABASE_URL: postgresql://quoteflow_app_login:apppw@localhost:5432/quoteflow_test
+        run: npm run test:integration -- src/lib/rls/isolation.integration.test.ts
