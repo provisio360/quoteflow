@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requirePrincipal } from "@/lib/identity/current-principal";
 import {
   assignResearchers,
@@ -49,4 +50,15 @@ export async function assignResearchersAction(
     }
     throw error;
   }
+}
+
+// Adapter to the React `useActionState` signature for the per-Country assign
+// form. Revalidates the study page so the new assignment shows on refresh.
+export async function assignResearchersFormAction(
+  _prev: AssignResearchersResult | null,
+  formData: FormData,
+): Promise<AssignResearchersResult> {
+  const result = await assignResearchersAction(formData);
+  if (result.ok) revalidatePath(`/studies/${String(formData.get("studyId") ?? "")}`);
+  return result;
 }

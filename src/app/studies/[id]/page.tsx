@@ -6,10 +6,19 @@ import {
   canImportBenchmarkItems,
   canMaintainClientPrice,
 } from "@/domains/authz/benchmark-items";
-import { listBenchmarkItemsForAnalyst } from "@/lib/benchmark-items/repository";
+import { canAssignResearchers } from "@/domains/authz/assignments";
+import {
+  listBenchmarkItemsForAnalyst,
+  listStudyCountries,
+} from "@/lib/benchmark-items/repository";
+import {
+  listActiveResearchers,
+  listAssignmentsForStudy,
+} from "@/lib/assignments/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
 import { ClientPriceList } from "./ClientPriceList";
 import { BenchmarkComparison } from "./BenchmarkComparison";
+import { CountryAssignRow } from "./CountryAssignRow";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, lineHeight: 1.5 } as const;
 
@@ -40,6 +49,12 @@ export default async function StudyDetailPage({
   // the Client Price it carries is never exposed on the client dashboard.
   const benchmark = await getStudyBenchmarkComparison(principal, study.id);
 
+  // EM-only staffing view (#6): each Country with who's assigned and which active
+  // researchers remain to add. Derived from the study's Benchmark Items, so a
+  // Country with no items never appears.
+  const mayAssign = canAssignResearchers(principal);
+  const staffing = mayAssign ? await buildStaffing(principal, study.id) : [];
+
   return (
     <main style={wrap}>
       <p style={{ marginBottom: "0.5rem" }}>
@@ -67,9 +82,65 @@ export default async function StudyDetailPage({
         <span style={{ color: "#777" }}>(released results, as the client sees them)</span>
       </p>
 
+      {mayAssign && (
+        <section style={{ marginTop: "2rem" }}>
+          <h2 style={{ fontSize: "1.1rem" }}>Researcher assignment</h2>
+          {staffing.length === 0 ? (
+            <p style={{ color: "#777" }}>Import a brief first — Countries come from its items.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0 }}>
+              {staffing.map((s) => (
+                <CountryAssignRow
+                  key={s.country}
+                  studyId={study.id}
+                  country={s.country}
+                  assigned={s.assigned}
+                  available={s.available}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       {qcItems !== null && <ClientPriceList studyId={study.id} items={qcItems} />}
 
       <BenchmarkComparison items={benchmark} />
     </main>
   );
+}
+
+type StaffedCountry = {
+  country: string;
+  assigned: { id: string; name: string }[];
+  available: { id: string; name: string }[];
+};
+
+/** Per-Country: who is assigned, and which active researchers remain to add. */
+async function buildStaffing(
+  principal: Parameters<typeof listStudyCountries>[0],
+  studyId: string,
+): Promise<StaffedCountry[]> {
+  const [countries, assignments, researchers] = await Promise.all([
+    listStudyCountries(principal, studyId),
+    listAssignmentsForStudy(principal, studyId),
+    listActiveResearchers(principal),
+  ]);
+  const nameById = new Map(researchers.map((r) => [r.id, r.name]));
+
+  const idsByCountry = new Map<string, Set<string>>();
+  for (const a of assignments) {
+    const set = idsByCountry.get(a.country) ?? new Set<string>();
+    set.add(a.researcherId);
+    idsByCountry.set(a.country, set);
+  }
+
+  return countries.map((country) => {
+    const assignedIds = idsByCountry.get(country) ?? new Set<string>();
+    return {
+      country,
+      assigned: [...assignedIds].map((id) => ({ id, name: nameById.get(id) ?? id })),
+      available: researchers.filter((r) => !assignedIds.has(r.id)),
+    };
+  });
 }
