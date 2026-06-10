@@ -27,6 +27,19 @@ export async function requireInternalPage(): Promise<InternalPrincipal> {
 }
 
 /**
+ * Gate a page to the Admin (tenant + identity administration). A non-Admin —
+ * authenticated or not — redirects to /login, never a 403 (ADR-0008: we don't
+ * confirm what lies beyond).
+ */
+export async function requireAdminPage(): Promise<InternalPrincipal> {
+  const principal = await getCurrentPrincipal();
+  if (principal === null || !isInternal(principal) || principal.role !== "Admin") {
+    redirect("/login");
+  }
+  return principal;
+}
+
+/**
  * Gate a page to any authenticated principal — internal staff OR a Client User.
  * Unauthenticated redirects to /login. Used by the client-facing dashboards
  * (#14), where the actual tenant scoping is enforced downstream by the read

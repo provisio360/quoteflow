@@ -1,3 +1,5 @@
+import { NavHeader } from "./NavHeader";
+
 export const metadata = {
   title: "QuoteFlow",
   description: "Multi-tenant pricing-study platform",
@@ -10,7 +12,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <NavHeader />
+        {children}
+      </body>
     </html>
   );
 }

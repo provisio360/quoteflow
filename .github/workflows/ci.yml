@@ -30,6 +30,10 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/quoteflow_test
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/quoteflow_test
+      # Better Auth instantiates at module load and requires a secret. The
+      # integration suite imports it transitively (identity invites → users →
+      # auth), so CI needs a throwaway value — no real auth happens in tests.
+      BETTER_AUTH_SECRET: ci-test-secret-not-a-real-secret-0000000000
 
     steps:
       - uses: actions/checkout@v4

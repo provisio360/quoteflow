@@ -176,6 +176,30 @@ const RESEARCHER_VIEW_SELECT = {
  * if it does not exist. Internal staff only — a client user gets an access
  * error (their released-data view is #14, not this work view).
  */
+/**
+ * The distinct Countries of a study, derived from its Benchmark Items (ADR-0009)
+ * — the set the EM assigns researchers to and the Analyst releases. Internal-only
+ * and Client-Price-free, so any internal role may read it (unlike the analyst
+ * QC list). Empty until a brief is imported.
+ */
+export async function listStudyCountries(
+  principal: Principal,
+  studyId: string,
+): Promise<string[]> {
+  if (!isInternal(principal)) {
+    throw new BenchmarkItemAccessError("Internal staff only");
+  }
+  const rows = await withTenant(principal, (tx) =>
+    tx.benchmarkItem.findMany({
+      where: { studyId },
+      distinct: ["country"],
+      orderBy: { country: "asc" },
+      select: { country: true },
+    }),
+  );
+  return rows.map((r) => r.country);
+}
+
 export async function getBenchmarkItemForResearcher(
   principal: Principal,
   itemId: string,
@@ -186,6 +210,28 @@ export async function getBenchmarkItemForResearcher(
   return withTenant(principal, (tx) =>
     tx.benchmarkItem.findUnique({
       where: { id: itemId },
+      select: RESEARCHER_VIEW_SELECT,
+    }),
+  );
+}
+
+/**
+ * A study's Benchmark Items as a Researcher sees them (#7): the guidance view
+ * with NO Client Price (RESEARCHER_VIEW_SELECT never selects it), carrying
+ * `primaryResearcherId` so the UI can show claim / mine / claimed-by-other.
+ * Ordered by Country then Client Part Number. Internal-only.
+ */
+export async function listBenchmarkItemsForResearcher(
+  principal: Principal,
+  studyId: string,
+): Promise<ResearcherItemView[]> {
+  if (!isInternal(principal)) {
+    throw new BenchmarkItemAccessError("Internal staff only");
+  }
+  return withTenant(principal, (tx) =>
+    tx.benchmarkItem.findMany({
+      where: { studyId },
+      orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
       select: RESEARCHER_VIEW_SELECT,
     }),
   );

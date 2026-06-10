@@ -1,4 +1,5 @@
 import type { CountryAssignment } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import { withTenant } from "@/lib/tenant-context";
 import type { Principal } from "@/domains/authz/principal";
 import { isInternal } from "@/domains/authz/principal";
@@ -23,6 +24,31 @@ export class AssignmentAccessError extends Error {
     super(message);
     this.name = "AssignmentAccessError";
   }
+}
+
+/** A Researcher eligible to be assigned to a Country (the EM picker). */
+export interface AssignableResearcher {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * The pool an EM may assign from: every ACTIVE INTERNAL Researcher — the same set
+ * assignResearchers validates each target against. Internal-only (staffing data).
+ * The `user` table is not tenant-scoped (identity substrate, no RLS), so this is a
+ * direct read.
+ */
+export async function listActiveResearchers(
+  principal: Principal,
+): Promise<AssignableResearcher[]> {
+  if (!isInternal(principal)) {
+    throw new AssignmentAccessError("Internal staff only");
+  }
+  return prisma.user.findMany({
+    where: { kind: "internal", role: "Researcher", status: "active" },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
 }
 
 export interface AssignmentResult {

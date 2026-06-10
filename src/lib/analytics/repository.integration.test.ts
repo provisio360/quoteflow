@@ -212,4 +212,10 @@ describe("getStudyBenchmarkComparison — internal View D", () => {
       AnalyticsAccessError,
     );
   });
+
+  it("refuses a Researcher — Client Price is hidden from researchers (ADR-0003)", async () => {
+    await expect(getStudyBenchmarkComparison(researcher, studyA)).rejects.toBeInstanceOf(
+      AnalyticsAccessError,
+    );
+  });
 });
