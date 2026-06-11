@@ -40,8 +40,8 @@ A failing case becomes a linked bug via GitHub's "convert to issue".
 **ID: TC003**
 **Tracker: A3** · US4
 **Name:** Re-imported spreadsheet upserts instead of duplicating.
-**Instructions:** Edit one row in `uat-import-sample.xlsx` (e.g. change CPN-1001's Client Price to 1900), keep the same Client Part Number + Country, save, and re-import the file into the same study.
-**Expected result:** The existing CPN-1001 item is updated (no duplicate row created); item count stays 10.
+**Instructions:** Edit one row in `uat-import-sample.xlsx` — change a brief field that re-import owns, e.g. CPN-1001's Item Description (or Required Quotes). Keep the same Client Part Number + Country, save, and re-import the file into the same study. (Do **not** test this with Client Price: by ADR-0015 the brief only *seeds* Client Price and re-import deliberately never overwrites it, so an edit there is expected to be ignored.)
+**Expected result:** The existing CPN-1001 item is updated in place — the edited brief field shows the new value, no duplicate row is created, and item count stays 10.
 
 **ID: TC004**
 **Tracker: A4** · US5
