@@ -59,6 +59,9 @@ export interface QuoteView {
   readonly quoteNumber: number;
   readonly state: "Draft" | "Submitted" | "Approved" | "Rejected";
   readonly createdById: string;
+  /** The name of the researcher who created the quote — surfaced so a pool member
+   *  can attribute a peer's quote on a shared item (mirrors the review queue). */
+  readonly authorName: string;
   readonly competitorBrand: string | null;
   readonly dealerName: string | null;
   readonly dealerLocation: string | null;
@@ -100,6 +103,7 @@ const QUOTE_VIEW_SELECT = {
   dateQuoteReceived: true,
   rejectionReason: true,
   justification: true,
+  createdBy: { select: { name: true } },
 } as const;
 
 /**
@@ -297,7 +301,11 @@ export async function listQuotesForItem(
       orderBy: { quoteNumber: "asc" },
     }),
   );
-  return rows.map((r) => ({ ...r, price: r.price === null ? null : r.price.toString() }));
+  return rows.map(({ createdBy, ...r }) => ({
+    ...r,
+    authorName: createdBy.name,
+    price: r.price === null ? null : r.price.toString(),
+  }));
 }
 
 /** One row of the analyst review queue (#11): the Quote plus the Benchmark Item

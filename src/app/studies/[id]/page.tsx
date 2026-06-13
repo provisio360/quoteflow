@@ -144,6 +144,7 @@ export default async function StudyDetailPage({
                       item={entry.item}
                       mode={entry.mode}
                       quotes={entry.quotes}
+                      myUserId={principal.userId}
                     />
                   ))}
                 </ul>
@@ -239,10 +240,17 @@ async function buildResearcherView(
     assignments.filter((a) => a.studyId === studyId).map((a) => a.country),
   );
 
+  // Attach quotes for items I lead (mine) AND items a peer leads (claimed): on a
+  // claimed item the pool read surfaces the peer's non-Draft quotes (#68). The
+  // pool-read filter already enforces Draft privacy (ADR-0011) and never carries
+  // Client Price (ADR-0003). claimable/locked items show no quotes.
   const entries: ResearcherItemEntry[] = await Promise.all(
     resolveResearcherEntries(items, myCountries, principal.userId).map(async (e) => ({
       ...e,
-      quotes: e.mode === "mine" ? await listQuotesForItem(principal, e.item.id) : [],
+      quotes:
+        e.mode === "mine" || e.mode === "claimed"
+          ? await listQuotesForItem(principal, e.item.id)
+          : [],
     })),
   );
 
