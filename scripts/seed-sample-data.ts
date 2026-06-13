@@ -55,7 +55,7 @@ async function main() {
 
   // ── Tenant (Client) + Client User ──────────────────────────────────────
   const client = await prisma.client.create({ data: { name: DEMO_CLIENT } });
-  await ensureUser({
+  const clientUserId = await ensureUser({
     email: "client@globex.com",
     name: "Cleo Buyer",
     identity: { kind: "client", role: null, tenantId: client.id },
@@ -278,7 +278,12 @@ async function main() {
   });
 
   // ── Release Germany (its approved quotes become client-visible) ─────────
-  await prisma.countryRelease.create({
+  // Germany is deliberately not eligibility-clean (GX-1001 keeps a Submitted
+  // quote for TC010), so we can't drive this through releaseCountry()'s gate.
+  // We still mirror the rest of that path's side effects by hand: stamp
+  // clientNotifiedAt and write the client's "Results released" Notification —
+  // otherwise the released country has no in-app notification and TC041 fails.
+  const release = await prisma.countryRelease.create({
     data: {
       studyId: study.id,
       clientId: client.id,
@@ -286,6 +291,17 @@ async function main() {
       state: "released",
       releasedById: analystId,
       releasedAt: new Date("2026-05-20"),
+      clientNotifiedAt: new Date("2026-05-20"),
+    },
+  });
+  await prisma.notification.create({
+    data: {
+      recipientId: clientUserId,
+      kind: "countryReleased",
+      studyId: study.id,
+      subjectType: "CountryRelease",
+      subjectId: release.id,
+      country: "Germany",
     },
   });
 
@@ -294,7 +310,7 @@ async function main() {
   console.info(`   Study:   ${study.name} (${study.id})`);
   console.info(`   Items:   ${items.length} across Germany + France`);
   console.info(`   Quotes:  Approved / Submitted / Rejected / Draft + 1 QC-flagged`);
-  console.info(`   Germany released to client.`);
+  console.info(`   Germany released to client (with "Results released" notification).`);
   console.info("");
   console.info(`   Demo login password (all seeded users): ${PASSWORD}`);
   console.info(`     EM:         em@quoteflow.local`);
