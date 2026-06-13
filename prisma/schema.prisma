@@ -526,6 +526,7 @@ enum AuditAction {
   reopen
   import
   clientPriceChange
+  manualRateOverride
   assign
 }
 
@@ -545,9 +546,10 @@ enum AuditSubjectType {
 /// user). `studyId` is denormalized so a study's timeline is one indexed query
 /// (mirroring ExportAudit.clientId). `subjectType`/`subjectId` are polymorphic.
 /// `beforeValue`/`afterValue` carry a monetary delta for the transitions that
-/// change one — in v1 only `clientPriceChange` writes them (Decimal(14,4) matches
-/// BenchmarkItem.clientPrice); null for every other action. Rows are written,
-/// never updated or deleted — a correction is a new event.
+/// change one — `clientPriceChange` (Decimal(14,4) matches BenchmarkItem.clientPrice)
+/// and `manualRateOverride` (after = the newly-pinned convertedUsdPrice; ADR-0023);
+/// null for every other action. Rows are written, never updated or deleted — a
+/// correction is a new event.
 model AuditEvent {
   id          String           @id @default(cuid())
   action      AuditAction

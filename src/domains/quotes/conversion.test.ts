@@ -5,6 +5,7 @@ import {
   resolveExchangeRate,
   computeConversion,
   convertManual,
+  parseManualRate,
   MAX_LOOKBACK_DAYS,
 } from "./conversion";
 import type { ConvertibleQuote } from "./conversion";
@@ -207,5 +208,28 @@ describe("convertManual", () => {
   it("applies the same quantity guard as the auto path", () => {
     const result = convertManual({ ...eurQuote, quantityQuoted: 0 }, 1.1);
     expect(result.convertedUsdPricePerUnit).toBeNull();
+  });
+});
+
+describe("parseManualRate", () => {
+  it("accepts a positive numeric string, trimmed", () => {
+    expect(parseManualRate(" 1.08 ")).toEqual({ ok: true, rate: 1.08 });
+  });
+
+  it("accepts a positive number directly", () => {
+    expect(parseManualRate(1.1)).toEqual({ ok: true, rate: 1.1 });
+  });
+
+  it("rejects zero and negative rates", () => {
+    expect(parseManualRate("0")).toEqual({ ok: false });
+    expect(parseManualRate(-1.08)).toEqual({ ok: false });
+  });
+
+  it("rejects non-numeric, empty, and NaN input", () => {
+    expect(parseManualRate("abc")).toEqual({ ok: false });
+    expect(parseManualRate("1.1x")).toEqual({ ok: false });
+    expect(parseManualRate("")).toEqual({ ok: false });
+    expect(parseManualRate("   ")).toEqual({ ok: false });
+    expect(parseManualRate(Number.NaN)).toEqual({ ok: false });
   });
 });

@@ -10,8 +10,10 @@ import {
   approveQuote,
   rejectQuote,
   reviseQuote,
+  setManualRate,
   QuoteAccessError,
   type QuoteFields,
+  type SetManualRateResult,
 } from "./repository";
 import type { TransitionResult } from "@/domains/quotes/lifecycle";
 
@@ -121,6 +123,34 @@ export async function rejectQuoteAction(
   const principal = await requirePrincipal();
   try {
     const result = await rejectQuote(principal, quoteId, reason);
+    if (result.ok) revalidatePath("/review");
+    return result;
+  } catch (error) {
+    if (error instanceof QuoteAccessError) {
+      return { ok: false, reason: "access", message: error.message };
+    }
+    throw error;
+  }
+}
+
+/** A manual-rate result, or an access failure surfaced as a message (#70). */
+export type SetManualRateActionResult =
+  | SetManualRateResult
+  | { readonly ok: false; readonly reason: "access"; readonly message: string };
+
+/**
+ * Analyst action: set a manual Exchange Rate on a pending Submitted Quote (#70).
+ * The raw input string is handed straight to the repository, which validates it
+ * via the pure `parseManualRate` — this layer adds no domain logic. Refreshes the
+ * review queue on success so the row re-renders with USD figures and Approve.
+ */
+export async function setManualRateAction(
+  quoteId: string,
+  rate: string,
+): Promise<SetManualRateActionResult> {
+  const principal = await requirePrincipal();
+  try {
+    const result = await setManualRate(principal, quoteId, rate);
     if (result.ok) revalidatePath("/review");
     return result;
   } catch (error) {
