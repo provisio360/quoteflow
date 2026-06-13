@@ -25,7 +25,12 @@ import { listCountryReleaseStatus } from "@/lib/release/repository";
 import { ClientPriceList } from "./ClientPriceList";
 import { BenchmarkComparison } from "./BenchmarkComparison";
 import { CountryAssignRow } from "./CountryAssignRow";
-import { ResearcherItem, type ItemMode } from "./ResearcherItem";
+import { ResearcherItem } from "./ResearcherItem";
+import {
+  resolveResearcherEntries,
+  type GuidanceFields,
+  type ItemMode,
+} from "@/domains/benchmark-items/researcher-view";
 import { CountryReleaseRow } from "./CountryReleaseRow";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720, lineHeight: 1.5 } as const;
@@ -212,15 +217,16 @@ async function buildStaffing(
 }
 
 type ResearcherItemEntry = {
-  item: { id: string; country: string; clientPartNumber: string; itemDescription: string; requiredQuotes: number };
+  item: GuidanceFields;
   mode: ItemMode;
   quotes: QuoteView[];
 };
 type ResearcherGroup = { country: string; items: ResearcherItemEntry[] };
 
 /** The researcher's per-Country items with their work mode and (for owned items)
- *  their quotes. Mode: mine (I'm Primary) / claimable (unclaimed + I'm assigned to
- *  the Country) / claimed (someone else's) / locked (unclaimed, not my Country). */
+ *  their quotes. Mode resolution + guidance threading is the pure
+ *  `resolveResearcherEntries`; this layer adds the IO: loading the items and
+ *  assignments, then attaching quotes for the items that are mine. */
 async function buildResearcherView(
   principal: Parameters<typeof listBenchmarkItemsForResearcher>[0] & { userId: string },
   studyId: string,
@@ -234,15 +240,10 @@ async function buildResearcherView(
   );
 
   const entries: ResearcherItemEntry[] = await Promise.all(
-    items.map(async (item) => {
-      let mode: ItemMode;
-      if (item.primaryResearcherId === principal.userId) mode = "mine";
-      else if (item.primaryResearcherId !== null) mode = "claimed";
-      else if (myCountries.has(item.country)) mode = "claimable";
-      else mode = "locked";
-      const quotes = mode === "mine" ? await listQuotesForItem(principal, item.id) : [];
-      return { item, mode, quotes };
-    }),
+    resolveResearcherEntries(items, myCountries, principal.userId).map(async (e) => ({
+      ...e,
+      quotes: e.mode === "mine" ? await listQuotesForItem(principal, e.item.id) : [],
+    })),
   );
 
   const byCountry = new Map<string, ResearcherItemEntry[]>();
