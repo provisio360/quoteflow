@@ -11,16 +11,9 @@ import {
 import type { QuoteView } from "@/lib/quotes/repository";
 import type { TransitionResult } from "@/domains/quotes/lifecycle";
 import { QuoteEditor } from "./QuoteEditor";
+import type { GuidanceFields, ItemMode } from "@/domains/benchmark-items/researcher-view";
 
-export type ItemMode = "mine" | "claimable" | "claimed" | "locked";
-
-type Item = {
-  id: string;
-  country: string;
-  clientPartNumber: string;
-  itemDescription: string;
-  requiredQuotes: number;
-};
+type Item = GuidanceFields;
 
 type ActionResult = { ok: boolean; message?: string } | TransitionResult;
 
@@ -46,6 +39,16 @@ function failureMessage(r: ActionResult): string {
 }
 
 const btn = { padding: "0.2rem 0.55rem", marginRight: "0.3rem" } as const;
+
+/** One client-guidance field in the `mine` panel (#66). Null shows as an em-dash. */
+function Guidance({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div style={{ display: "flex", gap: "0.4rem", padding: "0.05rem 0" }}>
+      <dt style={{ color: "#777", minWidth: "11rem" }}>{label}</dt>
+      <dd style={{ margin: 0 }}>{value ?? "—"}</dd>
+    </div>
+  );
+}
 
 export function ResearcherItem({
   item,
@@ -92,6 +95,13 @@ export function ResearcherItem({
 
       {mode === "mine" && (
         <div style={{ marginTop: "0.4rem" }}>
+          <dl style={{ margin: "0 0 0.6rem", fontSize: "0.9rem", color: "#333" }}>
+            <Guidance label="Client part number" value={item.clientPartNumber} />
+            <Guidance label="Item description" value={item.itemDescription} />
+            <Guidance label="Configuration comment" value={item.configurationComment} />
+            <Guidance label="Quantity" value={item.quantity === null ? null : String(item.quantity)} />
+            <Guidance label="Machine / model" value={item.machineModel} />
+          </dl>
           {quotes.length === 0 ? (
             <p style={{ color: "#777", margin: "0.2rem 0" }}>No quotes yet.</p>
           ) : (
