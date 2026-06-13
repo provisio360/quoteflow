@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveResearcherEntries } from "./researcher-view";
+import { quoteAffordances, resolveResearcherEntries } from "./researcher-view";
 import type { ResearcherItemView } from "@/lib/benchmark-items/repository";
 
 // A Benchmark Item as the researcher read-path returns it (RESEARCHER_VIEW_SELECT).
@@ -63,5 +63,45 @@ describe("resolveResearcherEntries", () => {
       "user-me",
     );
     expect(entries[0].mode).toBe("locked");
+  });
+});
+
+describe("quoteAffordances", () => {
+  // A peer's quote on the same item is readable once it leaves Draft (ADR-0011),
+  // but it is not mine to act on: no write affordance and no rejection reason
+  // (#68 — closes the latent leak where these keyed off state, not authorship).
+  it("a quote I do not own exposes no affordances, whatever its state", () => {
+    for (const state of ["Draft", "Submitted", "Approved", "Rejected"] as const) {
+      const a = quoteAffordances({ state, createdById: "user-other" }, "user-me");
+      expect(a).toEqual({
+        canEdit: false,
+        canSubmit: false,
+        canDelete: false,
+        canRevise: false,
+        showRejectionReason: false,
+      });
+    }
+  });
+
+  it("my own Draft can be edited, submitted, and deleted", () => {
+    const a = quoteAffordances({ state: "Draft", createdById: "user-me" }, "user-me");
+    expect(a).toEqual({
+      canEdit: true,
+      canSubmit: true,
+      canDelete: true,
+      canRevise: false,
+      showRejectionReason: false,
+    });
+  });
+
+  it("my own Rejected quote can be revised and shows its rejection reason", () => {
+    const a = quoteAffordances({ state: "Rejected", createdById: "user-me" }, "user-me");
+    expect(a).toEqual({
+      canEdit: false,
+      canSubmit: false,
+      canDelete: false,
+      canRevise: true,
+      showRejectionReason: true,
+    });
   });
 });

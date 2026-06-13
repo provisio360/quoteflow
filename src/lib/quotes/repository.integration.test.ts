@@ -255,6 +255,11 @@ describe("listQuotesForItem — Draft privacy (ADR-0011)", () => {
     expect(ids).toContain(aDraft.id); // own Draft — visible
     expect(ids).toContain(bSubmitted.id); // other's Submitted — visible
     expect(ids).not.toContain(bDraft.id); // other's Draft — hidden
+
+    // The peer's visible quote carries its author's name, so the work surface can
+    // attribute it to whoever submitted it (#68).
+    const peerQuote = asSeenByA.find((q) => q.id === bSubmitted.id);
+    expect(peerQuote?.authorName).toBe("Researcher B");
   });
 
   it("denies a client user (this read path is internal-only)", async () => {

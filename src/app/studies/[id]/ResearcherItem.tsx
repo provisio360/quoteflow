@@ -11,7 +11,11 @@ import {
 import type { QuoteView } from "@/lib/quotes/repository";
 import type { TransitionResult } from "@/domains/quotes/lifecycle";
 import { QuoteEditor } from "./QuoteEditor";
-import type { GuidanceFields, ItemMode } from "@/domains/benchmark-items/researcher-view";
+import {
+  quoteAffordances,
+  type GuidanceFields,
+  type ItemMode,
+} from "@/domains/benchmark-items/researcher-view";
 
 type Item = GuidanceFields;
 
@@ -54,10 +58,12 @@ export function ResearcherItem({
   item,
   mode,
   quotes,
+  myUserId,
 }: {
   item: Item;
   mode: ItemMode;
   quotes: QuoteView[];
+  myUserId: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -93,7 +99,11 @@ export function ResearcherItem({
       {mode === "claimed" && <span style={{ color: "#999", marginLeft: "0.5rem" }}>claimed by another researcher</span>}
       {mode === "locked" && <span style={{ color: "#999", marginLeft: "0.5rem" }}>not in your assigned countries</span>}
 
-      {mode === "mine" && (
+      {/* The work panel is shown both for items I lead (`mine`) and items a peer
+          leads (`claimed`): same guidance + quote list, but a claimed item gets no
+          write affordances — quote actions are owner-only (quoteAffordances) and
+          "+ Add quote" is gated to `mine` below (#68). */}
+      {(mode === "mine" || mode === "claimed") && (
         <div style={{ marginTop: "0.4rem" }}>
           <dl style={{ margin: "0 0 0.6rem", fontSize: "0.9rem", color: "#333" }}>
             <Guidance label="Client part number" value={item.clientPartNumber} />
@@ -106,52 +116,62 @@ export function ResearcherItem({
             <p style={{ color: "#777", margin: "0.2rem 0" }}>No quotes yet.</p>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {quotes.map((q) => (
-                <li key={q.id} style={{ padding: "0.25rem 0" }}>
-                  #{q.quoteNumber} · <strong>{q.state}</strong> · {q.competitorBrand ?? "—"} / {q.dealerName ?? "—"}{" "}
-                  {q.price ?? "—"} {q.currency ?? ""}
-                  {q.state === "Draft" && (
-                    <span style={{ marginLeft: "0.4rem" }}>
-                      <button type="button" style={btn} onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
-                        {editingId === q.id ? "Close" : "Edit"}
-                      </button>
-                      <button type="button" style={btn} disabled={pending} onClick={() => run(() => submitQuoteAction(q.id))}>
-                        Submit
-                      </button>
-                      <button type="button" style={btn} disabled={pending} onClick={() => run(() => deleteDraftQuoteAction(q.id))}>
-                        Delete
-                      </button>
-                    </span>
-                  )}
-                  {q.state === "Rejected" && (
-                    <span style={{ marginLeft: "0.4rem" }}>
-                      <button type="button" style={btn} disabled={pending} onClick={() => run(() => reviseQuoteAction(q.id))}>
-                        Revise
-                      </button>
-                    </span>
-                  )}
-                  {q.state === "Rejected" && q.rejectionReason && (
-                    <div style={{ color: "#b00", fontSize: "0.85rem" }}>Returned: {q.rejectionReason}</div>
-                  )}
-                  {editingId === q.id && (
-                    <QuoteEditor
-                      mode={{ type: "edit", quoteId: q.id }}
-                      initial={initialFromQuote(q)}
-                      onDone={() => setEditingId(null)}
-                    />
-                  )}
-                </li>
-              ))}
+              {quotes.map((q) => {
+                const can = quoteAffordances(q, myUserId);
+                return (
+                  <li key={q.id} style={{ padding: "0.25rem 0" }}>
+                    #{q.quoteNumber} · <strong>{q.state}</strong> · {q.competitorBrand ?? "—"} / {q.dealerName ?? "—"}{" "}
+                    {q.price ?? "—"} {q.currency ?? ""} — {q.authorName}
+                    {(can.canEdit || can.canSubmit || can.canDelete) && (
+                      <span style={{ marginLeft: "0.4rem" }}>
+                        {can.canEdit && (
+                          <button type="button" style={btn} onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
+                            {editingId === q.id ? "Close" : "Edit"}
+                          </button>
+                        )}
+                        {can.canSubmit && (
+                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => submitQuoteAction(q.id))}>
+                            Submit
+                          </button>
+                        )}
+                        {can.canDelete && (
+                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => deleteDraftQuoteAction(q.id))}>
+                            Delete
+                          </button>
+                        )}
+                      </span>
+                    )}
+                    {can.canRevise && (
+                      <span style={{ marginLeft: "0.4rem" }}>
+                        <button type="button" style={btn} disabled={pending} onClick={() => run(() => reviseQuoteAction(q.id))}>
+                          Revise
+                        </button>
+                      </span>
+                    )}
+                    {can.showRejectionReason && q.rejectionReason && (
+                      <div style={{ color: "#b00", fontSize: "0.85rem" }}>Returned: {q.rejectionReason}</div>
+                    )}
+                    {can.canEdit && editingId === q.id && (
+                      <QuoteEditor
+                        mode={{ type: "edit", quoteId: q.id }}
+                        initial={initialFromQuote(q)}
+                        onDone={() => setEditingId(null)}
+                      />
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
 
-          {adding ? (
-            <QuoteEditor mode={{ type: "create", itemId: item.id }} onDone={() => setAdding(false)} />
-          ) : (
-            <button type="button" style={{ ...btn, marginTop: "0.3rem" }} onClick={() => setAdding(true)}>
-              + Add quote
-            </button>
-          )}
+          {mode === "mine" &&
+            (adding ? (
+              <QuoteEditor mode={{ type: "create", itemId: item.id }} onDone={() => setAdding(false)} />
+            ) : (
+              <button type="button" style={{ ...btn, marginTop: "0.3rem" }} onClick={() => setAdding(true)}>
+                + Add quote
+              </button>
+            ))}
         </div>
       )}
 
