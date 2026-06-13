@@ -61,10 +61,6 @@ export default async function Home() {
           Not signed in. <a href="/login">Sign in</a> (invite-only — no public sign-up).
         </p>
       )}
-
-      <p style={{ marginTop: "1.5rem" }}>
-        Health check: <a href="/api/health">/api/health</a>
-      </p>
     </main>
   );
 }

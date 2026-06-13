@@ -8,22 +8,19 @@ export const dynamic = "force-dynamic";
 // database round-trip, then derives status via the pure core.
 export async function GET() {
   let dbOk = false;
-  let lastNote: string | null = null;
 
   try {
+    // Create + read round-trip proves the DB path. Result is intentionally
+    // discarded — health-check row content is not echoed to unauthed callers.
     await prisma.healthCheck.create({ data: { note: "health ping" } });
-    const latest = await prisma.healthCheck.findFirst({
-      orderBy: { createdAt: "desc" },
-    });
-    lastNote = latest?.note ?? null;
+    await prisma.healthCheck.findFirst({ orderBy: { createdAt: "desc" } });
     dbOk = true;
   } catch {
     dbOk = false;
   }
 
   const health = deriveHealth({ dbOk });
-  return NextResponse.json(
-    { ...health, lastNote },
-    { status: health.status === "down" ? 503 : 200 },
-  );
+  return NextResponse.json(health, {
+    status: health.status === "down" ? 503 : 200,
+  });
 }
