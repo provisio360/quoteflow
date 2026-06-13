@@ -11,6 +11,7 @@ import {
   approveQuote,
   rejectQuote,
   reviseQuote,
+  setManualRate,
   QuoteAccessError,
   type QuoteFields,
 } from "./repository";
@@ -416,6 +417,67 @@ describe("audit recording — submit / approve / reject (issue #16 / ADR-0019)",
     const reject = (await auditFor(id)).filter((e) => e.action === "reject");
     expect(reject).toHaveLength(1);
     expect(reject[0].actorId).toBe(analyst.userId);
+  });
+});
+
+describe("setManualRate — analyst override for a pending conversion (#70 / ADR-0023)", () => {
+  const auditFor = (quoteId: string) =>
+    prisma.auditEvent.findMany({ where: { studyId, subjectType: "Quote", subjectId: quoteId } });
+
+  // A Submitted quote left pending (no worker run): price 1250.50 EUR, qty 1.
+  async function submittedPending(): Promise<string> {
+    const { id } = await createDraftQuote(researcherA, itemId, complete);
+    const result = await submitQuote(researcherA, id);
+    if (!result.ok) throw new Error("seed quote failed to submit");
+    return id;
+  }
+
+  it("pins a manual conversion from pending and records the override", async () => {
+    const id = await submittedPending();
+
+    expect(await setManualRate(analyst, id, "1.1")).toEqual({ ok: true });
+
+    const row = await prisma.quote.findUnique({ where: { id } });
+    expect(row?.conversionStatus).toBe("manual");
+    expect(Number(row?.exchangeRate)).toBeCloseTo(1.1, 8);
+    expect(row?.rateDate?.toISOString().slice(0, 10)).toBe("2026-06-01"); // = dateQuoteReceived
+    // 1250.50 * 1.1 = 1375.55 ; / 1 = 1375.55
+    expect(Number(row?.convertedUsdPrice)).toBeCloseTo(1375.55, 4);
+    expect(Number(row?.convertedUsdPricePerUnit)).toBeCloseTo(1375.55, 4);
+
+    const events = (await auditFor(id)).filter((e) => e.action === "manualRateOverride");
+    expect(events).toHaveLength(1);
+    expect(events[0].actorId).toBe(analyst.userId);
+    expect(events[0].beforeValue).toBeNull();
+    expect(Number(events[0].afterValue)).toBeCloseTo(1375.55, 4);
+  });
+
+  it("denies a non-analyst", async () => {
+    const id = await submittedPending();
+    await expect(setManualRate(researcherA, id, "1.1")).rejects.toBeInstanceOf(QuoteAccessError);
+    await expect(setManualRate(em, id, "1.1")).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+
+  it("rejects a non-positive / non-numeric rate, leaving the quote pending", async () => {
+    const id = await submittedPending();
+    expect(await setManualRate(analyst, id, "0")).toEqual({ ok: false, reason: "invalid-rate" });
+    expect(await setManualRate(analyst, id, "abc")).toEqual({ ok: false, reason: "invalid-rate" });
+    const row = await prisma.quote.findUnique({ where: { id } });
+    expect(row?.conversionStatus).toBe("pending");
+    expect((await auditFor(id)).some((e) => e.action === "manualRateOverride")).toBe(false);
+  });
+
+  it("is sticky: a second override on an already-converted quote is refused", async () => {
+    const id = await submittedPending();
+    expect(await setManualRate(analyst, id, "1.1")).toEqual({ ok: true });
+    // A manual quote is no longer pending — a further override is rejected and the
+    // first rate stands untouched (no second audit event).
+    expect(await setManualRate(analyst, id, "2.0")).toEqual({ ok: false, reason: "not-pending" });
+    const row = await prisma.quote.findUnique({ where: { id } });
+    expect(Number(row?.exchangeRate)).toBeCloseTo(1.1, 8);
+    expect(
+      (await auditFor(id)).filter((e) => e.action === "manualRateOverride"),
+    ).toHaveLength(1);
   });
 });
 

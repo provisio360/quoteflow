@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { approveQuoteAction, rejectQuoteAction } from "@/lib/quotes/actions";
+import { approveQuoteAction, rejectQuoteAction, setManualRateAction } from "@/lib/quotes/actions";
 import type { ReviewQueueItem } from "@/lib/quotes/repository";
 
 // The analyst-facing queue rows (issue #11). A client component because each row
@@ -44,6 +44,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
   const [message, setMessage] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [rate, setRate] = useState("");
 
   const pendingConversion = item.conversionStatus === "pending" || item.conversionStatus === null;
   const flagged = item.flag.comparable && item.flag.flagged;
@@ -58,6 +59,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
       if (result.ok) {
         setRejecting(false);
         setReason("");
+        setRate("");
         router.refresh();
       } else {
         setMessage(reasonText(result.reason));
@@ -97,12 +99,43 @@ function Row({ item }: { item: ReviewQueueItem }) {
       </td>
       <td style={cell}>
         {pendingConversion ? (
-          <em style={{ color: "#b80" }}>awaiting conversion</em>
+          <div>
+            <em style={{ color: "#b80" }}>awaiting conversion</em>
+            <div style={{ marginTop: "0.4rem" }}>
+              <label style={{ color: "#777", fontSize: "0.85em" }}>
+                USD per 1 {item.currency ?? "unit"}
+              </label>
+              <br />
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                placeholder="rate"
+                style={{ width: "6rem" }}
+              />
+              <button
+                type="button"
+                style={btn}
+                disabled={pending}
+                onClick={() => run(() => setManualRateAction(item.id, rate))}
+              >
+                Save rate
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             ${item.convertedUsdPricePerUnit ?? "—"}
             <br />
             <span style={{ color: "#777" }}>total ${item.convertedUsdPrice ?? "—"}</span>
+            {item.conversionStatus === "manual" && (
+              <>
+                <br />
+                <span style={{ color: "#777", fontSize: "0.85em" }}>manual</span>
+              </>
+            )}
           </>
         )}
       </td>
@@ -192,6 +225,10 @@ function reasonText(reason?: string): string {
       return "This flagged price needs the author's justification before approval.";
     case "missing-reason":
       return "A reason is required to reject.";
+    case "invalid-rate":
+      return "Enter a valid exchange rate (a positive number).";
+    case "not-pending":
+      return "This quote is no longer awaiting conversion.";
     case "illegal-transition":
       return "This quote is no longer awaiting review (already actioned).";
     case "access":

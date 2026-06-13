@@ -165,6 +165,23 @@ export async function computeConversion(
   };
 }
 
+/** A validated manual rate, or a rejection (non-numeric / non-positive input). */
+export type ParsedManualRate =
+  | { readonly ok: true; readonly rate: number }
+  | { readonly ok: false };
+
+/**
+ * Validate an analyst-entered exchange rate (#70) before it reaches convertManual.
+ * Accepts a number or a numeric string (trimmed); rejects anything non-finite or
+ * non-positive — a rate must be a real, strictly-positive multiplier. Pure, so the
+ * rule is unit-testable without the DB; the repository composes parse → convert.
+ */
+export function parseManualRate(input: string | number): ParsedManualRate {
+  const rate = typeof input === "string" ? Number(input.trim()) : input;
+  if (!Number.isFinite(rate) || rate <= 0) return { ok: false };
+  return { ok: true, rate };
+}
+
 /**
  * The analyst's manual override for a currency the provider doesn't cover
  * (ADR-0004). Pure: same math as the auto path, tagged `manual`, pinned with

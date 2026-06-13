@@ -8,8 +8,9 @@ import {
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
 import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
+import { convertManual, parseManualRate } from "@/domains/quotes/conversion";
 import { recordAuditEvents } from "@/lib/audit/repository";
-import { auditQuoteLifecycle } from "@/domains/audit/events";
+import { auditQuoteLifecycle, auditManualRateOverride } from "@/domains/audit/events";
 import { recordNotifications } from "@/lib/notifications/dispatch";
 import { notifyQuoteRejected } from "@/domains/notifications/events";
 
@@ -484,6 +485,94 @@ export async function approveQuote(
       ]);
     }
     return result;
+  });
+}
+
+/** Outcome of a manual rate override: success, or a user-fixable rejection —
+ *  the rate didn't parse, or the quote is no longer pending (already converted,
+ *  the sticky guard). Role/not-found failures still throw QuoteAccessError. */
+export type SetManualRateResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: "invalid-rate" | "not-pending" };
+
+/**
+ * Set a manual Exchange Rate on a Submitted Quote whose conversion is `pending`
+ * (#70 / ADR-0023) — the analyst's escape hatch for a currency the provider
+ * doesn't cover. Analyst-gated (mirrors approveQuote). The rate is validated by
+ * the pure `parseManualRate`; the USD figures are derived by `convertManual`
+ * (same math as the auto path, rateDate pinned to the quote's date). Sticky: the
+ * guarded `updateMany` only fires while `conversionStatus = pending`, so it never
+ * clobbers an already-`auto`/`manual` quote nor races the background sweep. The
+ * override is recorded as a `manualRateOverride` Audit Event inside the same
+ * transaction (ADR-0019), carrying the new USD total as `after` (ADR-0023).
+ */
+export async function setManualRate(
+  principal: Principal,
+  quoteId: string,
+  rateInput: string | number,
+): Promise<SetManualRateResult> {
+  if (!canReviewQuote(principal)) {
+    throw new QuoteAccessError("Only Analysts may set a manual exchange rate");
+  }
+  const parsed = parseManualRate(rateInput);
+  if (!parsed.ok) return { ok: false, reason: "invalid-rate" };
+
+  return withTenant(principal, async (tx) => {
+    const quote = await tx.quote.findUnique({
+      where: { id: quoteId },
+      select: {
+        conversionStatus: true,
+        price: true,
+        currency: true,
+        quantityQuoted: true,
+        dateQuoteReceived: true,
+        benchmarkItem: { select: { studyId: true } },
+      },
+    });
+    if (quote === null) {
+      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    }
+    if (quote.conversionStatus !== "pending") {
+      return { ok: false, reason: "not-pending" };
+    }
+
+    // A pending quote always carries a price + date (both required at submit);
+    // convertManual reads primitives, so map off the Prisma Decimal. Currency is
+    // unused by the manual path (rate is supplied, not looked up).
+    const pinned = convertManual(
+      {
+        price: Number(quote.price),
+        currency: quote.currency ?? "",
+        quantityQuoted: quote.quantityQuoted,
+        dateQuoteReceived: quote.dateQuoteReceived as Date,
+      },
+      parsed.rate,
+    );
+
+    // Sticky guard: only a still-Submitted, still-pending row is overridden, so a
+    // concurrent auto-pin or a second override can't double-apply (mirrors the
+    // verdict guards). The count gates the atomic audit write (ADR-0019).
+    const applied = await tx.quote.updateMany({
+      where: { id: quoteId, state: "Submitted", conversionStatus: "pending" },
+      data: {
+        conversionStatus: "manual",
+        exchangeRate: pinned.exchangeRate,
+        rateDate: pinned.rateDate,
+        convertedUsdPrice: pinned.convertedUsdPrice,
+        convertedUsdPricePerUnit: pinned.convertedUsdPricePerUnit,
+      },
+    });
+    if (applied.count === 1) {
+      await recordAuditEvents(tx, [
+        auditManualRateOverride({
+          actorId: principal.userId,
+          studyId: quote.benchmarkItem.studyId,
+          quoteId,
+          after: pinned.convertedUsdPrice,
+        }),
+      ]);
+    }
+    return { ok: true };
   });
 }
 

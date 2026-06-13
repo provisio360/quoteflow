@@ -13,6 +13,7 @@ export type AuditAction =
   | "reopen"
   | "import"
   | "clientPriceChange"
+  | "manualRateOverride"
   | "assign";
 
 /** The kind of entity an event is about (CONTEXT.md: Audit Event subject). */
@@ -105,6 +106,28 @@ export function auditRelease(
     subjectId: input.countryReleaseId,
     beforeValue: null,
     afterValue: null,
+  };
+}
+
+/** An analyst hand-set a Quote's Exchange Rate for a currency the provider doesn't
+ *  cover (#70 / ADR-0023). Subject is the Quote. Carries the before/after monetary
+ *  pair: `before` is null (a pending quote had no USD figure) and `after` is the
+ *  newly-pinned Converted USD Price (the total) — not the raw rate, whose precision
+ *  exceeds this Decimal(14,4) channel; the rate lives on the Quote row itself. */
+export function auditManualRateOverride(input: {
+  actorId: string;
+  studyId: string;
+  quoteId: string;
+  after: number;
+}): AuditEvent {
+  return {
+    action: "manualRateOverride",
+    actorId: input.actorId,
+    studyId: input.studyId,
+    subjectType: "Quote",
+    subjectId: input.quoteId,
+    beforeValue: null,
+    afterValue: input.after,
   };
 }
 
