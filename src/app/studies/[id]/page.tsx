@@ -6,6 +6,7 @@ import {
   canImportBenchmarkItems,
   canMaintainClientPrice,
   canSelfAssignBenchmarkItem,
+  canViewClientPrice,
 } from "@/domains/authz/benchmark-items";
 import { canAssignResearchers } from "@/domains/authz/assignments";
 import {
@@ -52,6 +53,9 @@ export default async function StudyDetailPage({
   if (study === null) notFound();
 
   const mayImport = canImportBenchmarkItems(principal);
+  // The internal audit-log view (#72) reveals Client Price before/after, so its
+  // link is shown only to Client-Price viewers (Analyst + EM, ADR-0024).
+  const mayViewAudit = canViewClientPrice(principal);
   // Analyst-only: fetch the Client-Price-bearing list ONLY for analysts, so the
   // value never crosses the server boundary for anyone else (ADR-0003).
   const qcItems = canMaintainClientPrice(principal)
@@ -106,6 +110,15 @@ export default async function StudyDetailPage({
         </Link>{" "}
         <span style={{ color: "#777" }}>(released results, as the client sees them)</span>
       </p>
+
+      {mayViewAudit && (
+        <p style={{ marginTop: "1.5rem" }}>
+          <Link href={`/studies/${study.id}/audit`} style={{ fontWeight: 600 }}>
+            Audit log →
+          </Link>{" "}
+          <span style={{ color: "#777" }}>(internal change history)</span>
+        </p>
+      )}
 
       {mayAssign && (
         <section style={{ marginTop: "2rem" }}>

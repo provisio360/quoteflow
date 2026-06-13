@@ -37,3 +37,17 @@ export function canSelfAssignBenchmarkItem(principal: Principal): boolean {
 export function canMaintainClientPrice(principal: Principal): boolean {
   return principal.kind === "internal" && principal.role === "Analyst";
 }
+
+// VIEWING Client Price is broader than maintaining it (issue #72 / ADR-0024).
+// The Engagement Manager may *see* Client Price (it appears in the Internal
+// Export they may run) but may not *edit* it — only the Analyst owns the value
+// (ADR-0015). This predicate names that read boundary, used to gate the
+// audit-log view (whose clientPriceChange events carry the value) and its link.
+// Never a Researcher (Client Price is hidden from them to avoid biasing quotes,
+// ADR-0003) and never the Admin (user-administration only) or a client user.
+export function canViewClientPrice(principal: Principal): boolean {
+  return (
+    principal.kind === "internal" &&
+    (principal.role === "Analyst" || principal.role === "EngagementManager")
+  );
+}

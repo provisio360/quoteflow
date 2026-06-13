@@ -16,6 +16,26 @@ export type AuditAction =
   | "manualRateOverride"
   | "assign";
 
+/** The audit-log view's display vocabulary (issue #72): each Audit Action as a
+ *  past-tense human verb. Lives with the domain, not the JSX, so the wording
+ *  stays beside the closed action set it mirrors. */
+const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
+  submit: "Submitted",
+  approve: "Approved",
+  reject: "Rejected",
+  release: "Released",
+  reopen: "Reopened",
+  import: "Imported",
+  clientPriceChange: "Client Price changed",
+  manualRateOverride: "Manual rate override",
+  assign: "Assigned",
+};
+
+/** The human display label for an Audit Action, shown in the audit-log view. */
+export function auditActionLabel(action: AuditAction): string {
+  return AUDIT_ACTION_LABELS[action];
+}
+
 /** The kind of entity an event is about (CONTEXT.md: Audit Event subject). */
 export type AuditSubjectType =
   | "Quote"

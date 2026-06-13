@@ -3,6 +3,7 @@ import {
   canImportBenchmarkItems,
   canSelfAssignBenchmarkItem,
   canMaintainClientPrice,
+  canViewClientPrice,
 } from "./benchmark-items";
 import type { InternalPrincipal, ClientPrincipal } from "./principal";
 
@@ -71,5 +72,27 @@ describe("canMaintainClientPrice — an Analyst-only QC act (ADR-0003/0015)", ()
 
   it("forbids client users (viewer-only, never write)", () => {
     expect(canMaintainClientPrice(clientUser)).toBe(false);
+  });
+});
+
+describe("canViewClientPrice — the read boundary (Analyst + EM, ADR-0024)", () => {
+  it("allows an Analyst (owns and reads Client Price)", () => {
+    expect(canViewClientPrice(internal("Analyst"))).toBe(true);
+  });
+
+  it("allows an Engagement Manager (sees Client Price via the Internal Export)", () => {
+    expect(canViewClientPrice(internal("EngagementManager"))).toBe(true);
+  });
+
+  it("forbids a Researcher (Client Price is hidden from them, ADR-0003)", () => {
+    expect(canViewClientPrice(internal("Researcher"))).toBe(false);
+  });
+
+  it("forbids the Admin (user-administration only)", () => {
+    expect(canViewClientPrice(internal("Admin"))).toBe(false);
+  });
+
+  it("forbids client users (TC040 — never reachable by clients)", () => {
+    expect(canViewClientPrice(clientUser)).toBe(false);
   });
 });
