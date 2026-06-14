@@ -150,6 +150,35 @@ export async function assignResearchers(
 }
 
 /**
+ * The EM home's setup-backlog signal (#57): how many distinct (study, country)
+ * pairs have Benchmark Items but no Country Assignment yet — the open work of
+ * putting Researchers onto Countries (the EM's exclusive job). A pure derived
+ * count, never a stored flag. Internal-only; the count is GLOBAL — internal
+ * staff are not tenant-scoped, so `withTenant` runs under the "all" RLS scope
+ * and the count spans every tenant (there is no per-EM study ownership in v1).
+ * Derived in the app layer via the sanctioned repository (ADR-0008); the NOT
+ * EXISTS still runs under the tenant GUC, so RLS stays in force.
+ */
+export async function countUnstaffedCountries(principal: Principal): Promise<number> {
+  if (!isInternal(principal)) {
+    throw new AssignmentAccessError("Internal staff only");
+  }
+  return withTenant(principal, async (tx) => {
+    const rows = await tx.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*) AS count FROM (
+        SELECT DISTINCT b."studyId", b.country
+        FROM benchmark_item b
+        WHERE NOT EXISTS (
+          SELECT 1 FROM country_assignment a
+          WHERE a."studyId" = b."studyId" AND a.country = b.country
+        )
+      ) unstaffed
+    `;
+    return Number(rows[0].count);
+  });
+}
+
+/**
  * Every Country assignment for the calling researcher, across all studies.
  * Pinned to the principal's own userId — there is no code path to read another
  * researcher's assignments here (use `listAssignmentsForStudy` for staffing).
