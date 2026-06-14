@@ -37,7 +37,9 @@ export default async function Home() {
     <main style={main}>
       <h1>QuoteFlow</h1>
       {view === "admin" && <AdminHome />}
-      {view === "engagement-manager" && <EngagementManagerHome />}
+      {view === "engagement-manager" && principal !== null && (
+        <EngagementManagerHome principal={principal} />
+      )}
       {view === "researcher" && <ResearcherHome />}
       {view === "analyst" && <AnalystHome />}
       {view === "client" && principal?.kind === "client" && (
