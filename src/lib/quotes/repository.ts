@@ -343,6 +343,20 @@ export interface ReviewQueueItem {
 }
 
 /**
+ * Just the depth of the analyst review queue — how many Quotes sit Submitted
+ * across all studies and tenants (analysts are not tenant-scoped — CONTEXT.md:
+ * Analyst). The home's review-queue signal (#58) needs only this number, so it
+ * counts at the DB rather than materialising every row + QC flag the way
+ * listReviewQueue does. Analyst-only, same gate as the queue it summarises.
+ */
+export async function countReviewQueue(principal: Principal): Promise<number> {
+  if (!canReviewQuote(principal)) {
+    throw new QuoteAccessError("Only Analysts may review quotes");
+  }
+  return withTenant(principal, (tx) => tx.quote.count({ where: { state: "Submitted" } }));
+}
+
+/**
  * The analyst review queue: every Submitted Quote across all studies and tenants
  * (analysts are not tenant-scoped — CONTEXT.md: Analyst), oldest-submitted first
  * so nothing starves (FIFO by `submittedAt`). Analyst-only. Each row carries the

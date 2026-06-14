@@ -41,7 +41,9 @@ export default async function Home() {
         <EngagementManagerHome principal={principal} />
       )}
       {view === "researcher" && <ResearcherHome />}
-      {view === "analyst" && <AnalystHome />}
+      {view === "analyst" && principal !== null && (
+        <AnalystHome principal={principal} />
+      )}
       {view === "client" && principal?.kind === "client" && (
         <ClientHome principal={principal} />
       )}

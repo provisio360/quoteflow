@@ -8,6 +8,7 @@ import {
   submitQuote,
   listQuotesForItem,
   listReviewQueue,
+  countReviewQueue,
   approveQuote,
   rejectQuote,
   reviseQuote,
@@ -306,6 +307,26 @@ describe("listReviewQueue — analyst-only, FIFO, with the QC flag (ADR-0014)", 
     await prisma.quote.update({ where: { id: newer }, data: { submittedAt: new Date("2026-06-02T00:00:00Z") } });
     const ids = (await listReviewQueue(analyst)).map((q) => q.id);
     expect(ids.indexOf(older)).toBeLessThan(ids.indexOf(newer));
+  });
+});
+
+describe("countReviewQueue — the home review-queue depth signal (#58)", () => {
+  it("denies non-analysts, same gate as the queue it summarises", async () => {
+    await expect(countReviewQueue(researcherA)).rejects.toBeInstanceOf(QuoteAccessError);
+    await expect(countReviewQueue(em)).rejects.toBeInstanceOf(QuoteAccessError);
+  });
+
+  it("counts exactly the Submitted quotes the queue lists", async () => {
+    const before = await countReviewQueue(analyst);
+    expect(before).toBe((await listReviewQueue(analyst)).length);
+
+    // A fresh submission lifts the count by one…
+    const id = await submittedConverted(researcherA, 123.45);
+    expect(await countReviewQueue(analyst)).toBe(before + 1);
+
+    // …and an analyst verdict (out of Submitted) drops it back.
+    await approveQuote(analyst, id);
+    expect(await countReviewQueue(analyst)).toBe(before);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   reopenCountry,
   listReleasedQuotesForStudy,
   listCountryReleaseStatus,
+  countReleasableCountries,
   ReleaseAccessError,
 } from "./repository";
 import { createStudy } from "@/lib/studies/repository";
@@ -305,5 +306,36 @@ describe("listCountryReleaseStatus — the analyst view", () => {
 
   it("is Analyst-only", async () => {
     await expect(listCountryReleaseStatus(em, studyA)).rejects.toBeInstanceOf(ReleaseAccessError);
+  });
+});
+
+describe("countReleasableCountries — the home release-backlog signal (#58)", () => {
+  it("is Analyst-only", async () => {
+    await expect(countReleasableCountries(em)).rejects.toBeInstanceOf(ReleaseAccessError);
+  });
+
+  it("counts eligible-but-unreleased countries, draining as they are released", async () => {
+    // A fresh study so the delta is unaffected by other suites' data: one
+    // eligible country (Ready) and one short of Required (NotReady).
+    const study = (await createStudy(analyst, { name: "Backlog", clientId: clientA, qcThresholdPct: 25 })).id;
+    const baseline = await countReleasableCountries(analyst);
+
+    await seedItem(study, "Ready", 1, ["Approved"]);
+    await seedItem(study, "NotReady", 2, ["Approved"]); // short — never counts
+    // Only "Ready" is in the actionable backlog.
+    expect(await countReleasableCountries(analyst)).toBe(baseline + 1);
+
+    // Releasing it removes it from the backlog…
+    expect(await releaseCountry(analyst, study, "Ready")).toEqual({ releasable: true });
+    expect(await countReleasableCountries(analyst)).toBe(baseline);
+
+    // …and reopening (still eligible, awaiting re-release) puts it back.
+    await reopenCountry(analyst, study, "Ready");
+    expect(await countReleasableCountries(analyst)).toBe(baseline + 1);
+
+    // Cleanup so the count is left as we found it for any later suite.
+    await prisma.notification.deleteMany({ where: { studyId: study } });
+    await prisma.auditEvent.deleteMany({ where: { studyId: study } });
+    await prisma.study.delete({ where: { id: study } });
   });
 });
