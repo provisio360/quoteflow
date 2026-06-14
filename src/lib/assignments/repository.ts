@@ -195,6 +195,25 @@ export function listAssignmentsForResearcher(
 }
 
 /**
+ * How many Countries the signed-in researcher is currently assigned to — the
+ * Researcher home's orientation signal (#59). One CountryAssignment row is one
+ * (study, country) pair (the table's unique key), so this row count is the count
+ * of distinct (study, country) assignments: the same Country in two studies counts
+ * twice, because a Country is never a bare name — assignment, release, and items
+ * are all (study, country)-scoped (ADR-0016). Self-scoped by the `researcherId`
+ * key (same guarantee as listAssignmentsForResearcher), so `isInternal` is gate
+ * enough. Spans all studies/tenants (researchers are not tenant-scoped).
+ */
+export async function countMyAssignedCountries(principal: Principal): Promise<number> {
+  if (!isInternal(principal)) {
+    throw new AssignmentAccessError("Internal staff only");
+  }
+  return withTenant(principal, (tx) =>
+    tx.countryAssignment.count({ where: { researcherId: principal.userId } }),
+  );
+}
+
+/**
  * Every Country assignment on a study. Internal-only — assignments are internal
  * staffing data, never client-facing — and routed through the tenant-scoped
  * `getStudy` so an unknown/out-of-tenant study yields not-found, not a leak.

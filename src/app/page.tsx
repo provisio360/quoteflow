@@ -40,7 +40,9 @@ export default async function Home() {
       {view === "engagement-manager" && principal !== null && (
         <EngagementManagerHome principal={principal} />
       )}
-      {view === "researcher" && <ResearcherHome />}
+      {view === "researcher" && principal !== null && (
+        <ResearcherHome principal={principal} />
+      )}
       {view === "analyst" && principal !== null && (
         <AnalystHome principal={principal} />
       )}

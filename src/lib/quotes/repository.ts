@@ -357,6 +357,41 @@ export async function countReviewQueue(principal: Principal): Promise<number> {
 }
 
 /**
+ * How many Quotes the signed-in researcher has sitting in a given state, keyed to
+ * `createdById = me` — the author scope, not the item's Primary Researcher (a
+ * Rejected quote returns to its author, CONTEXT.md: Approved/Rejected). The home's
+ * Researcher signals (#59) need only the number, so they count at the DB.
+ *
+ * Self-scoped by construction: the `createdById` key means the query can only ever
+ * see the caller's own rows, so no role gate is needed beyond `isInternal` — the
+ * security rationale that hard-gates countReviewQueue (a global, cross-tenant queue)
+ * does not apply here. Drafts counted this way stay private to their author anyway
+ * (ADR-0011). Researchers are not tenant-scoped, so this spans all studies/tenants.
+ */
+async function countMyQuotesInState(
+  principal: Principal,
+  state: "Rejected" | "Draft",
+): Promise<number> {
+  if (!isInternal(principal)) {
+    throw new QuoteAccessError("Internal staff only");
+  }
+  return withTenant(principal, (tx) =>
+    tx.quote.count({ where: { state, createdById: principal.userId } }),
+  );
+}
+
+/** Count of the researcher's own Quotes in Rejected state — the most actionable
+ *  home signal (each is a quote to revise; also notification-backed). */
+export function countMyRejectedQuotes(principal: Principal): Promise<number> {
+  return countMyQuotesInState(principal, "Rejected");
+}
+
+/** Count of the researcher's own Quotes still in Draft — work in progress. */
+export function countMyDrafts(principal: Principal): Promise<number> {
+  return countMyQuotesInState(principal, "Draft");
+}
+
+/**
  * The analyst review queue: every Submitted Quote across all studies and tenants
  * (analysts are not tenant-scoped — CONTEXT.md: Analyst), oldest-submitted first
  * so nothing starves (FIFO by `submittedAt`). Analyst-only. Each row carries the
