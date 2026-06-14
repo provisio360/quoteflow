@@ -46,6 +46,51 @@ export async function listStudies(principal: Principal): Promise<StudySummary[]>
 }
 
 /**
+ * A study plus how many of its Countries are CURRENTLY Released — the Client
+ * User home read-model (issue #60). `releasedCountryCount` counts only
+ * CountryRelease rows in state `released`; a `reopened` Country is pulled back
+ * from client view and a Country with no row was never released, so both are
+ * excluded (CONTEXT.md: Released; mirrors `listReleasedQuotesForStudy`).
+ */
+export interface StudyWithReleasedCount extends StudySummary {
+  readonly releasedCountryCount: number;
+}
+
+/**
+ * The Client User home's launchpad (issue #60): every study the principal may
+ * see, each carrying its currently-Released Country count. Tenant scoping is the
+ * SAME `visibilityWhere` the rest of this repository uses (ADR-0008) — the
+ * released counts are then grouped only over those visible studies' ids, so a
+ * row for an out-of-tenant study can never contribute even if the RLS backstop
+ * lapsed. One `groupBy` (not an N+1 per study); the empty study list
+ * short-circuits before it runs.
+ */
+export async function listStudiesWithReleasedCounts(
+  principal: Principal,
+): Promise<StudyWithReleasedCount[]> {
+  return withTenant(principal, async (tx) => {
+    const rows = await tx.study.findMany({
+      where: visibilityWhere(tenantVisibility(principal)),
+      orderBy: { createdAt: "desc" },
+      include: { client: { select: { name: true } } },
+    });
+    if (rows.length === 0) return [];
+
+    const grouped = await tx.countryRelease.groupBy({
+      by: ["studyId"],
+      where: { state: "released", studyId: { in: rows.map((r) => r.id) } },
+      _count: { country: true },
+    });
+    const countByStudy = new Map(grouped.map((g) => [g.studyId, g._count.country]));
+
+    return rows.map((row) => ({
+      ...toSummary(row),
+      releasedCountryCount: countByStudy.get(row.id) ?? 0,
+    }));
+  });
+}
+
+/**
  * A single study by id, scoped to the principal. Filter-first: the visibility
  * `where` is AND-ed with the id, so an out-of-tenant id returns `null` —
  * indistinguishable from a never-existed id (grilling Q6: out-of-tenant
