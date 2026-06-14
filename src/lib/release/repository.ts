@@ -349,6 +349,56 @@ export async function listCountryReleaseStatus(
   }));
 }
 
+/**
+ * How many Countries are ready for the analyst to release right now (#58 home
+ * signal): currently Release-Eligible AND not already `released` — the actionable
+ * release backlog, the mirror of the EM home's unstaffed-countries count. A
+ * Country already `released` drops off (its work is done); a `reopened` one that
+ * is still eligible stays IN (it is waiting on re-release). Spans all studies and
+ * tenants (analysts are not tenant-scoped — CONTEXT.md: Analyst). The eligibility
+ * verdict is the pure core's (`evaluateRelease`) over each Country's item counts —
+ * never a re-derived rule here (issue #58 / ADR-0016) — which is why this counts
+ * in app code, not SQL, and is the pricier of the home's two analyst signals.
+ *
+ * NOTE: the issue phrases this as "countries whose release eligibility is met";
+ * we deliberately read it as the *unreleased* eligible set, so the number drains
+ * to zero once everything ready has been released rather than counting finished
+ * work forever. Analyst-only.
+ */
+export async function countReleasableCountries(principal: Principal): Promise<number> {
+  if (!canReleaseCountry(principal)) {
+    throw new ReleaseAccessError("Only Analysts may view release status");
+  }
+  const { items, releases } = await withTenant(principal, async (tx) => ({
+    items: await tx.benchmarkItem.findMany({
+      select: { studyId: true, country: true, ...ITEM_COUNT_SELECT },
+    }),
+    // Only `released` rows mask a Country; `reopened` (and absent) do not.
+    releases: await tx.countryRelease.findMany({
+      where: { state: "released" },
+      select: { studyId: true, country: true },
+    }),
+  }));
+
+  const releasedKeys = new Set(releases.map((r) => `${r.studyId} ${r.country}`));
+
+  // Group items by (study, country) — the Country Release scope (ADR-0016).
+  const byKey = new Map<string, ItemReleaseStatus[]>();
+  for (const item of items) {
+    const key = `${item.studyId} ${item.country}`;
+    const list = byKey.get(key) ?? [];
+    list.push(toItemStatus(item));
+    byKey.set(key, list);
+  }
+
+  let count = 0;
+  for (const [key, statuses] of byKey) {
+    if (releasedKeys.has(key)) continue;
+    if (evaluateRelease(statuses).releasable) count += 1;
+  }
+  return count;
+}
+
 /** Prisma Decimal → string (or null), matching the project's read-model convention. */
 function decimalString(value: Prisma.Decimal | null): string | null {
   return value === null ? null : value.toString();
