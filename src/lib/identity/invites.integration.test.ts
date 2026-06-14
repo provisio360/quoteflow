@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { createInvite, listInvites, revokeInvite } from "./invites";
+import { countInviteHygiene, createInvite, listInvites, revokeInvite } from "./invites";
 
 // listInvites powers the Admin invites screen: it derives each invite's display
 // status (pending / accepted / revoked / expired) so the UI can show state and
@@ -49,5 +49,49 @@ describe("listInvites", () => {
 
     const found = (await listInvites()).find((i) => i.email === "inv-revoked@example.com");
     expect(found?.status).toBe("revoked");
+  });
+});
+
+describe("countInviteHygiene", () => {
+  // The Admin-home signals (#56). Asserted as deltas off a baseline because the
+  // count is global (the whole invite table), and earlier suites in this file
+  // seed their own rows — absolute numbers would be brittle.
+  it("counts a fresh invite as pending and a lapsed one as expired, ignoring revoked", async () => {
+    const base = await countInviteHygiene();
+
+    const pendingOne = await createInvite({
+      email: "inv-hygiene-pending@example.com",
+      kind: "internal",
+      role: "Analyst",
+      invitedById: adminId,
+    });
+    if (!pendingOne.ok) throw new Error("setup failed");
+
+    const lapsed = await createInvite({
+      email: "inv-hygiene-expired@example.com",
+      kind: "internal",
+      role: "Researcher",
+      invitedById: adminId,
+    });
+    if (!lapsed.ok) throw new Error("setup failed");
+    // Backdate expiry so the otherwise-open invite reads as expired-unaccepted.
+    await prisma.invite.update({
+      where: { id: lapsed.inviteId },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    // A revoked invite must count as neither — it's terminal, not a resend candidate.
+    const revoked = await createInvite({
+      email: "inv-hygiene-revoked@example.com",
+      kind: "internal",
+      role: "Researcher",
+      invitedById: adminId,
+    });
+    if (!revoked.ok) throw new Error("setup failed");
+    await revokeInvite(revoked.inviteId);
+
+    const after = await countInviteHygiene();
+    expect(after.pending - base.pending).toBe(1);
+    expect(after.expired - base.expired).toBe(1);
   });
 });

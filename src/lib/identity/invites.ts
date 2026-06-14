@@ -123,6 +123,29 @@ export async function listInvites(): Promise<InviteSummary[]> {
   }));
 }
 
+/** The two derived invite-hygiene signals the Admin home shows (#56): open
+ *  offers still awaiting acceptance, and the lapsed-unaccepted ones — the
+ *  resend candidates. */
+export interface InviteHygiene {
+  readonly pending: number;
+  readonly expired: number;
+}
+
+/** Count pending and expired-unaccepted invites for the Admin home. Derives
+ *  from listInvites so the pending/expired precedence stays owned by the tested
+ *  evaluateInvite, not re-encoded as a second ad-hoc predicate here (#56). At
+ *  Admin invite volumes loading the rows to count them is a non-issue. */
+export async function countInviteHygiene(): Promise<InviteHygiene> {
+  const invites = await listInvites();
+  let pending = 0;
+  let expired = 0;
+  for (const i of invites) {
+    if (i.status === "pending") pending++;
+    else if (i.status === "expired") expired++;
+  }
+  return { pending, expired };
+}
+
 export type AcceptInviteResult =
   | { ok: true; userId: string }
   | { ok: false; error: "invalid-token" | "revoked" | "already-accepted" | "expired" | "malformed" | "email-in-use" };
