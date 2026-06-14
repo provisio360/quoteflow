@@ -1,65 +1,47 @@
-import Link from "next/link";
 import { getCurrentPrincipal } from "@/lib/identity/current-principal";
-import { logoutAction } from "@/lib/identity/actions";
-import { listStudies } from "@/lib/studies/repository";
-import { NotificationsLink } from "@/app/notifications/NotificationsLink";
+import { resolveHomeView } from "@/app/home/resolve";
+import { AdminHome } from "@/app/home/AdminHome";
+import { EngagementManagerHome } from "@/app/home/EngagementManagerHome";
+import { ResearcherHome } from "@/app/home/ResearcherHome";
+import { AnalystHome } from "@/app/home/AnalystHome";
+import { ClientHome } from "@/app/home/ClientHome";
+
+// The logged-in home is a thin per-role hybrid (#55): a launchpad plus a few
+// derived signals, branched by principal category. This slice lays the shell;
+// each category's signals land in their own follow-up slices. Identity, nav,
+// notifications, and logout stay owned by the persistent NavHeader (ADR-0022) —
+// the home never duplicates them.
+
+const main = {
+  fontFamily: "system-ui, sans-serif",
+  padding: "2rem",
+  lineHeight: 1.5,
+} as const;
 
 export default async function Home() {
   const principal = await getCurrentPrincipal();
-  // A Client User's own studies (tenant-scoped) — their entry to the dashboards.
-  const clientStudies =
-    principal?.kind === "client" ? await listStudies(principal) : [];
+  const view = resolveHomeView(principal);
+
+  if (view === "logged-out") {
+    return (
+      <main style={main}>
+        <h1>QuoteFlow</h1>
+        <p>
+          <a href="/login">Sign in</a> (invite-only — no public sign-up).
+        </p>
+      </main>
+    );
+  }
 
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", lineHeight: 1.5 }}>
+    <main style={main}>
       <h1>QuoteFlow</h1>
-      <p>Walking skeleton is alive. Real screens arrive with the build slices.</p>
-
-      {principal ? (
-        <section>
-          <p>
-            Signed in as <strong>{principal.userId}</strong> —{" "}
-            {principal.kind === "internal"
-              ? `internal staff (${principal.role})`
-              : `client user (tenant ${principal.tenantId})`}
-            .
-          </p>
-          <p>
-            <NotificationsLink />
-          </p>
-          {principal.kind === "internal" && (
-            <p>
-              <a href="/studies">Studies</a> — pick a study to import a brief.
-            </p>
-          )}
-          {principal.kind === "client" && (
-            <div>
-              <p style={{ marginBottom: "0.25rem" }}>Your dashboards:</p>
-              {clientStudies.length === 0 ? (
-                <p style={{ color: "#777" }}>No studies yet.</p>
-              ) : (
-                <ul style={{ listStyle: "none", padding: 0 }}>
-                  {clientStudies.map((s) => (
-                    <li key={s.id} style={{ padding: "0.3rem 0" }}>
-                      <Link href={`/studies/${s.id}/dashboard`} style={{ fontWeight: 600 }}>
-                        {s.name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-          <form action={logoutAction}>
-            <button type="submit" style={{ padding: "0.4rem 0.9rem" }}>
-              Sign out
-            </button>
-          </form>
-        </section>
-      ) : (
-        <p>
-          Not signed in. <a href="/login">Sign in</a> (invite-only — no public sign-up).
-        </p>
+      {view === "admin" && <AdminHome />}
+      {view === "engagement-manager" && <EngagementManagerHome />}
+      {view === "researcher" && <ResearcherHome />}
+      {view === "analyst" && <AnalystHome />}
+      {view === "client" && principal?.kind === "client" && (
+        <ClientHome principal={principal} />
       )}
     </main>
   );
