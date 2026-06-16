@@ -15,9 +15,10 @@ import { renderWorkbook } from "./render";
 // the ExportAudit write (ADR-0018). The column/row shaping and the QC-flag maths
 // live in the pure cores; rendering to .xlsx lives in ./render.
 
-/** Raised when a principal may not run the Internal Export (a Researcher, Admin,
- *  or Client User). A wrong-tenant Client Export is NOT an error — it yields an
- *  empty workbook, mirroring the dashboard read (ADR-0008). */
+/** Raised when a principal may not run an export: a Researcher, Admin, or Client
+ *  User on the Internal Export, or a Researcher on the Client Export (#64). A
+ *  wrong-tenant Client Export is NOT an error — it yields an empty workbook,
+ *  mirroring the dashboard read (ADR-0008). */
 export class ExportAccessError extends Error {
   constructor(message: string) {
     super(message);
@@ -32,6 +33,20 @@ function mayRunInternalExport(principal: Principal): boolean {
   return (
     principal.kind === "internal" &&
     (principal.role === "Analyst" || principal.role === "EngagementManager")
+  );
+}
+
+/** Client Export gate (#64): a Client User (own tenant) or any internal staff
+ *  EXCEPT a Researcher. The Researcher block is the load-bearing rule — the
+ *  Client Export carries no Client Price (ADR-0003), but the released "answer"
+ *  workbook is a side door around the assigned-country boundary (#62, ADR-0025)
+ *  and must fail closed, extending ADR-0003's anti-anchoring ethos exactly as
+ *  the client dashboard does (#63). EM/Analyst/Admin pulling the client's own
+ *  output is a retained affordance. */
+function mayRunClientExport(principal: Principal): boolean {
+  return (
+    principal.kind === "client" ||
+    (principal.kind === "internal" && principal.role !== "Researcher")
   );
 }
 
@@ -63,14 +78,21 @@ const CLIENT_ITEM_SELECT = {
 
 /**
  * The Client Export (CONTEXT.md): the released + approved data a Client User
- * downloads of their own tenant. Tenant-gated — an out-of-tenant or unknown study
- * yields an empty workbook (never another tenant's data, ADR-0008). Carries NO
- * Client Price (ADR-0003).
+ * downloads of their own tenant. Gated against the Researcher (#64): the released
+ * "answer" view is a side door around their assigned-country boundary, so they are
+ * refused up-front — a hard 403, like the Internal Export's role gate — rather than
+ * the soft empty-workbook tenant miss. Otherwise tenant-gated — an out-of-tenant or
+ * unknown study yields an empty workbook (never another tenant's data, ADR-0008).
+ * Carries NO Client Price (ADR-0003). Unaudited (a tenant pulling its own data).
  */
 export async function exportClientWorkbook(
   principal: Principal,
   studyId: string,
 ): Promise<Buffer> {
+  if (!mayRunClientExport(principal)) {
+    throw new ExportAccessError("Only a Client User, Engagement Manager, Analyst, or Admin may run the client export");
+  }
+
   const items = await withTenant(principal, async (tx) => {
     const study = await scopedStudy(tx, principal, studyId);
     return study === null ? [] : await loadReleasedItems(tx, studyId);
