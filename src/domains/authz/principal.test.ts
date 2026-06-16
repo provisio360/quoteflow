@@ -5,7 +5,10 @@ import {
   isClient,
   isRole,
   isInternalRole,
+  canViewClientDashboard,
   INTERNAL_ROLES,
+  type InternalRole,
+  type Principal,
   type PrincipalRow,
 } from "./principal";
 
@@ -117,5 +120,28 @@ describe("guards", () => {
     expect(isInternalRole("Researcher")).toBe(true);
     expect(isInternalRole("Client")).toBe(false);
     expect(isInternalRole(null)).toBe(false);
+  });
+});
+
+describe("canViewClientDashboard", () => {
+  const internal = (role: InternalRole): Principal => ({
+    kind: "internal",
+    userId: "u1",
+    role,
+  });
+
+  it("blocks an internal Researcher — the anti-anchoring fail-closed case (ADR-0003)", () => {
+    expect(canViewClientDashboard(internal("Researcher"))).toBe(false);
+  });
+
+  it("admits every non-Researcher internal role (EM/Analyst/Admin preview is retained)", () => {
+    expect(canViewClientDashboard(internal("EngagementManager"))).toBe(true);
+    expect(canViewClientDashboard(internal("Analyst"))).toBe(true);
+    expect(canViewClientDashboard(internal("Admin"))).toBe(true);
+  });
+
+  it("admits a Client User (their own tenant's released output)", () => {
+    const client: Principal = { kind: "client", userId: "u2", tenantId: "t1" };
+    expect(canViewClientDashboard(client)).toBe(true);
   });
 });

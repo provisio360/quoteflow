@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requirePage } from "@/lib/identity/page-guards";
+import { requireDashboardPage } from "@/lib/identity/page-guards";
 import { getStudyDetail } from "@/lib/studies/repository";
 import { getStudyDashboard } from "@/lib/analytics/repository";
 import type { PriceRange } from "@/domains/analytics/price-range";
@@ -20,7 +20,7 @@ export default async function StudyDashboardPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const principal = await requirePage();
+  const principal = await requireDashboardPage();
   const { id } = await params;
   // Visibility gate: an out-of-tenant or unknown study is not-found, never a leak.
   const study = await getStudyDetail(principal, id);
