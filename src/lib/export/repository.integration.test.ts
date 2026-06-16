@@ -197,6 +197,16 @@ describe("exportClientWorkbook — released + approved, never Client Price", () 
     const buffer = await exportClientWorkbook(clientUserA, studyB);
     expect(await readSheet(buffer, "Quotes")).toHaveLength(0);
   });
+
+  it("refuses a Researcher — the anti-anchoring side door (#64, ADR-0003)", async () => {
+    await expect(exportClientWorkbook(researcher, studyA)).rejects.toBeInstanceOf(ExportAccessError);
+  });
+
+  it("admits internal EM, Analyst, and Admin", async () => {
+    expect(await readSheet(await exportClientWorkbook(em, studyA), "Quotes")).toHaveLength(1);
+    expect(await readSheet(await exportClientWorkbook(analyst, studyA), "Quotes")).toHaveLength(1);
+    expect(await readSheet(await exportClientWorkbook(admin, studyA), "Quotes")).toHaveLength(1);
+  });
 });
 
 describe("exportInternalWorkbook — Analyst/EM only, all non-Draft, audited", () => {

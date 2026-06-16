@@ -132,7 +132,7 @@ A downloadable spreadsheet of a [[Pricing Study]]'s data (Excel only in v1 — n
 _Avoid_: Download, report, dump
 
 **Client Export**:
-The workbook a [[Client User]] downloads of their own tenant's **released + approved** data — the same population every client dashboard aggregates ([[Competitor Price Range]]). Two sheets: a detail sheet (one row per released+approved [[Quote]]) and a summary sheet (per-[[Benchmark Item]] min/median/max). **Never includes [[Client Price]]** (ADR-0003) and never crosses tenants. Not audited — a tenant pulling its own released data is not a sensitive access.
+The workbook a [[Client User]] downloads of their own tenant's **released + approved** data — the same population every client dashboard aggregates ([[Competitor Price Range]]). Two sheets: a detail sheet (one row per released+approved [[Quote]]) and a summary sheet (per-[[Benchmark Item]] min/median/max). **Never includes [[Client Price]]** (ADR-0003) and never crosses tenants. Runnable by a [[Client User]] (own tenant) and by internal [[Engagement Manager]]/[[Analyst]]/[[Admin]] previewing the client's own output — but **never a [[Researcher]]**: the released "answer" workbook is a side door around their assigned-country read boundary (#64, ADR-0025), so they are refused (HTTP 403), extending the anti-anchoring block the client dashboard already enforces (#63). Not audited — a tenant pulling its own released data is not a sensitive access.
 _Avoid_: Client report, released export
 
 **Internal Export**:
