@@ -15,6 +15,8 @@ import {
 import { resolveUpserts, benchmarkItemKey } from "@/domains/benchmark-items/resolve";
 import { recordAuditEvents } from "@/lib/audit/repository";
 import { auditClientPriceChange, auditImport } from "@/domains/audit/events";
+import { resolveCountryVisibility } from "@/lib/authz/country-scope";
+import { itemVisibilityWhere } from "./where";
 
 // Tenant-aware data-access adapter for the Benchmark Item bulk import (issue #5).
 // The ONLY sanctioned write path: it role-gates the principal, resolves the
@@ -220,6 +222,11 @@ export async function getBenchmarkItemForResearcher(
  * with NO Client Price (RESEARCHER_VIEW_SELECT never selects it), carrying
  * `primaryResearcherId` so the UI can show claim / mine / claimed-by-other.
  * Ordered by Country then Client Part Number. Internal-only.
+ *
+ * Scoped to the Researcher's assigned (study, country) pairs (ADR-0025): items in
+ * Countries they are not assigned to are NOT loaded — confidentiality, not mere
+ * UI hiding (this is what replaced the old cross-boundary "locked" row). The
+ * country layer is a no-op `all` for EM / Analyst / Admin, who load every item.
  */
 export async function listBenchmarkItemsForResearcher(
   principal: Principal,
@@ -228,13 +235,14 @@ export async function listBenchmarkItemsForResearcher(
   if (!isInternal(principal)) {
     throw new BenchmarkItemAccessError("Internal staff only");
   }
-  return withTenant(principal, (tx) =>
-    tx.benchmarkItem.findMany({
-      where: { studyId },
+  return withTenant(principal, async (tx) => {
+    const country = await resolveCountryVisibility(principal, tx);
+    return tx.benchmarkItem.findMany({
+      where: { AND: [{ studyId }, itemVisibilityWhere(country)] },
       orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
       select: RESEARCHER_VIEW_SELECT,
-    }),
-  );
+    });
+  });
 }
 
 export interface SelfAssignResult {

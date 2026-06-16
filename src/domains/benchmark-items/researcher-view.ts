@@ -4,7 +4,7 @@ import type { ResearcherItemView } from "@/lib/benchmark-items/repository";
 // guidance the researcher needs to describe the part to a dealer. Pure and
 // IO-free so it is unit-testable — the page attaches quotes (IO) afterwards.
 
-export type ItemMode = "mine" | "claimable" | "claimed" | "locked";
+export type ItemMode = "mine" | "claimable" | "claimed";
 
 /** The client guidance a Researcher sees for a Benchmark Item — the full set the
  *  `mine` panel renders (#66). NO Client Price (ADR-0003). */
@@ -59,20 +59,26 @@ export function quoteAffordances(
 /**
  * Resolve each Benchmark Item to the researcher's work mode, carrying the full
  * guidance the `mine` panel renders. Mode: mine (I'm Primary) / claimable
- * (unclaimed + I'm in the Country pool) / claimed (someone else's) / locked
- * (unclaimed, not my Country).
+ * (unclaimed, in my assigned Country) / claimed (someone else's).
+ *
+ * The caller scopes the query to the Researcher's assigned (study, country) pairs
+ * (ADR-0025), so every item reaching here is already in an assigned Country. This
+ * function keeps `myCountries` as an app-layer BACKSTOP: any item outside it is
+ * DROPPED (not loaded data must never render), never tagged a `locked` row — that
+ * mode is gone, so a future reader can't reintroduce a cross-boundary leak.
  */
 export function resolveResearcherEntries(
   items: ResearcherItemView[],
   myCountries: Set<string>,
   userId: string,
 ): ResearcherEntry[] {
-  return items.map((item) => {
+  return items
+    .filter((item) => myCountries.has(item.country))
+    .map((item) => {
     let mode: ItemMode;
     if (item.primaryResearcherId === userId) mode = "mine";
     else if (item.primaryResearcherId !== null) mode = "claimed";
-    else if (myCountries.has(item.country)) mode = "claimable";
-    else mode = "locked";
+    else mode = "claimable";
     return {
       mode,
       item: {

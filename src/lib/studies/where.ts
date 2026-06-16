@@ -19,6 +19,13 @@ export function visibilityWhere(spec: VisibilitySpec): Prisma.StudyWhereInput {
       return {};
     case "tenant":
       return { clientId: spec.tenantId };
+    case "assigned": {
+      // Study-list granularity: a Study is visible if ANY assigned pair lives in
+      // it (∃ studyId) — the projection of item membership onto studyId (ADR-0025).
+      // Empty pair-set → `id IN ()`, the same fail-closed zero-row query as below.
+      const studyIds = [...new Set(spec.pairs.map((p) => p.studyId))];
+      return { id: { in: studyIds } };
+    }
     default: {
       const _exhaustive: never = spec;
       void _exhaustive;

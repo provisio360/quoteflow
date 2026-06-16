@@ -23,9 +23,11 @@ function item(overrides: Partial<ResearcherItemView> = {}): ResearcherItemView {
 describe("resolveResearcherEntries", () => {
   it("own claim resolves to mine and carries all guidance fields", () => {
     const me = "user-me";
+    // Being Primary requires a Country Assignment (self-assign enforces it), so a
+    // 'mine' item is always in an assigned Country.
     const entries = resolveResearcherEntries(
-      [item({ primaryResearcherId: me })],
-      new Set<string>(),
+      [item({ primaryResearcherId: me, country: "Germany" })],
+      new Set(["Germany"]),
       me,
     );
 
@@ -56,13 +58,21 @@ describe("resolveResearcherEntries", () => {
     expect(entries[0].mode).toBe("claimable");
   });
 
-  it("unclaimed item outside my Country pool resolves to locked", () => {
+  it("an item outside my assigned Countries is DROPPED, never returned (no `locked` mode — ADR-0025)", () => {
+    // The query is the primary wall (unassigned items are not loaded); this is the
+    // app-layer backstop — a stray unassigned item is filtered out, not rendered
+    // as a 'locked' row that would leak its country/description across the boundary.
     const entries = resolveResearcherEntries(
-      [item({ primaryResearcherId: null, country: "France" })],
+      [
+        item({ id: "mine", primaryResearcherId: null, country: "Germany" }),
+        item({ id: "stray", primaryResearcherId: null, country: "France" }),
+      ],
       new Set(["Germany"]),
       "user-me",
     );
-    expect(entries[0].mode).toBe("locked");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].item.id).toBe("mine");
+    expect(entries.some((e) => e.item.country === "France")).toBe(false);
   });
 });
 

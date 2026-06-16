@@ -97,7 +97,6 @@ export function ResearcherItem({
         </button>
       )}
       {mode === "claimed" && <span style={{ color: "#999", marginLeft: "0.5rem" }}>claimed by another researcher</span>}
-      {mode === "locked" && <span style={{ color: "#999", marginLeft: "0.5rem" }}>not in your assigned countries</span>}
 
       {/* The work panel is shown both for items I lead (`mine`) and items a peer
           leads (`claimed`): same guidance + quote list, but a claimed item gets no
