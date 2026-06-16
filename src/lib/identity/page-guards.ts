@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentPrincipal } from "./current-principal";
 import {
+  canViewClientDashboard,
   isInternal,
   type InternalPrincipal,
   type Principal,
@@ -48,6 +49,24 @@ export async function requireAdminPage(): Promise<InternalPrincipal> {
 export async function requirePage(): Promise<Principal> {
   const principal = await getCurrentPrincipal();
   if (principal === null) {
+    redirect("/login");
+  }
+  return principal;
+}
+
+/**
+ * Gate the client study dashboard (#14). Admits Client Users and internal
+ * non-Researcher staff; blocks the internal Researcher (#63) — a redirect to
+ * /login, never a 403/404 (ADR-0008: we don't confirm what lies beyond). The
+ * Researcher block is the load-bearing wall: the dashboard is the aggregated
+ * released "answer" view the platform keeps from researchers (ADR-0003
+ * anti-anchoring), and a side door around their assigned-country read boundary
+ * (ADR-0025). The admit/block decision is `canViewClientDashboard`, shared with
+ * the study-detail link so the two cannot drift.
+ */
+export async function requireDashboardPage(): Promise<Principal> {
+  const principal = await getCurrentPrincipal();
+  if (principal === null || !canViewClientDashboard(principal)) {
     redirect("/login");
   }
   return principal;

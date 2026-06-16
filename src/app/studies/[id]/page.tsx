@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireInternalPage } from "@/lib/identity/page-guards";
+import { canViewClientDashboard } from "@/domains/authz/principal";
 import { getStudyDetail } from "@/lib/studies/repository";
 import {
   canImportBenchmarkItems,
@@ -53,6 +54,10 @@ export default async function StudyDetailPage({
   if (study === null) notFound();
 
   const mayImport = canImportBenchmarkItems(principal);
+  // The client dashboard is the aggregated released "answer" view; a Researcher
+  // must not reach it (#63, ADR-0003). Same predicate as the page guard, so the
+  // link and the wall cannot drift.
+  const mayViewDashboard = canViewClientDashboard(principal);
   // The internal audit-log view (#72) reveals Client Price before/after, so its
   // link is shown only to Client-Price viewers (Analyst + EM, ADR-0024).
   const mayViewAudit = canViewClientPrice(principal);
@@ -104,12 +109,14 @@ export default async function StudyDetailPage({
         </p>
       )}
 
-      <p style={{ marginTop: "1.5rem" }}>
-        <Link href={`/studies/${study.id}/dashboard`} style={{ fontWeight: 600 }}>
-          View client dashboard →
-        </Link>{" "}
-        <span style={{ color: "#777" }}>(released results, as the client sees them)</span>
-      </p>
+      {mayViewDashboard && (
+        <p style={{ marginTop: "1.5rem" }}>
+          <Link href={`/studies/${study.id}/dashboard`} style={{ fontWeight: 600 }}>
+            View client dashboard →
+          </Link>{" "}
+          <span style={{ color: "#777" }}>(released results, as the client sees them)</span>
+        </p>
+      )}
 
       {mayViewAudit && (
         <p style={{ marginTop: "1.5rem" }}>

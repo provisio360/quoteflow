@@ -53,6 +53,25 @@ export function isRole(p: Principal, role: InternalRole): boolean {
   return p.kind === "internal" && p.role === role;
 }
 
+/**
+ * May this principal view a Client study dashboard (the client-facing released
+ * Competitor Price Range, #14)? Admits Client Users and every internal role
+ * EXCEPT the Researcher.
+ *
+ * The Researcher block is the load-bearing rule (#63). It is NOT a Client-Price
+ * leak — the dashboard carries no Client Price (ADR-0003) — and NOT an ADR-0025
+ * pair-set scoping; it is a *total* block (every study, every country),
+ * extending ADR-0003's anti-anchoring ethos beyond Client Price to the
+ * aggregated released "answer" view a Researcher must not be anchored by.
+ * EM/Analyst/Admin previewing the client's output is a deliberate, retained
+ * affordance. The single source of truth for both the page guard
+ * (requireDashboardPage) and the study-detail link's visibility, so they cannot
+ * drift.
+ */
+export function canViewClientDashboard(p: Principal): boolean {
+  return isClient(p) || (isInternal(p) && p.role !== "Researcher");
+}
+
 export function isInternalRole(value: unknown): value is InternalRole {
   return (
     typeof value === "string" &&
