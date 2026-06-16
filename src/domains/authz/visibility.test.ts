@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tenantVisibility, canSee } from "./visibility";
+import { tenantVisibility, countryVisibility, canSee } from "./visibility";
 import {
   INTERNAL_ROLES,
   type InternalPrincipal,
@@ -29,6 +29,39 @@ describe("tenantVisibility — the single isolation primitive", () => {
     expect(tenantVisibility(client("t1"))).toEqual({
       scope: "tenant",
       tenantId: "t1",
+    });
+  });
+});
+
+describe("countryVisibility — the Researcher-only country axis (ADR-0025)", () => {
+  const pairs = [
+    { studyId: "s1", country: "France" },
+    { studyId: "s1", country: "Germany" },
+  ];
+
+  it("returns the `assigned` pair-set scope for a Researcher", () => {
+    expect(countryVisibility(internal("Researcher"), pairs)).toEqual({
+      scope: "assigned",
+      pairs,
+    });
+  });
+
+  it("short-circuits every other internal role to `all` (their pairs are never even loaded)", () => {
+    for (const role of INTERNAL_ROLES) {
+      if (role === "Researcher") continue;
+      // Even if a (stray) pair-set were passed, a non-Researcher stays unrestricted.
+      expect(countryVisibility(internal(role), pairs)).toEqual({ scope: "all" });
+    }
+  });
+
+  it("never reaches a client user — they are `all` on this axis (the tenant wall already scopes them)", () => {
+    expect(countryVisibility(client("t1"), pairs)).toEqual({ scope: "all" });
+  });
+
+  it("a Researcher with no assignments gets `assigned` with an empty set (fails closed downstream, never `all`)", () => {
+    expect(countryVisibility(internal("Researcher"), [])).toEqual({
+      scope: "assigned",
+      pairs: [],
     });
   });
 });

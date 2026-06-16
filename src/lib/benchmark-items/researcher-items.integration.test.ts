@@ -19,6 +19,9 @@ beforeAll(async () => {
   const u = await prisma.user.create({
     data: { id: `ritems-u-${stamp}`, name: "U", email: `ritems-${stamp}@x.com`, kind: "internal", role: "Analyst" },
   });
+  await prisma.user.create({
+    data: { id: researcher.userId, name: "R", email: `ritems-res-${stamp}@x.com`, kind: "internal", role: "Researcher" },
+  });
   const study = await prisma.study.create({
     data: { name: "RItems study", clientId: tenantId, createdById: u.id, qcThresholdPct: 25 },
   });
@@ -29,6 +32,12 @@ beforeAll(async () => {
       itemDescription: "widget", machineModel: "M", requiredQuotes: 2,
       clientPrice: "999.0000", // set, but must NOT surface to a researcher
     },
+  });
+  // The researcher must hold a Country Assignment to (study, Germany) to see the
+  // item at all (ADR-0025 read scope); this test's subject is the Client-Price
+  // hiding (ADR-0003), so we put them in-pool and assert the field never surfaces.
+  await prisma.countryAssignment.create({
+    data: { studyId, clientId: tenantId, country: "Germany", researcherId: researcher.userId, assignedById: u.id },
   });
 });
 

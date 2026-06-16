@@ -3,6 +3,7 @@ import type { Principal } from "@/domains/authz/principal";
 import { canCreateStudy } from "@/domains/authz/studies";
 import { tenantVisibility } from "@/domains/authz/visibility";
 import { withTenant } from "@/lib/tenant-context";
+import { resolveCountryVisibility } from "@/lib/authz/country-scope";
 import { visibilityWhere } from "./where";
 
 // Tenant-aware data-access adapter for Pricing Studies — the ONLY sanctioned way
@@ -33,11 +34,20 @@ export interface StudySummary {
   readonly createdAt: Date;
 }
 
-/** Every study the principal may see — own tenant for clients, all for staff. */
+/**
+ * Every study the principal may see — own tenant for clients, all for staff, and
+ * for a Researcher only the studies they hold >=1 Country Assignment in (the
+ * country axis AND-ed on top of the tenant axis; ADR-0025). The country layer is
+ * a no-op `all` for every non-Researcher, so EM / Analyst / Admin / Client Users
+ * are unchanged.
+ */
 export async function listStudies(principal: Principal): Promise<StudySummary[]> {
   return withTenant(principal, async (tx) => {
+    const country = await resolveCountryVisibility(principal, tx);
     const rows = await tx.study.findMany({
-      where: visibilityWhere(tenantVisibility(principal)),
+      where: {
+        AND: [visibilityWhere(tenantVisibility(principal)), visibilityWhere(country)],
+      },
       orderBy: { createdAt: "desc" },
       include: { client: { select: { name: true } } },
     });
@@ -118,8 +128,14 @@ export async function getStudyDetail(
   id: string,
 ): Promise<StudySummary | null> {
   return withTenant(principal, async (tx) => {
+    // AND the country axis (ADR-0025): a Researcher opening a study they hold no
+    // Country Assignment in resolves to null (-> notFound), so they cannot read
+    // its name + client name. A no-op `all` for every other role.
+    const country = await resolveCountryVisibility(principal, tx);
     const row = await tx.study.findFirst({
-      where: { AND: [visibilityWhere(tenantVisibility(principal)), { id }] },
+      where: {
+        AND: [visibilityWhere(tenantVisibility(principal)), visibilityWhere(country), { id }],
+      },
       include: { client: { select: { name: true } } },
     });
     return row === null ? null : toSummary(row);

@@ -74,6 +74,13 @@ export function withTenant<T>(
       case "tenant":
         await tx.$executeRaw`SELECT set_config('app.tenant_id', ${spec.tenantId}, true)`;
         break;
+      case "assigned":
+        // `tenantVisibility` never yields `assigned` — the country axis (ADR-0025)
+        // is a SEPARATE layer resolved by `countryVisibility`, AND-ed into the
+        // query `where`, and is never used to set the RLS GUC (the tenant wall
+        // stays the RLS backstop). Handled only for exhaustiveness; sets nothing,
+        // so RLS fails closed exactly as the default does.
+        break;
       default: {
         // A future scope variant added without a handler is a compile error; at
         // runtime we set nothing, so RLS fails closed to zero rows (ADR-0021).
