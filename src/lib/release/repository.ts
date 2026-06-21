@@ -51,7 +51,7 @@ export interface ReleasedQuoteView {
   readonly id: string;
   readonly quoteNumber: number;
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly competitorBrand: string | null;
   readonly dealerName: string | null;
@@ -276,7 +276,7 @@ export async function listReleasedQuotesForStudy(
         notes: true,
         dateQuoteReceived: true,
         benchmarkItem: {
-          select: { country: true, clientPartNumber: true, itemDescription: true },
+          select: { country: true, clientItemNumber: true, itemDescription: true },
         },
       },
     });
@@ -285,7 +285,7 @@ export async function listReleasedQuotesForStudy(
     id: r.id,
     quoteNumber: r.quoteNumber,
     country: r.benchmarkItem.country,
-    clientPartNumber: r.benchmarkItem.clientPartNumber,
+    clientItemNumber: r.benchmarkItem.clientItemNumber,
     itemDescription: r.benchmarkItem.itemDescription,
     competitorBrand: r.competitorBrand,
     dealerName: r.dealerName,

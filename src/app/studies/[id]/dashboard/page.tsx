@@ -46,11 +46,11 @@ export default async function StudyDashboardPage({
         <p>No released results yet.</p>
       ) : (
         items.map((item) => (
-          <section key={`${item.clientPartNumber} ${item.country}`} style={{ marginTop: "2rem" }}>
+          <section key={`${item.clientItemNumber} ${item.country}`} style={{ marginTop: "2rem" }}>
             <h2 style={{ marginBottom: "0.25rem" }}>
               {item.itemDescription}{" "}
               <span style={{ color: "#777", fontWeight: 400, fontSize: "0.9em" }}>
-                ({item.clientPartNumber} · {item.country})
+                ({item.clientItemNumber} · {item.country})
               </span>
             </h2>
 

@@ -24,7 +24,7 @@ export interface ItemQuote {
 /** A released Benchmark Item with its approved quotes (possibly none). */
 export interface ItemWithQuotes {
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly quotes: readonly ItemQuote[];
 }
@@ -39,7 +39,7 @@ export interface CompetitorBreakdown {
 /** One Benchmark Item's dashboard: View A (overall range) + View B (by competitor). */
 export interface ItemDashboard {
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly range: PriceRange;
   readonly byCompetitor: readonly CompetitorBreakdown[];
@@ -56,7 +56,7 @@ export function buildItemDashboards(
 ): ItemDashboard[] {
   return items.map((item) => ({
     country: item.country,
-    clientPartNumber: item.clientPartNumber,
+    clientItemNumber: item.clientItemNumber,
     itemDescription: item.itemDescription,
     range: priceRange(item.quotes.map((q) => q.usdPricePerUnit)),
     byCompetitor: buildByCompetitor(item.quotes),

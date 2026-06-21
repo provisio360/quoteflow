@@ -68,7 +68,7 @@ beforeAll(async () => {
   };
 
   const study = await prisma.study.create({
-    data: { name: "S", clientId: tenantId, qcThresholdPct: 25, createdById: me.userId },
+    data: { name: "S", clientId: tenantId, qcThreshold: 0.25, createdById: me.userId },
   });
   studyId = study.id;
   const item = await prisma.benchmarkItem.create({
@@ -76,10 +76,10 @@ beforeAll(async () => {
       studyId,
       clientId: tenantId,
       country: "Germany",
-      clientPartNumber: "PN-1",
-      clientPartNumberKey: "pn-1",
+      clientItemNumber: "PN-1",
+      clientItemNumberKey: "pn-1",
       itemDescription: "Widget",
-      machineModel: "M1",
+      clientSourceUnit: "M1",
       requiredQuotes: 1,
     },
   });
@@ -118,7 +118,7 @@ describe("Researcher home signals (#59)", () => {
     expect(await countMyAssignedCountries(me)).toBe(0);
 
     const studyB = await prisma.study.create({
-      data: { name: "S2", clientId: tenantId, qcThresholdPct: 25, createdById: me.userId },
+      data: { name: "S2", clientId: tenantId, qcThreshold: 0.25, createdById: me.userId },
     });
     // Germany in two studies, plus France in the first — three distinct pairs.
     await prisma.countryAssignment.createMany({

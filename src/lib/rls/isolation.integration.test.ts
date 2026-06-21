@@ -53,7 +53,7 @@ beforeAll(async () => {
   researcherId = (await mkStaff("res", "Researcher")).id;
   for (const [name, tenant] of [["Study A", tenantA], ["Study B", tenantB]] as const) {
     const study = await owner.study.create({
-      data: { name, clientId: tenant, createdById: u.id, qcThresholdPct: 25 },
+      data: { name, clientId: tenant, createdById: u.id, qcThreshold: 0.25 },
     });
     studyIds[tenant] = study.id;
     const item = await owner.benchmarkItem.create({
@@ -61,10 +61,10 @@ beforeAll(async () => {
         studyId: study.id,
         clientId: tenant,
         country: "US",
-        clientPartNumber: "P-1",
-        clientPartNumberKey: "p-1",
+        clientItemNumber: "P-1",
+        clientItemNumberKey: "p-1",
         itemDescription: "widget",
-        machineModel: "M1",
+        clientSourceUnit: "M1",
         requiredQuotes: 1,
       },
     });
@@ -159,7 +159,7 @@ describe.skipIf(!enabled)("RLS tenant isolation backstop", () => {
     const created = await createStudy(analyst, {
       name: "RLS-created study",
       clientId: tenantA,
-      qcThresholdPct: 25,
+      qcThreshold: 0.25,
     });
     expect(created.clientId).toBe(tenantA);
     expect(await getStudy(analyst, created.id)).not.toBeNull();
@@ -178,8 +178,8 @@ describe.skipIf(!enabled)("RLS tenant isolation backstop", () => {
     await expect(
       asAppRole({ tenantId: tenantA }, (tx) =>
         tx.$executeRawUnsafe(
-          `INSERT INTO study (id, name, "clientId", "createdById", "qcThresholdPct", "createdAt", "updatedAt")
-           SELECT 'rls-evil', 'evil', $1, "createdById", 25, now(), now() FROM study LIMIT 1`,
+          `INSERT INTO study (id, name, "clientId", "createdById", "qcThreshold", "createdAt", "updatedAt")
+           SELECT 'rls-evil', 'evil', $1, "createdById", 0.25, now(), now() FROM study LIMIT 1`,
           tenantB,
         ),
       ),

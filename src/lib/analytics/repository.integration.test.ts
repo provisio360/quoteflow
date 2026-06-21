@@ -56,7 +56,7 @@ interface QuoteSpec {
 async function seedItem(
   studyId: string,
   country: string,
-  clientPartNumber: string,
+  clientItemNumber: string,
   requiredQuotes: number,
   clientPrice: string | null,
   quotes: QuoteSpec[],
@@ -70,10 +70,10 @@ async function seedItem(
       studyId,
       clientId,
       country,
-      clientPartNumber,
-      clientPartNumberKey: randomUUID().slice(0, 8),
-      itemDescription: `${clientPartNumber} part`,
-      machineModel: "M1",
+      clientItemNumber,
+      clientItemNumberKey: randomUUID().slice(0, 8),
+      itemDescription: `${clientItemNumber} part`,
+      clientSourceUnit: "M1",
       requiredQuotes,
       clientPrice,
     },
@@ -117,8 +117,8 @@ beforeAll(async () => {
   researcher = await seedUser("Researcher");
   clientUserA = await seedClientUser(clientA);
 
-  studyA = (await createStudy(analyst, { name: "Study A", clientId: clientA, qcThresholdPct: 25 })).id;
-  studyB = (await createStudy(analyst, { name: "Study B", clientId: clientB, qcThresholdPct: 25 })).id;
+  studyA = (await createStudy(analyst, { name: "Study A", clientId: clientA, qcThreshold: 0.25 })).id;
+  studyB = (await createStudy(analyst, { name: "Study B", clientId: clientB, qcThreshold: 0.25 })).id;
 
   // Germany (will be RELEASED):
   //  PN-G1 — Client Price 1000; approved Caterpillar x2 (1100, 1300) + Komatsu (900),
@@ -172,7 +172,7 @@ describe("getStudyDashboard — View A & B over released + approved only", () =>
 
     // Only Germany is currently released; France (never released) and Spain
     // (reopened) contribute nothing.
-    expect(items.map((i) => `${i.country}/${i.clientPartNumber}`)).toEqual([
+    expect(items.map((i) => `${i.country}/${i.clientItemNumber}`)).toEqual([
       "Germany/PN-G1",
       "Germany/PN-G2",
     ]);
@@ -200,7 +200,7 @@ describe("getStudyDashboard — View A & B over released + approved only", () =>
 describe("getStudyBenchmarkComparison — internal View D", () => {
   it("carries Client Price for internal staff, not comparable when the item has none", async () => {
     const items = await getStudyBenchmarkComparison(analyst, studyA);
-    const byPart = new Map(items.map((i) => [i.clientPartNumber, i]));
+    const byPart = new Map(items.map((i) => [i.clientItemNumber, i]));
 
     expect(byPart.get("PN-G1")?.comparison).toEqual({ comparable: true, clientPrice: 1000 });
     // PN-G2 has no Client Price → not comparable (mirrors the Price Flag).

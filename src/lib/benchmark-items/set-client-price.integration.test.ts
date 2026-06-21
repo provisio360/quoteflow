@@ -42,7 +42,7 @@ beforeAll(async () => {
   em = await makeUser("EngagementManager");
   researcher = await makeUser("Researcher");
   clientUser = { kind: "client", userId: randomUUID(), tenantId: tenant };
-  studyId = (await createStudy(analyst, { name: "CP study", clientId: tenant, qcThresholdPct: 25 })).id;
+  studyId = (await createStudy(analyst, { name: "CP study", clientId: tenant, qcThreshold: 0.25 })).id;
 });
 
 beforeEach(async () => {
@@ -50,8 +50,8 @@ beforeEach(async () => {
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   itemId = (await prisma.benchmarkItem.create({
     data: {
-      studyId, clientId: tenant, country: "Germany", clientPartNumber: "PN-1", clientPartNumberKey: "pn-1",
-      itemDescription: "Pump", machineModel: "X1", requiredQuotes: 3, clientPrice: 1000,
+      studyId, clientId: tenant, country: "Germany", clientItemNumber: "PN-1", clientItemNumberKey: "pn-1",
+      itemDescription: "Pump", clientSourceUnit: "X1", requiredQuotes: 3, clientPrice: 1000,
     },
   })).id;
 });
@@ -144,7 +144,7 @@ describe("listBenchmarkItemsForAnalyst — the QC list surface (Analyst only)", 
     expect(items[0]).toMatchObject({
       id: itemId,
       country: "Germany",
-      clientPartNumber: "PN-1",
+      clientItemNumber: "PN-1",
       requiredQuotes: 3,
       clientPrice: 1000,
     });

@@ -56,7 +56,7 @@ interface QuoteSpec {
 async function seedItem(
   studyId: string,
   country: string,
-  clientPartNumber: string,
+  clientItemNumber: string,
   requiredQuotes: number,
   clientPrice: string | null,
   quotes: QuoteSpec[],
@@ -70,10 +70,10 @@ async function seedItem(
       studyId,
       clientId,
       country,
-      clientPartNumber,
-      clientPartNumberKey: randomUUID().slice(0, 8),
-      itemDescription: `${clientPartNumber} part`,
-      machineModel: "M1",
+      clientItemNumber,
+      clientItemNumberKey: randomUUID().slice(0, 8),
+      itemDescription: `${clientItemNumber} part`,
+      clientSourceUnit: "M1",
       requiredQuotes,
       clientPrice,
     },
@@ -136,8 +136,8 @@ beforeAll(async () => {
   admin = await seedUser("Admin");
   clientUserA = await seedClientUser(clientA);
 
-  studyA = (await createStudy(analyst, { name: "Study A", clientId: clientA, qcThresholdPct: 25 })).id;
-  studyB = (await createStudy(analyst, { name: "Study B", clientId: clientB, qcThresholdPct: 25 })).id;
+  studyA = (await createStudy(analyst, { name: "Study A", clientId: clientA, qcThreshold: 0.25 })).id;
+  studyB = (await createStudy(analyst, { name: "Study B", clientId: clientB, qcThreshold: 0.25 })).id;
 
   // Germany (RELEASED): one approved quote + a Draft (private, must never export)
   // + a Submitted (in-flight). A released country can't actually hold in-flight

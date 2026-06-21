@@ -10,7 +10,7 @@ import { buildItemDashboards, type ItemWithQuotes } from "./dashboard";
 function item(over: Partial<ItemWithQuotes> = {}): ItemWithQuotes {
   return {
     country: "France",
-    clientPartNumber: "CP-1",
+    clientItemNumber: "CP-1",
     itemDescription: "Widget",
     quotes: [],
     ...over,
@@ -29,7 +29,7 @@ describe("buildItemDashboards", () => {
     ]);
     expect(dash).toEqual({
       country: "France",
-      clientPartNumber: "CP-1",
+      clientItemNumber: "CP-1",
       itemDescription: "Widget",
       range: { hasData: true, min: 10, max: 30, median: 20, count: 2 },
       byCompetitor: [

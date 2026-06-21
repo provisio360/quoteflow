@@ -1,68 +1,107 @@
 // Pure decision core — no framework, DB, or network imports.
 //
-// The Bulk Import validator (issue #5). Given the raw cell grid of a brief
-// spreadsheet (the thin .xlsx adapter's only output), it validates the WHOLE
-// file all-or-nothing and either returns normalised Benchmark Item records or a
-// per-row error report — never a partial result (PRD: "never a half-loaded
+// The Bulk Import validator (issue #5, extended in #86). Given the raw cell grid
+// of a brief spreadsheet (the thin .xlsx adapter's only output), it validates the
+// WHOLE file all-or-nothing and either returns normalised Benchmark Item records
+// or a per-row error report — never a partial result (PRD: "never a half-loaded
 // study"). Spreadsheet parsing lives in the adapter; ALL validation lives here,
 // so the rules are exhaustively unit-testable with no file and no database.
 //
-// See CONTEXT.md (Benchmark Item, Required Quotes, Country, Client Price) and
-// ADR-0009 (import is the source of truth; the upsert key is part number +
-// country).
+// See CONTEXT.md (Benchmark Item, Required Quotes, Country, Client Price, QC
+// Threshold, Required Competitors) and ADR-0009 (import is the source of truth;
+// the upsert key is Client Item Number + country), ADR-0015 / ADR-0027 (Client
+// Price is import-seeded once then analyst-owned; the seed trio is insert-only).
 
 import { canonicalCountry } from "./countries";
+import { deriveClientPrice } from "./client-price-derivation";
 
-/** The Benchmark Item fields a brief row carries, in canonical form. */
+/** The number of `Required Competitor N` columns the brief may carry. */
+const MAX_REQUIRED_COMPETITORS = 10;
+
+/** The scalar Benchmark Item fields a brief row carries, in canonical form.
+ *  Required Competitors are handled separately (a numbered column family). */
 export const BENCHMARK_ITEM_FIELDS = [
   "country",
-  "clientPartNumber",
+  "clientItemNumber",
   "itemDescription",
   "configurationComment",
   "quantity",
-  "machineModel",
+  "clientSourceUnit",
+  "sourceUnitIdentifier",
+  "clientCategory",
+  "clientItemOffering",
+  "itemSecondaryDescription",
+  "clientSecondaryItemNumber",
   "requiredQuotes",
-  "clientPrice",
+  "qcThreshold",
+  "clientItemPrice",
+  "clientItemPriceCurrency",
+  "clientItemPriceQuantity",
 ] as const;
 
 export type BenchmarkItemField = (typeof BENCHMARK_ITEM_FIELDS)[number];
 
-/** Fields whose column must be present; the rest (comment, quantity, clientPrice)
- *  are optional. Client Price is only *seeded* by the brief (ADR-0015): an item
- *  the client never priced may omit it, so the column is not required. */
+/** Fields whose column must be present. Everything else is optional/nullable —
+ *  including Client Source Unit (#86: not every brief names a source unit) and
+ *  the Client Price trio (only *seeds* the value, ADR-0015). */
 const REQUIRED_FIELDS = [
   "country",
-  "clientPartNumber",
+  "clientItemNumber",
   "itemDescription",
-  "machineModel",
   "requiredQuotes",
 ] as const satisfies readonly BenchmarkItemField[];
 
 /** The canonical spreadsheet header label for each field (matched loosely). */
 const CANONICAL_HEADERS: Record<BenchmarkItemField, string> = {
   country: "Country",
-  clientPartNumber: "Client Part Number",
+  clientItemNumber: "Client Item Number",
   itemDescription: "Item Description",
   configurationComment: "Configuration Comment",
   quantity: "Quantity",
-  machineModel: "Machine/Model",
+  clientSourceUnit: "Client Source Unit",
+  sourceUnitIdentifier: "Source Unit Identifier",
+  clientCategory: "Client Category",
+  clientItemOffering: "Client Item Offering",
+  itemSecondaryDescription: "Item Secondary Description",
+  clientSecondaryItemNumber: "Client Secondary Item Number",
   requiredQuotes: "Required Quotes",
-  clientPrice: "Client Price",
+  qcThreshold: "Price Difference Threshold",
+  clientItemPrice: "Client Item Price",
+  clientItemPriceCurrency: "Client Item Price Currency",
+  clientItemPriceQuantity: "Client Item Price Quantity",
 };
 
+/** The Client Item Offering values v1 recognises (matched case-insensitively). */
+const CLIENT_ITEM_OFFERINGS = ["Standard", "Premium"] as const;
+export type ClientItemOffering = (typeof CLIENT_ITEM_OFFERINGS)[number];
+
 /** A validated, normalised Benchmark Item ready to upsert (numbers parsed,
- *  country canonicalised, part-number key folded). `clientPrice` is USD/unit. */
+ *  country canonicalised, item-number key folded). `clientPrice` is the derived
+ *  USD/unit; the raw trio is retained as seed provenance (ADR-0027). */
 export interface ValidatedBenchmarkItem {
   readonly country: string;
-  readonly clientPartNumber: string;
-  readonly clientPartNumberKey: string;
+  readonly clientItemNumber: string;
+  readonly clientItemNumberKey: string;
   readonly itemDescription: string;
   readonly configurationComment: string | null;
   readonly quantity: number | null;
-  readonly machineModel: string;
+  readonly clientSourceUnit: string | null;
+  readonly sourceUnitIdentifier: string | null;
+  readonly clientCategory: string | null;
+  readonly clientItemOffering: ClientItemOffering | null;
+  readonly itemSecondaryDescription: string | null;
+  readonly clientSecondaryItemNumber: string | null;
   readonly requiredQuotes: number;
-  /** USD/unit. Null when the brief left it blank — an unpriced item (ADR-0015). */
+  /** Per-item QC Threshold as a FRACTION; null falls back to the study default. */
+  readonly qcThreshold: number | null;
+  /** Advisory competitor brands, ordered, blanks dropped; empty is normal. */
+  readonly requiredCompetitors: readonly string[];
+  /** Derived USD/unit. Null when the brief left the trio blank (ADR-0015). */
   readonly clientPrice: number | null;
+  /** Raw Client Price seed provenance (ADR-0027); all null when unpriced. */
+  readonly clientItemPrice: number | null;
+  readonly clientItemPriceCurrency: string | null;
+  readonly clientItemPriceQuantity: number | null;
 }
 
 /** One problem with the file. `row` is the 1-based spreadsheet row (data starts
@@ -77,20 +116,21 @@ export type ImportValidation =
   | { readonly ok: true; readonly items: readonly ValidatedBenchmarkItem[] }
   | { readonly ok: false; readonly errors: readonly ImportError[] };
 
-/** Fold a part number for the upsert key: trim + lowercase (ADR-0009 — the key
- *  matches case-insensitively on part number; first-seen casing is displayed). */
-export function partNumberKey(value: string): string {
+/** Fold an item number for the upsert key: trim + collapse whitespace +
+ *  lowercase (ADR-0009 — the key matches case-insensitively; first-seen casing
+ *  is displayed). */
+export function itemNumberKey(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /** The Benchmark Item identity, as a single collision-free string: canonical
- *  country + folded part number (ADR-0009). The one definition of the key, used
- *  both for in-file duplicate detection and the upsert resolver. */
+ *  country + folded Client Item Number (ADR-0009). The one definition of the key,
+ *  used both for in-file duplicate detection and the upsert resolver. */
 export function benchmarkItemKey(item: {
   readonly country: string;
-  readonly clientPartNumberKey: string;
+  readonly clientItemNumberKey: string;
 }): string {
-  return JSON.stringify([item.country, item.clientPartNumberKey]);
+  return JSON.stringify([item.country, item.clientItemNumberKey]);
 }
 
 /**
@@ -106,6 +146,7 @@ export function validateImport(grid: readonly (readonly string[])[]): ImportVali
 
   const header = grid[0];
   const columnOf = mapHeaders(header);
+  const competitorColumns = mapCompetitorColumns(header);
 
   // File-level header validation first, so a missing column is reported once —
   // not as per-row "required" noise on every data row.
@@ -135,30 +176,44 @@ export function validateImport(grid: readonly (readonly string[])[]): ImportVali
     // Required free-text fields: present and non-blank.
     const country = cell("country");
     const canonical = canonicalCountry(country);
-    const clientPartNumber = cell("clientPartNumber");
-    const clientPartNumberKey = partNumberKey(clientPartNumber);
+    const clientItemNumber = cell("clientItemNumber");
+    const clientItemNumberKey = itemNumberKey(clientItemNumber);
     const itemDescription = cell("itemDescription");
-    const machineModel = cell("machineModel");
     if (country === "") fail("country", "Country is required");
     else if (canonical === null)
       fail("country", `Unknown country "${country}" — use a canonical country name`);
-    if (clientPartNumber === "") fail("clientPartNumber", "Client Part Number is required");
+    if (clientItemNumber === "") fail("clientItemNumber", "Client Item Number is required");
     if (itemDescription === "") fail("itemDescription", "Item Description is required");
-    if (machineModel === "") fail("machineModel", "Machine/Model is required");
 
-    // Required numeric fields, with range checks.
+    // Required numeric field, with range checks.
     const requiredQuotesRaw = cell("requiredQuotes");
     const requiredQuotes = Number(requiredQuotesRaw);
     if (requiredQuotesRaw === "") fail("requiredQuotes", "Required Quotes is required");
     else if (!Number.isInteger(requiredQuotes) || requiredQuotes < 0)
       fail("requiredQuotes", "Required Quotes must be a whole number >= 0");
 
-    // Client Price is optional — the brief only seeds it (ADR-0015). Blank means
-    // an unpriced item (null). A value that IS present must be a number > 0.
-    const clientPriceRaw = cell("clientPrice");
-    const clientPrice = clientPriceRaw === "" ? null : Number(clientPriceRaw);
-    if (clientPrice !== null && (!Number.isFinite(clientPrice) || clientPrice <= 0))
-      fail("clientPrice", "Client Price must be a number greater than 0 when provided");
+    // Client Price arrives as a raw trio; the derivation core enforces the
+    // all-or-nothing + USD-only rules and yields both the USD/unit value and the
+    // retained seed (ADR-0027). Errors map to the Client Item Price column.
+    const derivation = deriveClientPrice({
+      price: cell("clientItemPrice"),
+      currency: cell("clientItemPriceCurrency"),
+      priceQuantity: cell("clientItemPriceQuantity"),
+    });
+    if (!derivation.ok) fail("clientItemPrice", derivation.message);
+
+    // Per-item QC Threshold (a FRACTION); optional, falls back to the study
+    // default when blank. A present value must be a number > 0.
+    const qcThresholdRaw = cell("qcThreshold");
+    const qcThreshold = qcThresholdRaw === "" ? null : Number(qcThresholdRaw);
+    if (qcThreshold !== null && (!Number.isFinite(qcThreshold) || qcThreshold <= 0))
+      fail("qcThreshold", "Price Difference Threshold must be a fraction greater than 0 when provided");
+
+    // Client Item Offering: optional, but a present value must be Standard/Premium.
+    const offeringRaw = cell("clientItemOffering");
+    const clientItemOffering = canonicalOffering(offeringRaw);
+    if (offeringRaw !== "" && clientItemOffering === null)
+      fail("clientItemOffering", "Client Item Offering must be Standard or Premium");
 
     // Quantity is optional, but a value that IS present must be a positive whole
     // number (the client's own quantity for the part).
@@ -167,13 +222,18 @@ export function validateImport(grid: readonly (readonly string[])[]): ImportVali
     if (quantity !== null && (!Number.isInteger(quantity) || quantity <= 0))
       fail("quantity", "Quantity must be a whole number greater than 0 when provided");
 
+    // Required Competitors: ordered, blanks dropped, no dedupe (advisory).
+    const requiredCompetitors = competitorColumns
+      .map((idx) => (row[idx] ?? "").trim())
+      .filter((v) => v !== "");
+
     // In-file duplicate detection on the upsert key. Only meaningful once both
     // halves are present (a blank/unknown country is already its own error).
-    if (canonical !== null && clientPartNumber !== "") {
-      const key = benchmarkItemKey({ country: canonical, clientPartNumberKey });
+    if (canonical !== null && clientItemNumber !== "") {
+      const key = benchmarkItemKey({ country: canonical, clientItemNumberKey });
       const firstRow = firstSeenAtRow.get(key);
       if (firstRow !== undefined) {
-        fail("clientPartNumber", `Duplicate of row ${firstRow}: same Client Part Number + Country`);
+        fail("clientItemNumber", `Duplicate of row ${firstRow}: same Client Item Number + Country`);
       } else {
         firstSeenAtRow.set(key, rowNumber);
       }
@@ -181,14 +241,24 @@ export function validateImport(grid: readonly (readonly string[])[]): ImportVali
 
     items.push({
       country: canonical ?? country,
-      clientPartNumber,
-      clientPartNumberKey,
+      clientItemNumber,
+      clientItemNumberKey,
       itemDescription,
       configurationComment: cell("configurationComment") || null,
       quantity,
-      machineModel,
+      clientSourceUnit: cell("clientSourceUnit") || null,
+      sourceUnitIdentifier: cell("sourceUnitIdentifier") || null,
+      clientCategory: cell("clientCategory") || null,
+      clientItemOffering,
+      itemSecondaryDescription: cell("itemSecondaryDescription") || null,
+      clientSecondaryItemNumber: cell("clientSecondaryItemNumber") || null,
       requiredQuotes,
-      clientPrice,
+      qcThreshold,
+      requiredCompetitors,
+      clientPrice: derivation.ok ? derivation.clientPrice : null,
+      clientItemPrice: derivation.ok && derivation.seed ? derivation.seed.price : null,
+      clientItemPriceCurrency: derivation.ok && derivation.seed ? derivation.seed.currency : null,
+      clientItemPriceQuantity: derivation.ok && derivation.seed ? derivation.seed.priceQuantity : null,
     });
   }
 
@@ -213,4 +283,25 @@ function mapHeaders(header: readonly string[]): Map<BenchmarkItemField, number> 
     if (idx !== undefined) columnOf.set(field, idx);
   }
   return columnOf;
+}
+
+/** Resolve the `Required Competitor 1..N` columns to their indices, in order.
+ *  Missing numbers are simply absent — the order follows N, not file position. */
+function mapCompetitorColumns(header: readonly string[]): number[] {
+  const byLabel = new Map<string, number>();
+  header.forEach((label, idx) => byLabel.set(normaliseHeader(label), idx));
+
+  const columns: number[] = [];
+  for (let n = 1; n <= MAX_REQUIRED_COMPETITORS; n++) {
+    const idx = byLabel.get(normaliseHeader(`Required Competitor ${n}`));
+    if (idx !== undefined) columns.push(idx);
+  }
+  return columns;
+}
+
+/** Fold a raw Client Item Offering to its canonical casing, or null if blank or
+ *  unrecognised (the caller distinguishes blank from invalid). */
+function canonicalOffering(raw: string): ClientItemOffering | null {
+  const folded = raw.trim().toLowerCase();
+  return CLIENT_ITEM_OFFERINGS.find((o) => o.toLowerCase() === folded) ?? null;
 }

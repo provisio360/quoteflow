@@ -11,7 +11,7 @@ import { buildInternalExport, type InternalExportQuote } from "./internal-export
 function quote(over: Partial<InternalExportQuote> = {}): InternalExportQuote {
   return {
     country: "Germany",
-    clientPartNumber: "PN-G1",
+    clientItemNumber: "PN-G1",
     itemDescription: "Pump",
     clientPrice: 1000,
     state: "Approved",
@@ -42,7 +42,7 @@ describe("buildInternalExport — Quotes sheet", () => {
         quote({ state: "Submitted", quoteNumber: 1, justification: "premium" }),
         quote({ state: "Rejected", quoteNumber: 2, rejectionReason: "wrong part", justification: null }),
       ],
-      25,
+      0.25,
     );
 
     const sheet = wb.sheets.find((s) => s.name === "Quotes")!;
@@ -63,7 +63,7 @@ describe("buildInternalExport — Quotes sheet", () => {
         quote({ usdPricePerUnit: 2000, clientPrice: 1000 }), // +100% vs 25% threshold
         quote({ usdPricePerUnit: 1050, clientPrice: 1000 }), // within threshold, dearer
       ],
-      25,
+      0.25,
     );
     const flags = wb.sheets[0].rows.map((r) => r.qcFlag);
     expect(flags).toEqual(["above (flagged)", "above"]);
@@ -75,7 +75,7 @@ describe("buildInternalExport — Quotes sheet", () => {
         quote({ clientPrice: null, usdPricePerUnit: 1200 }),
         quote({ clientPrice: 1000, usdPricePerUnit: null }),
       ],
-      25,
+      0.25,
     );
     expect(wb.sheets[0].rows.map((r) => r.qcFlag)).toEqual(["n/a", "n/a"]);
   });

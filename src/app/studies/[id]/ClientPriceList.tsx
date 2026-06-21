@@ -52,7 +52,7 @@ function ClientPriceRow({ studyId, item }: { studyId: string; item: AnalystItemV
   return (
     <tr>
       <td style={cell}>{item.country}</td>
-      <td style={cell}>{item.clientPartNumber}</td>
+      <td style={cell}>{item.clientItemNumber}</td>
       <td style={cell}>{item.itemDescription}</td>
       <td style={cell}>{item.requiredQuotes}</td>
       <td style={cell}>

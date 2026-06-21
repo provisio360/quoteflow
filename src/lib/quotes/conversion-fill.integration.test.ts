@@ -63,17 +63,17 @@ beforeAll(async () => {
   });
   em = { kind: "internal", userId: emId, role: "EngagementManager" };
 
-  studyId = (await createStudy(em, { name: "Fill study", clientId: tenantId, qcThresholdPct: 25 })).id;
+  studyId = (await createStudy(em, { name: "Fill study", clientId: tenantId, qcThreshold: 0.25 })).id;
   itemId = (
     await prisma.benchmarkItem.create({
       data: {
         studyId,
         clientId: tenantId,
         country: "Germany",
-        clientPartNumber: "PN-1",
-        clientPartNumberKey: "pn-1",
+        clientItemNumber: "PN-1",
+        clientItemNumberKey: "pn-1",
         itemDescription: "Hydraulic widget",
-        machineModel: "M1",
+        clientSourceUnit: "M1",
         requiredQuotes: 1,
         clientPrice: "123.4500",
       },

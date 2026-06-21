@@ -3,46 +3,47 @@ import { evaluatePriceFlag } from "./price-flag";
 
 // The QC out-of-range flag (ADR-0014). A converted Quote's USD price-per-unit is
 // compared to its Benchmark Item's Client Price via the symmetric relative
-// percent difference; a divergence beyond the study's QC Threshold flags it.
+// difference; a divergence beyond the QC Threshold (a FRACTION, e.g. 0.25 = 25%)
+// flags it. The threshold is a fraction at every layer (CONTEXT.md: QC Threshold).
 
 describe("evaluatePriceFlag", () => {
   it("does not flag a quote within the threshold of the Client Price", () => {
-    // 110 vs 100: percent_diff = |110-100| / ((110+100)/2) * 100 ≈ 9.52% < 25%.
+    // 110 vs 100: diff = |110-100| / ((110+100)/2) ≈ 0.0952 < 0.25.
     expect(
-      evaluatePriceFlag({ usdPricePerUnit: 110, clientPrice: 100, thresholdPct: 25 }),
+      evaluatePriceFlag({ usdPricePerUnit: 110, clientPrice: 100, threshold: 0.25 }),
     ).toEqual({ comparable: true, flagged: false, direction: "above", percentDiff: expect.closeTo(9.5238, 3) });
   });
 
   it("flags a quote dearer than the benchmark beyond the threshold (direction above)", () => {
-    // 150 vs 100: percent_diff = 50 / 125 * 100 = 40% > 25%.
+    // 150 vs 100: diff = 50 / 125 = 0.40 > 0.25.
     expect(
-      evaluatePriceFlag({ usdPricePerUnit: 150, clientPrice: 100, thresholdPct: 25 }),
+      evaluatePriceFlag({ usdPricePerUnit: 150, clientPrice: 100, threshold: 0.25 }),
     ).toEqual({ comparable: true, flagged: true, direction: "above", percentDiff: 40 });
   });
 
   it("flags a quote cheaper than the benchmark beyond the threshold (direction below)", () => {
-    // 60 vs 100: percent_diff = 40 / 80 * 100 = 50% > 25%.
+    // 60 vs 100: diff = 40 / 80 = 0.50 > 0.25.
     expect(
-      evaluatePriceFlag({ usdPricePerUnit: 60, clientPrice: 100, thresholdPct: 25 }),
+      evaluatePriceFlag({ usdPricePerUnit: 60, clientPrice: 100, threshold: 0.25 }),
     ).toEqual({ comparable: true, flagged: true, direction: "below", percentDiff: 50 });
   });
 
   it("is not comparable when the quote has no USD price-per-unit (pending/unconverted)", () => {
     expect(
-      evaluatePriceFlag({ usdPricePerUnit: null, clientPrice: 100, thresholdPct: 25 }),
+      evaluatePriceFlag({ usdPricePerUnit: null, clientPrice: 100, threshold: 0.25 }),
     ).toEqual({ comparable: false });
   });
 
   it("is not comparable when the Benchmark Item has no Client Price (unset, ADR-0015)", () => {
     expect(
-      evaluatePriceFlag({ usdPricePerUnit: 110, clientPrice: null, thresholdPct: 25 }),
+      evaluatePriceFlag({ usdPricePerUnit: 110, clientPrice: null, threshold: 0.25 }),
     ).toEqual({ comparable: false });
   });
 
   it("does not flag a quote exactly at the threshold (boundary is inclusive)", () => {
-    // Choose a = 100, b = 60: percent_diff = 40 / 80 * 100 = 50%, threshold = 50%.
+    // Choose a = 100, b = 60: diff = 40 / 80 = 0.50, threshold = 0.50.
     expect(
-      evaluatePriceFlag({ usdPricePerUnit: 100, clientPrice: 60, thresholdPct: 50 }),
+      evaluatePriceFlag({ usdPricePerUnit: 100, clientPrice: 60, threshold: 0.5 }),
     ).toEqual({ comparable: true, flagged: false, direction: "above", percentDiff: 50 });
   });
 });

@@ -48,10 +48,10 @@ async function seedItem(studyId: string, country: string, pn: string): Promise<v
       studyId,
       clientId: tenantId,
       country,
-      clientPartNumber: pn,
-      clientPartNumberKey: pn.toLowerCase(),
+      clientItemNumber: pn,
+      clientItemNumberKey: pn.toLowerCase(),
       itemDescription: "Widget",
-      machineModel: "M1",
+      clientSourceUnit: "M1",
       requiredQuotes: 1,
     },
   });
@@ -97,7 +97,7 @@ describe("countUnstaffedCountries — the EM setup backlog signal", () => {
     const before = await countUnstaffedCountries(em);
 
     const studyId = (
-      await createStudy(em, { name: "S1", clientId: tenantId, qcThresholdPct: 25 })
+      await createStudy(em, { name: "S1", clientId: tenantId, qcThreshold: 0.25 })
     ).id;
     await seedItem(studyId, "Germany", "PN-1");
 
@@ -107,7 +107,7 @@ describe("countUnstaffedCountries — the EM setup backlog signal", () => {
 
   it("assigning a researcher staffs the country — the count drops by one", async () => {
     const studyId = (
-      await createStudy(em, { name: "S2", clientId: tenantId, qcThresholdPct: 25 })
+      await createStudy(em, { name: "S2", clientId: tenantId, qcThreshold: 0.25 })
     ).id;
     await seedItem(studyId, "France", "PN-1");
     const researcher = await seedResearcher("R-staff");
@@ -121,7 +121,7 @@ describe("countUnstaffedCountries — the EM setup backlog signal", () => {
 
   it("a single (study, country) with several Benchmark Items counts once", async () => {
     const studyId = (
-      await createStudy(em, { name: "S3", clientId: tenantId, qcThresholdPct: 25 })
+      await createStudy(em, { name: "S3", clientId: tenantId, qcThreshold: 0.25 })
     ).id;
 
     const before = await countUnstaffedCountries(em);
@@ -135,10 +135,10 @@ describe("countUnstaffedCountries — the EM setup backlog signal", () => {
 
   it("the same country name in two studies counts as two distinct pairs", async () => {
     const studyA = (
-      await createStudy(em, { name: "S4a", clientId: tenantId, qcThresholdPct: 25 })
+      await createStudy(em, { name: "S4a", clientId: tenantId, qcThreshold: 0.25 })
     ).id;
     const studyB = (
-      await createStudy(em, { name: "S4b", clientId: tenantId, qcThresholdPct: 25 })
+      await createStudy(em, { name: "S4b", clientId: tenantId, qcThreshold: 0.25 })
     ).id;
 
     const before = await countUnstaffedCountries(em);

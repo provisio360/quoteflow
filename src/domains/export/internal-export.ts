@@ -14,7 +14,7 @@ import { evaluatePriceFlag } from "@/domains/quotes/price-flag";
  *  analyst needs: Client Price (for the QC flag) and the quote's review fields. */
 export interface InternalExportQuote {
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly clientPrice: number | null;
   readonly state: string;
@@ -38,7 +38,7 @@ export interface InternalExportQuote {
 
 const QUOTE_COLUMNS: readonly Column[] = [
   { header: "Country", key: "country" },
-  { header: "Client Part Number", key: "clientPartNumber" },
+  { header: "Client Item Number", key: "clientItemNumber" },
   { header: "Item Description", key: "itemDescription" },
   { header: "State", key: "state" },
   { header: "Quote #", key: "quoteNumber" },
@@ -62,16 +62,16 @@ const QUOTE_COLUMNS: readonly Column[] = [
 ];
 
 /**
- * Build the Internal Export workbook. `thresholdPct` is the study's QC Threshold,
- * applied to each quote's QC Flag exactly as the per-quote flag does.
+ * Build the Internal Export workbook. `threshold` is the QC Threshold as a
+ * FRACTION, applied to each quote's QC Flag exactly as the per-quote flag does.
  */
 export function buildInternalExport(
   quotes: readonly InternalExportQuote[],
-  thresholdPct: number,
+  threshold: number,
 ): WorkbookData {
   const rows: Record<string, Cell>[] = quotes.map((q) => ({
     country: q.country,
-    clientPartNumber: q.clientPartNumber,
+    clientItemNumber: q.clientItemNumber,
     itemDescription: q.itemDescription,
     state: q.state,
     quoteNumber: q.quoteNumber,
@@ -84,7 +84,7 @@ export function buildInternalExport(
     convertedUsdPrice: q.convertedUsdPrice,
     usdPricePerUnit: q.usdPricePerUnit,
     clientPrice: q.clientPrice,
-    qcFlag: qcFlag(q, thresholdPct),
+    qcFlag: qcFlag(q, threshold),
     stockStatus: q.stockStatus,
     leadTime: q.leadTime,
     warranty: q.warranty,
@@ -98,11 +98,11 @@ export function buildInternalExport(
 
 /** The QC Flag cell: "n/a" when the quote is not comparable (unconverted or no
  *  Client Price), otherwise the direction, marked "(flagged)" when out of range. */
-function qcFlag(q: InternalExportQuote, thresholdPct: number): string {
+function qcFlag(q: InternalExportQuote, threshold: number): string {
   const result = evaluatePriceFlag({
     usdPricePerUnit: q.usdPricePerUnit,
     clientPrice: q.clientPrice,
-    thresholdPct,
+    threshold,
   });
   if (!result.comparable) return "n/a";
   return result.flagged ? `${result.direction} (flagged)` : result.direction;
