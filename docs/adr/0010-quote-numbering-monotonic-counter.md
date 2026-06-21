@@ -1,5 +1,11 @@
 # Quote numbering: a per-item monotonic counter, gaps are intended
 
+> **Superseded by ADR-0026.** Quotes are no longer flat per-item rows: a
+> **Market Quote** (dealer document) has many **Quote Lines**. Numbering moves to
+> two per-(study, country) counters — Market Quote Number and a stable Quote Line
+> Number — and `BenchmarkItem.quoteSeq` is removed. The gap-is-the-feature
+> reasoning below still holds, one level up.
+
 Each Quote carries a **Quote Number** that is unique *within its Benchmark Item*,
 assigned the moment the Draft is created, and **never reused** — an abandoned or
 rejected quote leaves a permanent gap rather than renumbering, so "Item 12, Quote
