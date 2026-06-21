@@ -1,5 +1,9 @@
 # Out-of-range price flag and the justification loop
 
+> **Amended by ADR-0026.** The QC Threshold is now **per Benchmark Item with a
+> study-level default** (not one per study), stored as a fraction. The flag /
+> justification machinery below is unchanged — it attaches to a **Quote Line**.
+
 A Quote's USD price-per-unit is checked against its Benchmark Item's
 [[Client Price]] and **flagged** when it diverges by more than the study's
 **QC Threshold** (issue #11). The flag is advisory — it never auto-rejects — but

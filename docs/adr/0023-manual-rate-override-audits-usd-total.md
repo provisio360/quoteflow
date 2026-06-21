@@ -1,5 +1,10 @@
 # A manual rate override audits the converted USD total, not the raw rate
 
+> **Amended by ADR-0026.** The override now acts on a **Market Quote** (one rate
+> per document), so it is **one audit event per document** whose before/after is
+> the **document-total** converted USD (summed across the document's lines). The
+> "audit the money that moved, not the raw rate" principle below is unchanged.
+
 Issue #70 wires the [[Analyst]]'s manual [[Exchange Rate]] override for a [[Quote]]
 whose currency the provider doesn't cover — the first action to use the
 before/after monetary pair ADR-0019 left generic for "a future price-bearing
