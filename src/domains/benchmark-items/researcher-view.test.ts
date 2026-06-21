@@ -9,11 +9,11 @@ function item(overrides: Partial<ResearcherItemView> = {}): ResearcherItemView {
     id: "item-1",
     studyId: "study-1",
     country: "Germany",
-    clientPartNumber: "CPN-001",
+    clientItemNumber: "CPN-001",
     itemDescription: "Hydraulic pump",
     configurationComment: "230V variant",
     quantity: 10,
-    machineModel: "Model X",
+    clientSourceUnit: "Model X",
     requiredQuotes: 3,
     primaryResearcherId: null,
     ...overrides,
@@ -37,7 +37,7 @@ describe("resolveResearcherEntries", () => {
     // The defect (#66): these guidance fields were dropped before the UI.
     expect(entry.item.configurationComment).toBe("230V variant");
     expect(entry.item.quantity).toBe(10);
-    expect(entry.item.machineModel).toBe("Model X");
+    expect(entry.item.clientSourceUnit).toBe("Model X");
   });
 
   it("another researcher's claim resolves to claimed", () => {

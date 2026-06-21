@@ -18,6 +18,8 @@ export async function createStudyAction(
   const principal = await requirePrincipal();
   const name = String(formData.get("name") ?? "").trim();
   const clientId = String(formData.get("clientId") ?? "");
+  // The form takes a percentage (EM-friendly), but the QC Threshold is stored and
+  // compared as a FRACTION everywhere (#86) — convert at this boundary.
   const qcThresholdPct = Number(String(formData.get("qcThresholdPct") ?? ""));
 
   if (name === "") return { ok: false, error: "Enter a study name." };
@@ -27,7 +29,7 @@ export async function createStudyAction(
   }
 
   try {
-    const study = await createStudy(principal, { name, clientId, qcThresholdPct });
+    const study = await createStudy(principal, { name, clientId, qcThreshold: qcThresholdPct / 100 });
     revalidatePath("/studies");
     return { ok: true, id: study.id };
   } catch (error) {

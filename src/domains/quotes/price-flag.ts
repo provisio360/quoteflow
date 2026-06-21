@@ -17,8 +17,9 @@ export interface PriceFlagInput {
    * (ADR-0015); such an item is not comparable, exactly like an unconverted quote.
    */
   readonly clientPrice: number | null;
-  /** The Pricing Study's QC Threshold, as a percentage (CONTEXT.md: QC Threshold). */
-  readonly thresholdPct: number;
+  /** The resolved QC Threshold, as a FRACTION (e.g. 0.25 = 25%; CONTEXT.md: QC
+   *  Threshold). Per-item value with study-default fallback is resolved upstream. */
+  readonly threshold: number;
 }
 
 export type PriceFlagResult =
@@ -40,13 +41,16 @@ export type PriceFlagResult =
  * (above) or cheaper (below) than the benchmark, for display only.
  */
 export function evaluatePriceFlag(input: PriceFlagInput): PriceFlagResult {
-  const { usdPricePerUnit, clientPrice, thresholdPct } = input;
+  const { usdPricePerUnit, clientPrice, threshold } = input;
   if (usdPricePerUnit === null || clientPrice === null) return { comparable: false };
 
   const a = usdPricePerUnit;
   const b = clientPrice;
   const mean = (a + b) / 2;
-  const percentDiff = mean === 0 ? 0 : (Math.abs(a - b) / mean) * 100;
+  // Relative difference as a FRACTION, compared directly to the fraction
+  // threshold; `percentDiff` (×100) is retained for display only.
+  const relativeDiff = mean === 0 ? 0 : Math.abs(a - b) / mean;
+  const percentDiff = relativeDiff * 100;
   const direction = a > b ? "above" : a < b ? "below" : "equal";
-  return { comparable: true, flagged: percentDiff > thresholdPct, direction, percentDiff };
+  return { comparable: true, flagged: relativeDiff > threshold, direction, percentDiff };
 }

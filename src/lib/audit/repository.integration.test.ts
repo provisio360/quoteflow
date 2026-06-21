@@ -41,7 +41,7 @@ beforeAll(async () => {
   researcher = await makeUser("Researcher");
   admin = await makeUser("Admin");
   clientUser = { kind: "client", userId: randomUUID(), tenantId: tenant };
-  studyId = (await createStudy(analyst, { name: "Audit study", clientId: tenant, qcThresholdPct: 25 })).id;
+  studyId = (await createStudy(analyst, { name: "Audit study", clientId: tenant, qcThreshold: 0.25 })).id;
 });
 
 beforeEach(async () => {
@@ -88,7 +88,7 @@ describe("listAuditEventsForStudy — the audit-log read path (issue #72)", () =
 
   it("returns only the requested study's events, never another study's", async () => {
     const other = await createStudy(analyst, {
-      name: "Other study", clientId: tenant, qcThresholdPct: 25,
+      name: "Other study", clientId: tenant, qcThreshold: 0.25,
     });
     await prisma.auditEvent.create({
       data: {
@@ -129,8 +129,8 @@ describe("listAuditEventsForStudy — subject label resolution (issue #72 Q2)", 
     const item = await prisma.benchmarkItem.create({
       data: {
         studyId, clientId: tenant, country: "Germany",
-        clientPartNumber: "PN-42", clientPartNumberKey: "pn-42",
-        itemDescription: "Pump", machineModel: "X1", requiredQuotes: 3,
+        clientItemNumber: "PN-42", clientItemNumberKey: "pn-42",
+        itemDescription: "Pump", clientSourceUnit: "X1", requiredQuotes: 3,
       },
     });
     const quote = await prisma.quote.create({
@@ -204,8 +204,8 @@ describe("listAuditEventsForStudy — end-to-end (issue #72: perform, then read 
     const item = await prisma.benchmarkItem.create({
       data: {
         studyId, clientId: tenant, country: "Italy",
-        clientPartNumber: "PN-99", clientPartNumberKey: "pn-99",
-        itemDescription: "Valve", machineModel: "Z9", requiredQuotes: 2, clientPrice: 1000,
+        clientItemNumber: "PN-99", clientItemNumberKey: "pn-99",
+        itemDescription: "Valve", clientSourceUnit: "Z9", requiredQuotes: 2, clientPrice: 1000,
       },
     });
 

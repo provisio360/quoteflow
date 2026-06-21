@@ -52,7 +52,7 @@ function mayRunClientExport(principal: Principal): boolean {
 
 const CLIENT_ITEM_SELECT = {
   country: true,
-  clientPartNumber: true,
+  clientItemNumber: true,
   itemDescription: true,
   quotes: {
     where: { state: "Approved" as const },
@@ -114,13 +114,13 @@ async function loadReleasedItems(
 
   const rows = await tx.benchmarkItem.findMany({
     where: { studyId, country: { in: released.map((r) => r.country) } },
-    orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
+    orderBy: [{ country: "asc" }, { clientItemNumber: "asc" }],
     select: CLIENT_ITEM_SELECT,
   });
 
   return rows.map((row) => ({
     country: row.country,
-    clientPartNumber: row.clientPartNumber,
+    clientItemNumber: row.clientItemNumber,
     itemDescription: row.itemDescription,
     quotes: row.quotes.map((q) => ({
       quoteNumber: q.quoteNumber,
@@ -143,7 +143,7 @@ async function loadReleasedItems(
 
 const INTERNAL_ITEM_SELECT = {
   country: true,
-  clientPartNumber: true,
+  clientItemNumber: true,
   itemDescription: true,
   clientPrice: true,
   quotes: {
@@ -188,7 +188,7 @@ export async function exportInternalWorkbook(
   const study = await withTenant(principal, (tx) =>
     tx.study.findUnique({
       where: { id: studyId },
-      select: { clientId: true, qcThresholdPct: true, benchmarkItems: { orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }], select: INTERNAL_ITEM_SELECT } },
+      select: { clientId: true, qcThreshold: true, benchmarkItems: { orderBy: [{ country: "asc" }, { clientItemNumber: "asc" }], select: INTERNAL_ITEM_SELECT } },
     }),
   );
   if (study === null) throw new ExportAccessError("Study not found");
@@ -198,7 +198,7 @@ export async function exportInternalWorkbook(
     for (const q of item.quotes) {
       quotes.push({
         country: item.country,
-        clientPartNumber: item.clientPartNumber,
+        clientItemNumber: item.clientItemNumber,
         itemDescription: item.itemDescription,
         clientPrice: toNumber(item.clientPrice),
         state: q.state,
@@ -223,7 +223,7 @@ export async function exportInternalWorkbook(
   }
 
   const buffer = await renderWorkbook(
-    buildInternalExport(quotes, study.qcThresholdPct.toNumber()),
+    buildInternalExport(quotes, study.qcThreshold.toNumber()),
   );
 
   // Audit AFTER successful generation (ADR-0018): a failed export logs nothing.

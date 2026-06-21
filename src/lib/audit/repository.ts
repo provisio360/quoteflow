@@ -134,9 +134,9 @@ async function resolveSubjectLabels(
   if (itemIds.length > 0) {
     for (const i of await tx.benchmarkItem.findMany({
       where: { id: { in: itemIds } },
-      select: { id: true, clientPartNumber: true, country: true },
+      select: { id: true, clientItemNumber: true, country: true },
     })) {
-      labels.set(i.id, `${i.clientPartNumber} · ${i.country}`);
+      labels.set(i.id, `${i.clientItemNumber} · ${i.country}`);
     }
   }
 

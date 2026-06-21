@@ -55,8 +55,8 @@ beforeAll(async () => {
   clientB = { kind: "client", userId: randomUUID(), tenantId: tenantB };
 
   // Seed one study per tenant *through the repository* (also exercises create).
-  studyA = (await createStudy(em, { name: "Study A", clientId: tenantA, qcThresholdPct: 25 })).id;
-  studyB = (await createStudy(em, { name: "Study B", clientId: tenantB, qcThresholdPct: 25 })).id;
+  studyA = (await createStudy(em, { name: "Study A", clientId: tenantA, qcThreshold: 0.25 })).id;
+  studyB = (await createStudy(em, { name: "Study B", clientId: tenantB, qcThreshold: 0.25 })).id;
 });
 
 afterAll(async () => {
@@ -135,9 +135,9 @@ describe("released-country counts for the client home (issue #60)", () => {
   let emptyStudyA: string;
 
   beforeAll(async () => {
-    countStudyA = (await createStudy(em, { name: "Counts A", clientId: tenantA, qcThresholdPct: 25 })).id;
-    countStudyB = (await createStudy(em, { name: "Counts B", clientId: tenantB, qcThresholdPct: 25 })).id;
-    emptyStudyA = (await createStudy(em, { name: "Empty A", clientId: tenantA, qcThresholdPct: 25 })).id;
+    countStudyA = (await createStudy(em, { name: "Counts A", clientId: tenantA, qcThreshold: 0.25 })).id;
+    countStudyB = (await createStudy(em, { name: "Counts B", clientId: tenantB, qcThreshold: 0.25 })).id;
+    emptyStudyA = (await createStudy(em, { name: "Empty A", clientId: tenantA, qcThreshold: 0.25 })).id;
 
     // countStudyA: two released, one reopened (excluded). countStudyB (other
     // tenant): one released — must never leak into tenant A's counts.
@@ -174,7 +174,7 @@ describe("released-country counts for the client home (issue #60)", () => {
 describe("creation authorization", () => {
   it("a client user cannot create a study", async () => {
     await expect(
-      createStudy(clientA, { name: "Nope", clientId: tenantA, qcThresholdPct: 25 }),
+      createStudy(clientA, { name: "Nope", clientId: tenantA, qcThreshold: 0.25 }),
     ).rejects.toBeInstanceOf(StudyAccessError);
   });
 
@@ -187,10 +187,10 @@ describe("creation authorization", () => {
     const created = await createStudy(analyst, {
       name: "Analyst study",
       clientId: tenantA,
-      qcThresholdPct: 30,
+      qcThreshold: 0.3,
     });
     expect(created.clientId).toBe(tenantA);
     expect(created.createdById).toBe(emUserId);
-    expect(Number(created.qcThresholdPct)).toBe(30);
+    expect(Number(created.qcThreshold)).toBe(0.3);
   });
 });

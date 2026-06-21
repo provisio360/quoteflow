@@ -64,7 +64,7 @@ beforeAll(async () => {
   });
   em = { kind: "internal", userId: emId, role: "EngagementManager" };
 
-  studyId = (await createStudy(em, { name: "Researcher view study", clientId: tenantId, qcThresholdPct: 25 })).id;
+  studyId = (await createStudy(em, { name: "Researcher view study", clientId: tenantId, qcThreshold: 0.25 })).id;
 
   germanyItemId = (
     await prisma.benchmarkItem.create({
@@ -72,12 +72,12 @@ beforeAll(async () => {
         studyId,
         clientId: tenantId,
         country: "Germany",
-        clientPartNumber: "PN-1",
-        clientPartNumberKey: "pn-1",
+        clientItemNumber: "PN-1",
+        clientItemNumberKey: "pn-1",
         itemDescription: "Hydraulic widget",
         configurationComment: "with seal kit",
         quantity: 4,
-        machineModel: "M1",
+        clientSourceUnit: "M1",
         requiredQuotes: 2,
         clientPrice: "123.4500",
       },
@@ -90,10 +90,10 @@ beforeAll(async () => {
         studyId,
         clientId: tenantId,
         country: "Germany",
-        clientPartNumber: "PN-2",
-        clientPartNumberKey: "pn-2",
+        clientItemNumber: "PN-2",
+        clientItemNumberKey: "pn-2",
         itemDescription: "Spare gasket",
-        machineModel: "M2",
+        clientSourceUnit: "M2",
         requiredQuotes: 1,
         clientPrice: "9.9900",
       },
@@ -139,11 +139,11 @@ describe("getBenchmarkItemForResearcher — guidance view, Client Price hidden",
       id: germanyItemId,
       studyId,
       country: "Germany",
-      clientPartNumber: "PN-1",
+      clientItemNumber: "PN-1",
       itemDescription: "Hydraulic widget",
       configurationComment: "with seal kit",
       quantity: 4,
-      machineModel: "M1",
+      clientSourceUnit: "M1",
       requiredQuotes: 2,
     });
   });

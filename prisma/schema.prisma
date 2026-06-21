@@ -200,11 +200,12 @@ model Study {
   name           String
   clientId       String
   createdById    String
-  // The study's QC Threshold (CONTEXT.md / ADR-0014): the percentage a Quote's
+  // The study's default QC Threshold (CONTEXT.md / ADR-0014): how far a Quote's
   // USD price-per-unit may diverge from a Benchmark Item's Client Price before it
   // is flagged. Required — a study without one is mis-configured — and set at
-  // study setup by the EM/Analyst. Stored as a percentage (e.g. 25.00 = 25%).
-  qcThresholdPct Decimal  @db.Decimal(5, 2)
+  // study setup by the EM/Analyst. Stored as a FRACTION (e.g. 0.2500 = 25%), the
+  // same unit as the per-item BenchmarkItem.qcThreshold that overrides it (#86).
+  qcThreshold Decimal  @db.Decimal(6, 4)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -242,14 +243,40 @@ model BenchmarkItem {
   // the other denormalized study/client ids on the audit/export trails.
   clientId             String
   country              String
-  clientPartNumber     String
-  clientPartNumberKey  String
+  // The Benchmark Item identity within a study, with country (ADR-0009). Renamed
+  // from clientPartNumber in #86 to match the real brief column "Client Item
+  // Number"; the *Key is the folded (trim/lowercase) form the upsert matches on.
+  clientItemNumber     String
+  clientItemNumberKey  String
   itemDescription      String
   configurationComment String?
   quantity             Int?
-  machineModel         String
+  // Descriptive client-brief context (#86), all nullable — not every brief
+  // carries them. clientSourceUnit is the renamed machineModel (the machine/model
+  // the part belongs to, e.g. "BRC8T450X"); sourceUnitIdentifier is its optional
+  // variant. clientItemOffering is "Standard" | "Premium" (validated at import).
+  clientSourceUnit        String?
+  sourceUnitIdentifier    String?
+  clientCategory          String?
+  clientItemOffering      String?
+  itemSecondaryDescription String?
+  clientSecondaryItemNumber String?
   requiredQuotes       Int
+  // Per-item QC Threshold as a FRACTION (e.g. 0.2500 = 25%; CONTEXT.md / ADR-0014
+  // amended by #86). Null falls back to Study.qcThreshold. Same unit at both
+  // levels so the fallback never mixes scales.
+  qcThreshold          Decimal? @db.Decimal(6, 4)
+  // Advisory competitor brands the client wants benchmarked (CONTEXT.md: Required
+  // Competitors). Ordered, up to 10, never a release gate; empty is normal.
+  requiredCompetitors  String[]
+  // The operative Client Price: derived USD/unit (price / priceQuantity), analyst-
+  // owned after seeding — re-import never overwrites it (ADR-0015).
   clientPrice          Decimal? @db.Decimal(14, 4)
+  // Client Price seed provenance — the raw brief trio it was first derived from
+  // (ADR-0027). Insert-only like clientPrice; null when the item is unpriced.
+  clientItemPrice         Decimal? @db.Decimal(14, 4)
+  clientItemPriceCurrency String?
+  clientItemPriceQuantity Decimal? @db.Decimal(14, 4)
   // The single lead Researcher on this item (CONTEXT.md: Primary Researcher),
   // set when a researcher self-assigns (#7). Null = unclaimed. First-come and
   // never stolen: the claim is a conditional update on this being NULL. Restrict
@@ -269,7 +296,7 @@ model BenchmarkItem {
   primaryResearcher User?   @relation("PrimaryResearcher", fields: [primaryResearcherId], references: [id], onDelete: Restrict)
   quotes            Quote[]
 
-  @@unique([studyId, country, clientPartNumberKey])
+  @@unique([studyId, country, clientItemNumberKey])
   @@index([studyId])
   @@index([primaryResearcherId])
   @@index([clientId])

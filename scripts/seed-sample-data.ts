@@ -67,7 +67,7 @@ async function main() {
       name: "Globex 2026 Heavy Equipment Benchmark",
       clientId: client.id,
       createdById: emId,
-      qcThresholdPct: "25.00",
+      qcThreshold: "0.2500",
     },
   });
 
@@ -75,9 +75,9 @@ async function main() {
   const itemsData = [
     {
       country: "Germany",
-      clientPartNumber: "GX-1001",
+      clientItemNumber: "GX-1001",
       itemDescription: "Hydraulic excavator arm cylinder",
-      machineModel: "EX-220",
+      clientSourceUnit: "EX-220",
       quantity: 4,
       requiredQuotes: 3,
       clientPrice: "12500.0000",
@@ -85,9 +85,9 @@ async function main() {
     },
     {
       country: "Germany",
-      clientPartNumber: "GX-1002",
+      clientItemNumber: "GX-1002",
       itemDescription: "Track roller assembly",
-      machineModel: "EX-220",
+      clientSourceUnit: "EX-220",
       quantity: 8,
       requiredQuotes: 3,
       clientPrice: "3200.0000",
@@ -95,9 +95,9 @@ async function main() {
     },
     {
       country: "France",
-      clientPartNumber: "GX-2001",
+      clientItemNumber: "GX-2001",
       itemDescription: "Diesel engine turbocharger",
-      machineModel: "LD-90",
+      clientSourceUnit: "LD-90",
       quantity: 2,
       requiredQuotes: 2,
       clientPrice: "8800.0000",
@@ -105,9 +105,9 @@ async function main() {
     },
     {
       country: "France",
-      clientPartNumber: "GX-2002",
+      clientItemNumber: "GX-2002",
       itemDescription: "Cab air-conditioning compressor",
-      machineModel: "LD-90",
+      clientSourceUnit: "LD-90",
       quantity: 6,
       requiredQuotes: 2,
       clientPrice: null, // unpriced — exercises the nullable Client Price path
@@ -122,10 +122,10 @@ async function main() {
         studyId: study.id,
         clientId: client.id,
         country: it.country,
-        clientPartNumber: it.clientPartNumber,
-        clientPartNumberKey: it.clientPartNumber.toLowerCase(),
+        clientItemNumber: it.clientItemNumber,
+        clientItemNumberKey: it.clientItemNumber.toLowerCase(),
         itemDescription: it.itemDescription,
-        machineModel: it.machineModel,
+        clientSourceUnit: it.clientSourceUnit,
         quantity: it.quantity,
         requiredQuotes: it.requiredQuotes,
         clientPrice: it.clientPrice,

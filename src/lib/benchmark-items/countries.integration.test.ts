@@ -20,14 +20,14 @@ beforeAll(async () => {
     data: { id: `countries-u-${stamp}`, name: "U", email: `countries-${stamp}@x.com`, kind: "internal", role: "Analyst" },
   });
   const study = await prisma.study.create({
-    data: { name: "Countries study", clientId: tenantId, createdById: user.id, qcThresholdPct: 25 },
+    data: { name: "Countries study", clientId: tenantId, createdById: user.id, qcThreshold: 0.25 },
   });
   studyId = study.id;
   await prisma.benchmarkItem.createMany({
     data: [
-      { studyId, clientId: tenantId, country: "Germany", clientPartNumber: "G1", clientPartNumberKey: "g1", itemDescription: "x", machineModel: "M", requiredQuotes: 1 },
-      { studyId, clientId: tenantId, country: "Germany", clientPartNumber: "G2", clientPartNumberKey: "g2", itemDescription: "x", machineModel: "M", requiredQuotes: 1 },
-      { studyId, clientId: tenantId, country: "France", clientPartNumber: "F1", clientPartNumberKey: "f1", itemDescription: "x", machineModel: "M", requiredQuotes: 1 },
+      { studyId, clientId: tenantId, country: "Germany", clientItemNumber: "G1", clientItemNumberKey: "g1", itemDescription: "x", clientSourceUnit: "M", requiredQuotes: 1 },
+      { studyId, clientId: tenantId, country: "Germany", clientItemNumber: "G2", clientItemNumberKey: "g2", itemDescription: "x", clientSourceUnit: "M", requiredQuotes: 1 },
+      { studyId, clientId: tenantId, country: "France", clientItemNumber: "F1", clientItemNumberKey: "f1", itemDescription: "x", clientSourceUnit: "M", requiredQuotes: 1 },
     ],
   });
 });

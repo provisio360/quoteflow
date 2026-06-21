@@ -32,14 +32,14 @@ export interface ClientExportQuote {
 /** A released Benchmark Item with its approved quotes (possibly none). */
 export interface ClientExportItem {
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly quotes: readonly ClientExportQuote[];
 }
 
 const QUOTE_COLUMNS: readonly Column[] = [
   { header: "Country", key: "country" },
-  { header: "Client Part Number", key: "clientPartNumber" },
+  { header: "Client Item Number", key: "clientItemNumber" },
   { header: "Item Description", key: "itemDescription" },
   { header: "Quote #", key: "quoteNumber" },
   { header: "Competitor", key: "competitorBrand" },
@@ -59,7 +59,7 @@ const QUOTE_COLUMNS: readonly Column[] = [
 
 const SUMMARY_COLUMNS: readonly Column[] = [
   { header: "Country", key: "country" },
-  { header: "Client Part Number", key: "clientPartNumber" },
+  { header: "Client Item Number", key: "clientItemNumber" },
   { header: "Item Description", key: "itemDescription" },
   { header: "Min USD / Unit", key: "min" },
   { header: "Median USD / Unit", key: "median" },
@@ -78,7 +78,7 @@ function quotesSheet(items: readonly ClientExportItem[]): SheetData {
     for (const q of item.quotes) {
       rows.push({
         country: item.country,
-        clientPartNumber: item.clientPartNumber,
+        clientItemNumber: item.clientItemNumber,
         itemDescription: item.itemDescription,
         quoteNumber: q.quoteNumber,
         competitorBrand: q.competitorBrand,
@@ -107,7 +107,7 @@ function summarySheet(items: readonly ClientExportItem[]): SheetData {
   const dashboards = buildItemDashboards(
     items.map((item) => ({
       country: item.country,
-      clientPartNumber: item.clientPartNumber,
+      clientItemNumber: item.clientItemNumber,
       itemDescription: item.itemDescription,
       quotes: item.quotes.map((q) => ({
         competitorBrand: q.competitorBrand,
@@ -117,7 +117,7 @@ function summarySheet(items: readonly ClientExportItem[]): SheetData {
   );
   const rows: Record<string, Cell>[] = dashboards.map((d) => ({
     country: d.country,
-    clientPartNumber: d.clientPartNumber,
+    clientItemNumber: d.clientItemNumber,
     itemDescription: d.itemDescription,
     min: d.range.hasData ? d.range.min : null,
     median: d.range.hasData ? d.range.median : null,

@@ -35,9 +35,9 @@ export function BenchmarkComparison({ items }: { items: ItemBenchmark[] }) {
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={`${item.clientPartNumber} ${item.country}`}>
+              <tr key={`${item.clientItemNumber} ${item.country}`}>
                 <td style={cell}>{item.country}</td>
-                <td style={cell}>{item.clientPartNumber}</td>
+                <td style={cell}>{item.clientItemNumber}</td>
                 {item.range.hasData ? (
                   <>
                     <td style={num}>{usd(item.range.min)}</td>

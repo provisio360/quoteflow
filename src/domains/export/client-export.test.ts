@@ -15,7 +15,7 @@ import {
 function item(over: Partial<ClientExportItem> = {}): ClientExportItem {
   return {
     country: "France",
-    clientPartNumber: "CP-1",
+    clientItemNumber: "CP-1",
     itemDescription: "Widget",
     quotes: [],
     ...over,
@@ -27,7 +27,7 @@ describe("buildClientExport — detail Quotes sheet", () => {
     const wb = buildClientExport([
       item({
         country: "Germany",
-        clientPartNumber: "PN-G1",
+        clientItemNumber: "PN-G1",
         itemDescription: "Pump",
         quotes: [
           {
@@ -57,7 +57,7 @@ describe("buildClientExport — detail Quotes sheet", () => {
     expect(quotes!.rows).toEqual([
       {
         country: "Germany",
-        clientPartNumber: "PN-G1",
+        clientItemNumber: "PN-G1",
         itemDescription: "Pump",
         quoteNumber: 1,
         competitorBrand: "Caterpillar",
@@ -102,7 +102,7 @@ describe("buildClientExport — Summary sheet", () => {
     const wb = buildClientExport([
       item({
         country: "Germany",
-        clientPartNumber: "PN-G1",
+        clientItemNumber: "PN-G1",
         itemDescription: "Pump",
         quotes: [quote(900), quote(1100), quote(1300)],
       }),
@@ -114,7 +114,7 @@ describe("buildClientExport — Summary sheet", () => {
     expect(summary!.rows).toEqual([
       {
         country: "Germany",
-        clientPartNumber: "PN-G1",
+        clientItemNumber: "PN-G1",
         itemDescription: "Pump",
         min: 900,
         median: 1100,
@@ -126,13 +126,13 @@ describe("buildClientExport — Summary sheet", () => {
 
   it("shows a released item with no usable data as an explicit no-data row, not zeros", () => {
     const wb = buildClientExport([
-      item({ country: "Germany", clientPartNumber: "PN-G2", quotes: [] }),
+      item({ country: "Germany", clientItemNumber: "PN-G2", quotes: [] }),
     ]);
     const summary = wb.sheets.find((s) => s.name === "Summary")!;
     expect(summary.rows).toEqual([
       {
         country: "Germany",
-        clientPartNumber: "PN-G2",
+        clientItemNumber: "PN-G2",
         itemDescription: "Widget",
         min: null,
         median: null,

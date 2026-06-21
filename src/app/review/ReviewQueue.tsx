@@ -81,7 +81,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
       <td style={cell}>
         <strong>{item.studyName}</strong> — {item.clientName}
         <br />
-        {item.country} · {item.clientPartNumber}
+        {item.country} · {item.clientItemNumber}
         <br />
         <span style={{ color: "#777" }}>{item.itemDescription}</span>
       </td>
@@ -143,7 +143,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
         {!item.flag.comparable ? (
           <span style={{ color: "#777" }}>—</span>
         ) : item.flag.flagged ? (
-          <span style={{ color: "#b00" }} title={`Client Price $${item.clientPrice}, threshold ${item.qcThresholdPct}%`}>
+          <span style={{ color: "#b00" }} title={`Client Price $${item.clientPrice}, threshold ${(Number(item.qcThreshold) * 100).toFixed(1)}%`}>
             ⚠ {item.flag.direction === "above" ? "higher" : item.flag.direction === "below" ? "lower" : "off"} (
             {item.flag.percentDiff.toFixed(1)}%)
           </span>

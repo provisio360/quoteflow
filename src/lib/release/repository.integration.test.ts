@@ -80,10 +80,10 @@ async function seedItem(
       studyId,
       clientId,
       country,
-      clientPartNumber: `PN-${randomUUID().slice(0, 8)}`,
-      clientPartNumberKey: randomUUID().slice(0, 8),
+      clientItemNumber: `PN-${randomUUID().slice(0, 8)}`,
+      clientItemNumberKey: randomUUID().slice(0, 8),
       itemDescription: `${country} part`,
-      machineModel: "M1",
+      clientSourceUnit: "M1",
       requiredQuotes,
     },
   });
@@ -131,8 +131,8 @@ beforeAll(async () => {
   researcher = await seedUser("Researcher");
   clientUserA = await seedClientUser(clientA);
 
-  studyA = (await createStudy(analyst, { name: "Study A", clientId: clientA, qcThresholdPct: 25 })).id;
-  studyB = (await createStudy(analyst, { name: "Study B", clientId: clientB, qcThresholdPct: 25 })).id;
+  studyA = (await createStudy(analyst, { name: "Study A", clientId: clientA, qcThreshold: 0.25 })).id;
+  studyB = (await createStudy(analyst, { name: "Study B", clientId: clientB, qcThreshold: 0.25 })).id;
 
   // Study A countries:
   //  Germany — releasable: one item meets Required (1 approved), one needs zero.
@@ -317,7 +317,7 @@ describe("countReleasableCountries — the home release-backlog signal (#58)", (
   it("counts eligible-but-unreleased countries, draining as they are released", async () => {
     // A fresh study so the delta is unaffected by other suites' data: one
     // eligible country (Ready) and one short of Required (NotReady).
-    const study = (await createStudy(analyst, { name: "Backlog", clientId: clientA, qcThresholdPct: 25 })).id;
+    const study = (await createStudy(analyst, { name: "Backlog", clientId: clientA, qcThreshold: 0.25 })).id;
     const baseline = await countReleasableCountries(analyst);
 
     await seedItem(study, "Ready", 1, ["Approved"]);

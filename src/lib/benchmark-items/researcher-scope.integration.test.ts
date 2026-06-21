@@ -30,8 +30,8 @@ async function seedUser(p: InternalPrincipal, name: string) {
 async function seedItem(studyId: string, country: string, cpn: string) {
   await prisma.benchmarkItem.create({
     data: {
-      studyId, clientId: tenantId, country, clientPartNumber: cpn, clientPartNumberKey: cpn.toLowerCase(),
-      itemDescription: "widget", machineModel: "M", requiredQuotes: 1,
+      studyId, clientId: tenantId, country, clientItemNumber: cpn, clientItemNumberKey: cpn.toLowerCase(),
+      itemDescription: "widget", clientSourceUnit: "M", requiredQuotes: 1,
     },
   });
 }
@@ -44,10 +44,10 @@ beforeAll(async () => {
   await seedUser(r0, "R0");
 
   const study1 = await prisma.study.create({
-    data: { name: "RScope S1", clientId: tenantId, createdById: em.userId, qcThresholdPct: 25 },
+    data: { name: "RScope S1", clientId: tenantId, createdById: em.userId, qcThreshold: 0.25 },
   });
   const study2 = await prisma.study.create({
-    data: { name: "RScope S2", clientId: tenantId, createdById: em.userId, qcThresholdPct: 25 },
+    data: { name: "RScope S2", clientId: tenantId, createdById: em.userId, qcThreshold: 0.25 },
   });
   s1 = study1.id;
   s2 = study2.id;

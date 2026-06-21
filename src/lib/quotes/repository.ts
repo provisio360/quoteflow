@@ -8,6 +8,7 @@ import {
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
 import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
+import { resolveQcThreshold } from "@/domains/benchmark-items/qc-threshold";
 import { convertManual, parseManualRate } from "@/domains/quotes/conversion";
 import { recordAuditEvents } from "@/lib/audit/repository";
 import { auditQuoteLifecycle, auditManualRateOverride } from "@/domains/audit/events";
@@ -332,11 +333,12 @@ export interface ReviewQueueItem {
   readonly studyName: string;
   readonly clientName: string;
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   /** Null when the item is unpriced (ADR-0015) — then `flag.comparable` is false. */
   readonly clientPrice: string | null;
-  readonly qcThresholdPct: string;
+  /** The resolved QC Threshold as a FRACTION (per-item ?? study default, #86). */
+  readonly qcThreshold: string;
   /** The QC out-of-range evaluation (ADR-0014); `comparable: false` while pending
    *  OR when the item has no Client Price (ADR-0015). */
   readonly flag: PriceFlagResult;
@@ -425,10 +427,11 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
       benchmarkItem: {
         select: {
           country: true,
-          clientPartNumber: true,
+          clientItemNumber: true,
           itemDescription: true,
           clientPrice: true,
-          study: { select: { name: true, qcThresholdPct: true, client: { select: { name: true } } } },
+          qcThreshold: true,
+          study: { select: { name: true, qcThreshold: true, client: { select: { name: true } } } },
         },
       },
     },
@@ -437,11 +440,12 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
   return rows.map((r) => {
     const usdPerUnit = r.convertedUsdPricePerUnit === null ? null : Number(r.convertedUsdPricePerUnit);
     const clientPrice = r.benchmarkItem.clientPrice === null ? null : Number(r.benchmarkItem.clientPrice);
-    const flag = evaluatePriceFlag({
-      usdPricePerUnit: usdPerUnit,
-      clientPrice,
-      thresholdPct: Number(r.benchmarkItem.study.qcThresholdPct),
-    });
+    // Per-item QC Threshold with study-default fallback (#86); both fractions.
+    const threshold = resolveQcThreshold(
+      r.benchmarkItem.qcThreshold === null ? null : Number(r.benchmarkItem.qcThreshold),
+      Number(r.benchmarkItem.study.qcThreshold),
+    );
+    const flag = evaluatePriceFlag({ usdPricePerUnit: usdPerUnit, clientPrice, threshold });
     return {
       id: r.id,
       quoteNumber: r.quoteNumber,
@@ -461,10 +465,10 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
       studyName: r.benchmarkItem.study.name,
       clientName: r.benchmarkItem.study.client.name,
       country: r.benchmarkItem.country,
-      clientPartNumber: r.benchmarkItem.clientPartNumber,
+      clientItemNumber: r.benchmarkItem.clientItemNumber,
       itemDescription: r.benchmarkItem.itemDescription,
       clientPrice: r.benchmarkItem.clientPrice === null ? null : r.benchmarkItem.clientPrice.toString(),
-      qcThresholdPct: r.benchmarkItem.study.qcThresholdPct.toString(),
+      qcThreshold: threshold.toString(),
       flag,
     };
   });
@@ -494,7 +498,12 @@ export async function approveQuote(
         convertedUsdPricePerUnit: true,
         justification: true,
         benchmarkItem: {
-          select: { studyId: true, clientPrice: true, study: { select: { qcThresholdPct: true } } },
+          select: {
+            studyId: true,
+            clientPrice: true,
+            qcThreshold: true,
+            study: { select: { qcThreshold: true } },
+          },
         },
       },
     });
@@ -507,7 +516,10 @@ export async function approveQuote(
         quote.convertedUsdPricePerUnit === null ? null : Number(quote.convertedUsdPricePerUnit),
       clientPrice:
         quote.benchmarkItem.clientPrice === null ? null : Number(quote.benchmarkItem.clientPrice),
-      thresholdPct: Number(quote.benchmarkItem.study.qcThresholdPct),
+      threshold: resolveQcThreshold(
+        quote.benchmarkItem.qcThreshold === null ? null : Number(quote.benchmarkItem.qcThreshold),
+        Number(quote.benchmarkItem.study.qcThreshold),
+      ),
     });
     const flagged = flag.comparable && flag.flagged;
     const hasJustification = quote.justification !== null && quote.justification.trim() !== "";

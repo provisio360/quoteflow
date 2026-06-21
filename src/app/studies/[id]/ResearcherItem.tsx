@@ -88,7 +88,7 @@ export function ResearcherItem({
 
   return (
     <li style={{ padding: "0.6rem 0", borderTop: "1px solid #eee" }}>
-      <strong>{item.clientPartNumber}</strong> — {item.itemDescription}{" "}
+      <strong>{item.clientItemNumber}</strong> — {item.itemDescription}{" "}
       <span style={{ color: "#777" }}>(needs {item.requiredQuotes} quote{item.requiredQuotes === 1 ? "" : "s"})</span>
 
       {mode === "claimable" && (
@@ -105,11 +105,11 @@ export function ResearcherItem({
       {(mode === "mine" || mode === "claimed") && (
         <div style={{ marginTop: "0.4rem" }}>
           <dl style={{ margin: "0 0 0.6rem", fontSize: "0.9rem", color: "#333" }}>
-            <Guidance label="Client part number" value={item.clientPartNumber} />
+            <Guidance label="Client item number" value={item.clientItemNumber} />
             <Guidance label="Item description" value={item.itemDescription} />
             <Guidance label="Configuration comment" value={item.configurationComment} />
             <Guidance label="Quantity" value={item.quantity === null ? null : String(item.quantity)} />
-            <Guidance label="Machine / model" value={item.machineModel} />
+            <Guidance label="Client source unit" value={item.clientSourceUnit} />
           </dl>
           {quotes.length === 0 ? (
             <p style={{ color: "#777", margin: "0.2rem 0" }}>No quotes yet.</p>

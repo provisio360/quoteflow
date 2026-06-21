@@ -89,10 +89,10 @@ async function seedCountry(country: string): Promise<string> {
         studyId,
         clientId: tenantId,
         country,
-        clientPartNumber: `PN-${country}`,
-        clientPartNumberKey: `pn-${country.toLowerCase()}`,
+        clientItemNumber: `PN-${country}`,
+        clientItemNumberKey: `pn-${country.toLowerCase()}`,
         itemDescription: "Widget",
-        machineModel: "M1",
+        clientSourceUnit: "M1",
         requiredQuotes: 1,
       },
     })
@@ -148,17 +148,17 @@ beforeAll(async () => {
   clientUser2 = await seedUser("client", { tenantId });
   clientUserOff = await seedUser("client", { tenantId, status: "deactivated" });
 
-  studyId = (await createStudy(em, { name: "Notif study", clientId: tenantId, qcThresholdPct: 25 })).id;
+  studyId = (await createStudy(em, { name: "Notif study", clientId: tenantId, qcThreshold: 0.25 })).id;
   itemId = (
     await prisma.benchmarkItem.create({
       data: {
         studyId,
         clientId: tenantId,
         country: "Germany",
-        clientPartNumber: "PN-1",
-        clientPartNumberKey: "pn-1",
+        clientItemNumber: "PN-1",
+        clientItemNumberKey: "pn-1",
         itemDescription: "Hydraulic widget",
-        machineModel: "M1",
+        clientSourceUnit: "M1",
         requiredQuotes: 1,
       },
     })

@@ -23,13 +23,13 @@ beforeAll(async () => {
     data: { id: researcher.userId, name: "R", email: `ritems-res-${stamp}@x.com`, kind: "internal", role: "Researcher" },
   });
   const study = await prisma.study.create({
-    data: { name: "RItems study", clientId: tenantId, createdById: u.id, qcThresholdPct: 25 },
+    data: { name: "RItems study", clientId: tenantId, createdById: u.id, qcThreshold: 0.25 },
   });
   studyId = study.id;
   await prisma.benchmarkItem.create({
     data: {
-      studyId, clientId: tenantId, country: "Germany", clientPartNumber: "G1", clientPartNumberKey: "g1",
-      itemDescription: "widget", machineModel: "M", requiredQuotes: 2,
+      studyId, clientId: tenantId, country: "Germany", clientItemNumber: "G1", clientItemNumberKey: "g1",
+      itemDescription: "widget", clientSourceUnit: "M", requiredQuotes: 2,
       clientPrice: "999.0000", // set, but must NOT surface to a researcher
     },
   });
@@ -50,7 +50,7 @@ afterAll(async () => {
 describe("listBenchmarkItemsForResearcher", () => {
   it("returns the study's items, with no Client Price field", async () => {
     const items = await listBenchmarkItemsForResearcher(researcher, studyId);
-    const item = items.find((i) => i.clientPartNumber === "G1");
+    const item = items.find((i) => i.clientItemNumber === "G1");
     expect(item).toBeDefined();
     expect(item?.requiredQuotes).toBe(2);
     expect("clientPrice" in (item as object)).toBe(false);

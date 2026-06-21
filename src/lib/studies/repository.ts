@@ -146,9 +146,9 @@ export interface CreateStudyInput {
   name: string;
   /** The Client (tenant) the study is for — an explicit choice (grilling Q5). */
   clientId: string;
-  /** The study's QC Threshold percentage (ADR-0014) — set at study setup; a
-   *  study without one is mis-configured. e.g. 25 = 25%. */
-  qcThresholdPct: number;
+  /** The study's default QC Threshold as a FRACTION (ADR-0014, #86) — set at study
+   *  setup; a study without one is mis-configured. e.g. 0.25 = 25%. */
+  qcThreshold: number;
 }
 
 /**
@@ -170,7 +170,7 @@ export async function createStudy(
         name: input.name,
         clientId: input.clientId,
         createdById: principal.userId,
-        qcThresholdPct: input.qcThresholdPct,
+        qcThreshold: input.qcThreshold,
       },
     }),
   );

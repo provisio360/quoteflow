@@ -67,7 +67,7 @@ export async function importBenchmarkItems(
   const { inserted, updated } = await withTenant(principal, async (tx) => {
     const existing = await tx.benchmarkItem.findMany({
       where: { studyId },
-      select: { country: true, clientPartNumberKey: true },
+      select: { country: true, clientItemNumberKey: true },
     });
     const existingKeys = new Set(existing.map(benchmarkItemKey));
 
@@ -82,17 +82,24 @@ export async function importBenchmarkItems(
       });
     }
     for (const item of updates) {
-      // Re-import overwrites the brief fields but NEVER Client Price: it is
-      // analyst-owned after seeding (ADR-0015). Omit it from the update so the
-      // analyst's curated value survives a re-brief. (Do not "fix" this back to
-      // writing clientPrice — the omission is the point.)
-      const { clientPrice: _seedOnly, ...briefFields } = toRow(studyId, item);
+      // Re-import overwrites the brief fields but NEVER the Client Price group:
+      // the derived value AND its raw seed trio are insert-only, analyst-owned
+      // after first seeding (ADR-0015, ADR-0027). Strip all four so a re-brief
+      // can't stomp a curated benchmark or leave an incoherent seed. (Do not
+      // "fix" this back to writing them — the omission is the point.)
+      const {
+        clientPrice: _cp,
+        clientItemPrice: _cip,
+        clientItemPriceCurrency: _cipc,
+        clientItemPriceQuantity: _cipq,
+        ...briefFields
+      } = toRow(studyId, item);
       await tx.benchmarkItem.update({
         where: {
-          studyId_country_clientPartNumberKey: {
+          studyId_country_clientItemNumberKey: {
             studyId,
             country: item.country,
-            clientPartNumberKey: item.clientPartNumberKey,
+            clientItemNumberKey: item.clientItemNumberKey,
           },
         },
         data: briefFields,
@@ -111,7 +118,7 @@ export async function importBenchmarkItems(
           studyId,
           OR: affected.map((item) => ({
             country: item.country,
-            clientPartNumberKey: item.clientPartNumberKey,
+            clientItemNumberKey: item.clientItemNumberKey,
           })),
         },
         select: { id: true },
@@ -148,11 +155,11 @@ export interface ResearcherItemView {
   readonly id: string;
   readonly studyId: string;
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly configurationComment: string | null;
   readonly quantity: number | null;
-  readonly machineModel: string;
+  readonly clientSourceUnit: string | null;
   readonly requiredQuotes: number;
   readonly primaryResearcherId: string | null;
 }
@@ -164,11 +171,11 @@ const RESEARCHER_VIEW_SELECT = {
   id: true,
   studyId: true,
   country: true,
-  clientPartNumber: true,
+  clientItemNumber: true,
   itemDescription: true,
   configurationComment: true,
   quantity: true,
-  machineModel: true,
+  clientSourceUnit: true,
   requiredQuotes: true,
   primaryResearcherId: true,
 } as const;
@@ -239,7 +246,7 @@ export async function listBenchmarkItemsForResearcher(
     const country = await resolveCountryVisibility(principal, tx);
     return tx.benchmarkItem.findMany({
       where: { AND: [{ studyId }, itemVisibilityWhere(country)] },
-      orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
+      orderBy: [{ country: "asc" }, { clientItemNumber: "asc" }],
       select: RESEARCHER_VIEW_SELECT,
     });
   });
@@ -330,7 +337,7 @@ export async function selfAssignBenchmarkItem(
 export interface AnalystItemView {
   readonly id: string;
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly requiredQuotes: number;
   readonly clientPrice: number | null;
@@ -353,11 +360,11 @@ export async function listBenchmarkItemsForAnalyst(
   const rows = await withTenant(principal, (tx) =>
     tx.benchmarkItem.findMany({
       where: { studyId },
-      orderBy: [{ country: "asc" }, { clientPartNumber: "asc" }],
+      orderBy: [{ country: "asc" }, { clientItemNumber: "asc" }],
       select: {
         id: true,
         country: true,
-        clientPartNumber: true,
+        clientItemNumber: true,
         itemDescription: true,
         requiredQuotes: true,
         clientPrice: true,
@@ -432,19 +439,30 @@ export async function setClientPrice(
 }
 
 /** Map a validated item to its persisted columns. Used in full for INSERTs; the
- *  update path strips `clientPrice` first, because the brief only seeds Client
- *  Price and the analyst owns it thereafter (ADR-0015). */
+ *  update path strips the whole Client Price group first (clientPrice + the raw
+ *  seed trio), because the brief only seeds Client Price and the analyst owns it
+ *  thereafter (ADR-0015, ADR-0027). */
 function toRow(studyId: string, item: ValidatedBenchmarkItem) {
   return {
     studyId,
     country: item.country,
-    clientPartNumber: item.clientPartNumber,
-    clientPartNumberKey: item.clientPartNumberKey,
+    clientItemNumber: item.clientItemNumber,
+    clientItemNumberKey: item.clientItemNumberKey,
     itemDescription: item.itemDescription,
     configurationComment: item.configurationComment,
     quantity: item.quantity,
-    machineModel: item.machineModel,
+    clientSourceUnit: item.clientSourceUnit,
+    sourceUnitIdentifier: item.sourceUnitIdentifier,
+    clientCategory: item.clientCategory,
+    clientItemOffering: item.clientItemOffering,
+    itemSecondaryDescription: item.itemSecondaryDescription,
+    clientSecondaryItemNumber: item.clientSecondaryItemNumber,
     requiredQuotes: item.requiredQuotes,
+    qcThreshold: item.qcThreshold,
+    requiredCompetitors: item.requiredCompetitors as string[],
     clientPrice: item.clientPrice,
+    clientItemPrice: item.clientItemPrice,
+    clientItemPriceCurrency: item.clientItemPriceCurrency,
+    clientItemPriceQuantity: item.clientItemPriceQuantity,
   };
 }

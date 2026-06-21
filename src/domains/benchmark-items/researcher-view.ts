@@ -11,11 +11,11 @@ export type ItemMode = "mine" | "claimable" | "claimed";
 export interface GuidanceFields {
   readonly id: string;
   readonly country: string;
-  readonly clientPartNumber: string;
+  readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly configurationComment: string | null;
   readonly quantity: number | null;
-  readonly machineModel: string;
+  readonly clientSourceUnit: string | null;
   readonly requiredQuotes: number;
 }
 
@@ -84,11 +84,11 @@ export function resolveResearcherEntries(
       item: {
         id: item.id,
         country: item.country,
-        clientPartNumber: item.clientPartNumber,
+        clientItemNumber: item.clientItemNumber,
         itemDescription: item.itemDescription,
         configurationComment: item.configurationComment,
         quantity: item.quantity,
-        machineModel: item.machineModel,
+        clientSourceUnit: item.clientSourceUnit,
         requiredQuotes: item.requiredQuotes,
       },
     };
