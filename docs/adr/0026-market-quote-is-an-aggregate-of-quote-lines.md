@@ -116,3 +116,7 @@ bulk transition.
   flag direction, justification, paper-quote).
 - A future engineer must not reintroduce a document-level Approved/Rejected
   state, nor a per-line exchange rate — both were considered and rejected here.
+- The split migration renames `quote` to `quote_line` **in place** (preserving each
+  line's id) and retains the legacy `Quote` audit/notification subject value, so the
+  append-only `AuditEvent`/`Notification` history written before the split stays
+  resolvable; the extracted one-line `market_quote` documents get fresh ids.

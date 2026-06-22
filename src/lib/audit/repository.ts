@@ -120,13 +120,26 @@ async function resolveSubjectLabels(
   const labels = new Map<string, string>();
   const idsOf = (t: AuditSubjectType) => [...(idsByType.get(t) ?? [])];
 
-  const quoteIds = idsOf("Quote");
-  if (quoteIds.length > 0) {
-    for (const q of await tx.quote.findMany({
-      where: { id: { in: quoteIds } },
-      select: { id: true, quoteNumber: true },
+  // `Quote` (legacy) and `QuoteLine` both resolve against quote_line: the split
+  // preserved each line's id, so a pre-split `Quote` subjectId still points at the
+  // surviving line (ADR-0026). One query covers both.
+  const lineIds = [...idsOf("Quote"), ...idsOf("QuoteLine")];
+  if (lineIds.length > 0) {
+    for (const q of await tx.quoteLine.findMany({
+      where: { id: { in: lineIds } },
+      select: { id: true, quoteLineNumber: true },
     })) {
-      labels.set(q.id, `Quote ${q.quoteNumber}`);
+      labels.set(q.id, `Line ${q.quoteLineNumber}`);
+    }
+  }
+
+  const marketQuoteIds = idsOf("MarketQuote");
+  if (marketQuoteIds.length > 0) {
+    for (const m of await tx.marketQuote.findMany({
+      where: { id: { in: marketQuoteIds } },
+      select: { id: true, marketQuoteNumber: true },
+    })) {
+      labels.set(m.id, `Market quote ${m.marketQuoteNumber}`);
     }
   }
 

@@ -20,7 +20,7 @@ import {
   listAssignmentsForResearcher,
   listAssignmentsForStudy,
 } from "@/lib/assignments/repository";
-import { listQuotesForItem, type QuoteView } from "@/lib/quotes/repository";
+import { listLinesForItem, type QuoteLineView } from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
 import { canReleaseCountry } from "@/domains/authz/release";
 import { listCountryReleaseStatus } from "@/lib/release/repository";
@@ -163,6 +163,7 @@ export default async function StudyDetailPage({
                       key={entry.item.id}
                       item={entry.item}
                       mode={entry.mode}
+                      studyId={study.id}
                       quotes={entry.quotes}
                       myUserId={principal.userId}
                     />
@@ -240,7 +241,7 @@ async function buildStaffing(
 type ResearcherItemEntry = {
   item: GuidanceFields;
   mode: ItemMode;
-  quotes: QuoteView[];
+  quotes: QuoteLineView[];
 };
 type ResearcherGroup = { country: string; items: ResearcherItemEntry[] };
 
@@ -269,7 +270,7 @@ async function buildResearcherView(
       ...e,
       quotes:
         e.mode === "mine" || e.mode === "claimed"
-          ? await listQuotesForItem(principal, e.item.id)
+          ? await listLinesForItem(principal, e.item.id)
           : [],
     })),
   );

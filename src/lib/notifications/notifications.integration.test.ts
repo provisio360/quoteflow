@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import {
-  createDraftQuote,
-  submitQuote,
-  rejectQuote,
-  approveQuote,
-  type QuoteFields,
+  createMarketQuote,
+  addQuoteLine,
+  submitLine,
+  rejectLine,
+  approveLine,
+  type MarketQuoteHeaderFields,
 } from "@/lib/quotes/repository";
 import { createStudy } from "@/lib/studies/repository";
 import { assignResearchers } from "@/lib/assignments/repository";
@@ -41,15 +42,21 @@ let clientUserOff: string; // deactivated Client User — never notified
 let studyId: string;
 let itemId: string;
 
-const complete: QuoteFields = {
-  competitorBrand: "Caterpillar",
-  dealerName: "Acme Equipment",
-  dealerLocation: "Munich",
-  price: 1250.5,
+const header: MarketQuoteHeaderFields = {
+  sourceName: "Acme Equipment",
+  sourceLocation: "Munich",
   currency: "EUR",
-  quantityQuoted: 1,
   dateQuoteReceived: new Date("2026-06-01"),
 };
+const lineFields = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1 };
+
+/** Create a one-line document on `item` (in its own country) and return its line id. */
+async function makeLine(item: string): Promise<string> {
+  const it = await prisma.benchmarkItem.findUniqueOrThrow({ where: { id: item }, select: { country: true } });
+  const doc = await createMarketQuote(author, studyId, it.country, header);
+  const { id } = await addQuoteLine(author, doc.id, item, lineFields);
+  return id;
+}
 
 async function seedUser(
   kind: "internal" | "client",
@@ -72,10 +79,10 @@ async function seedUser(
   return id;
 }
 
-/** A Submitted quote authored by `author`, ready to reject. */
+/** A Submitted Quote Line authored by `author`, ready to reject. */
 async function submittedQuote(): Promise<string> {
-  const { id } = await createDraftQuote(author, itemId, complete);
-  await submitQuote(author, id);
+  const id = await makeLine(itemId);
+  await submitLine(author, id);
   return id;
 }
 
@@ -104,19 +111,18 @@ async function seedCountry(country: string): Promise<string> {
 /** Drive one quote on `item` to Approved so its Country becomes release-eligible
  *  (requiredQuotes 1, no in-flight). Pins USD figures to clear the conversion gate. */
 async function approveQuoteOn(item: string): Promise<void> {
-  const { id } = await createDraftQuote(author, item, complete);
-  await submitQuote(author, id);
-  await prisma.quote.update({
-    where: { id },
-    data: {
-      conversionStatus: "auto",
-      exchangeRate: "1.00000000",
-      rateDate: new Date("2026-06-01"),
-      convertedUsdPrice: "100.0000",
-      convertedUsdPricePerUnit: "100.0000",
-    },
+  const id = await makeLine(item);
+  await submitLine(author, id);
+  const line = await prisma.quoteLine.findUniqueOrThrow({ where: { id }, select: { marketQuoteId: true } });
+  await prisma.marketQuote.update({
+    where: { id: line.marketQuoteId },
+    data: { conversionStatus: "auto", exchangeRate: "1.00000000", rateDate: new Date("2026-06-01") },
   });
-  await approveQuote(analyst, id);
+  await prisma.quoteLine.update({
+    where: { id },
+    data: { convertedUsdPrice: "100.0000", convertedUsdPricePerUnit: "100.0000" },
+  });
+  await approveLine(analyst, id);
 }
 
 /** send_notification_email jobs enqueued for the given notification ids. */
@@ -173,7 +179,9 @@ beforeEach(async () => {
 afterAll(async () => {
   await prisma.notification.deleteMany({ where: { studyId } });
   await prisma.auditEvent.deleteMany({ where: { studyId } });
-  await prisma.quote.deleteMany({ where: { benchmarkItem: { studyId } } });
+  await prisma.quoteLine.deleteMany({ where: { studyId } });
+  await prisma.marketQuote.deleteMany({ where: { studyId } });
+  await prisma.quoteNumberSequence.deleteMany({ where: { studyId } });
   await prisma.countryRelease.deleteMany({ where: { studyId } });
   await prisma.countryAssignment.deleteMany({ where: { studyId } });
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
@@ -191,7 +199,7 @@ describe("rejection notifies the quote's author", () => {
   it("writes an in-app notification to the author with the reason, and enqueues an email", async () => {
     const quoteId = await submittedQuote();
 
-    const result = await rejectQuote(analyst, quoteId, "Price higher than expected");
+    const result = await rejectLine(analyst, quoteId, "Price higher than expected");
     expect(result.ok).toBe(true);
 
     const notes = await prisma.notification.findMany({ where: { studyId } });
@@ -199,7 +207,7 @@ describe("rejection notifies the quote's author", () => {
     expect(notes[0]).toMatchObject({
       recipientId: author.userId,
       kind: "quoteRejected",
-      subjectType: "Quote",
+      subjectType: "QuoteLine",
       subjectId: quoteId,
       reason: "Price higher than expected",
       country: null,
@@ -213,9 +221,9 @@ describe("rejection notifies the quote's author", () => {
   it("skips a deactivated (offboarded) author entirely — no in-app row, no email", async () => {
     const quoteId = await submittedQuote();
     // The author left the company between submitting and the analyst's verdict.
-    await prisma.quote.update({ where: { id: quoteId }, data: { createdById: deactivatedUserId } });
+    await prisma.quoteLine.update({ where: { id: quoteId }, data: { createdById: deactivatedUserId } });
 
-    const result = await rejectQuote(analyst, quoteId, "Out of date");
+    const result = await rejectLine(analyst, quoteId, "Out of date");
     expect(result.ok).toBe(true);
 
     expect(await prisma.notification.count({ where: { studyId } })).toBe(0);
@@ -269,9 +277,9 @@ describe("country release notifies the tenant's active Client Users", () => {
 describe("the in-app inbox", () => {
   it("lists the recipient's own notifications newest-first, with an unread count", async () => {
     const q1 = await submittedQuote();
-    await rejectQuote(analyst, q1, "First reason");
+    await rejectLine(analyst, q1, "First reason");
     const q2 = await submittedQuote();
-    await rejectQuote(analyst, q2, "Second reason");
+    await rejectLine(analyst, q2, "Second reason");
 
     const inbox = await listNotifications(author);
     expect(inbox.map((n) => n.subjectId)).toEqual([q2, q1]); // newest first
@@ -282,7 +290,7 @@ describe("the in-app inbox", () => {
   it("markAllRead clears the caller's unread only, never another user's", async () => {
     const cu1: ClientPrincipal = { kind: "client", userId: clientUser1, tenantId };
     const q = await submittedQuote();
-    await rejectQuote(analyst, q, "Reason"); // author gets one
+    await rejectLine(analyst, q, "Reason"); // author gets one
     const item = await seedCountry("Italy");
     await approveQuoteOn(item);
     await releaseCountry(analyst, studyId, "Italy"); // clientUser1 + clientUser2 each get one
@@ -301,7 +309,7 @@ describe("the email worker step (sendNotificationEmail)", () => {
   it("delivers a notification to its recipient and stamps emailedAt", async () => {
     vi.mocked(sendEmail).mockClear();
     const q = await submittedQuote();
-    await rejectQuote(analyst, q, "Reason X");
+    await rejectLine(analyst, q, "Reason X");
     const note = await prisma.notification.findFirstOrThrow({ where: { subjectId: q } });
 
     await sendNotificationEmail(note.id);
@@ -319,7 +327,7 @@ describe("the email worker step (sendNotificationEmail)", () => {
   it("is a no-op for an already-emailed notification (at-least-once dedupe)", async () => {
     vi.mocked(sendEmail).mockClear();
     const q = await submittedQuote();
-    await rejectQuote(analyst, q, "Reason Y");
+    await rejectLine(analyst, q, "Reason Y");
     const note = await prisma.notification.findFirstOrThrow({ where: { subjectId: q } });
     await prisma.notification.update({ where: { id: note.id }, data: { emailedAt: new Date() } });
 

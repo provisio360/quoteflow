@@ -15,13 +15,20 @@ import { auditQuoteLifecycle, auditManualRateOverride } from "@/domains/audit/ev
 import { recordNotifications } from "@/lib/notifications/dispatch";
 import { notifyQuoteRejected } from "@/domains/notifications/events";
 
-// Tenant-aware data-access adapter for the Quote lifecycle (issue #8). It owns
-// the gates the pure core can't: the Researcher role (canCreateQuote), the
-// Country-pool membership check (mirroring self-assign — only the pool may work
-// an item), the atomic per-item Quote Number allocation (ADR-0010), owner-only
-// writes, and the Draft-privacy read filter (ADR-0011). The Draft→Submitted
-// decision and submit-time validation live in src/domains/quotes/lifecycle; this
-// layer persists the result.
+// Tenant-aware data-access adapter for the Market Quote aggregate (#87, ADR-0026).
+// A Market Quote (dealer DOCUMENT) is created by a Researcher and gathers many
+// Quote Lines (one per Benchmark Item it prices), each carrying the lifecycle
+// `state`. This layer owns the gates the pure cores can't: the Researcher role
+// (canCreateQuote), the Country-pool membership check (only the pool may work a
+// market), the atomic per-(study, country) Market Quote Number and Quote Line
+// Number allocation (ADR-0026, supersedes ADR-0010), owner-only writes, and the
+// Draft-privacy read filter (ADR-0011). The Draft→Submitted decision and submit-
+// time validation live in src/domains/quotes/lifecycle; this layer persists it.
+//
+// This slice keeps the lifecycle PER LINE (a mechanical port of the flat-quote
+// paths); the document-level bulk submit and per-document rate pin land in a
+// dependent slice. Conversion columns live on the Market Quote (one rate per
+// document); each line keeps only its derived USD figures.
 
 /** Raised for permission / existence / ownership failures (not user-fixable by
  *  filling in fields — that is the lifecycle core's `missing-fields` result). */
@@ -32,275 +39,319 @@ export class QuoteAccessError extends Error {
   }
 }
 
-/** The editable fields of a Quote. All optional — a Draft saves partial data and
- *  required-ness is enforced only at submit (issue #8). */
-export interface QuoteFields {
-  readonly competitorBrand?: string | null;
-  readonly dealerName?: string | null;
-  readonly dealerLocation?: string | null;
-  readonly dealerUrl?: string | null;
-  readonly price?: number | string | null;
+/** The document-header fields a Researcher sets when creating a Market Quote. The
+ *  owning (studyId, country) are positional, not here. All optional — a Draft
+ *  document saves partial data; source/date/currency become required only when its
+ *  lines are submitted (validated per line by the lifecycle core). */
+export interface MarketQuoteHeaderFields {
+  readonly sourceName?: string | null;
+  readonly sourceLocation?: string | null;
+  readonly sourceUrl?: string | null;
   readonly currency?: string | null;
+  readonly dateQuoteReceived?: Date | null;
+}
+
+/** The editable per-item fields of a Quote Line. All optional — a Draft saves
+ *  partial data and required-ness is enforced only at submit. The dealer/date/
+ *  currency are NOT here; they live on the parent Market Quote. */
+export interface QuoteLineFields {
+  readonly competitorBrand?: string | null;
+  readonly competitorPartNumber?: string | null;
+  readonly competitorPartDescription?: string | null;
+  readonly price?: number | string | null;
   readonly quantityQuoted?: number | null;
   readonly stockStatus?: string | null;
-  readonly leadTime?: string | null;
-  readonly warranty?: string | null;
-  readonly discount?: string | null;
+  readonly leadTimeValue?: number | string | null;
+  readonly leadTimeUnit?: string | null;
+  readonly warranty1Value?: number | string | null;
+  readonly warranty1Unit?: string | null;
+  readonly warranty2Value?: number | string | null;
+  readonly warranty2Unit?: string | null;
+  readonly discountAvailable?: boolean | null;
+  readonly discountApplied?: boolean | null;
+  readonly discountValue?: number | string | null;
+  readonly discountType?: string | null;
+  readonly landedCostIncluded?: boolean | null;
+  readonly landedCostNote?: string | null;
   readonly notes?: string | null;
-  readonly dateQuoteReceived?: Date | null;
-  /** The author's explanation for a flagged price (ADR-0014). Editable while the
-   *  quote is a Draft (typically added during a revise after a flag-rejection). */
+  readonly notesSecondary?: string | null;
+  readonly confidenceCode?: "High" | "Moderate" | "Low" | null;
+  readonly paperQuote?: boolean;
+  /** The author's explanation for a flagged price (ADR-0014). */
   readonly justification?: string | null;
 }
 
-/** A Quote as a pool member may read it (issue #8 read AC). Client Price is not a
- *  Quote field at all, so there is nothing tenant-sensitive to strip here. */
-export interface QuoteView {
+/** A Quote Line as a pool member may read it (issue #8 read AC, ported to the
+ *  line). Client Price is not a line field, so nothing tenant-sensitive is here. */
+export interface QuoteLineView {
   readonly id: string;
+  readonly marketQuoteId: string;
   readonly benchmarkItemId: string;
-  readonly quoteNumber: number;
+  readonly quoteLineNumber: number;
   readonly state: "Draft" | "Submitted" | "Approved" | "Rejected";
   readonly createdById: string;
-  /** The name of the researcher who created the quote — surfaced so a pool member
-   *  can attribute a peer's quote on a shared item (mirrors the review queue). */
   readonly authorName: string;
   readonly competitorBrand: string | null;
-  readonly dealerName: string | null;
-  readonly dealerLocation: string | null;
-  readonly dealerUrl: string | null;
+  readonly competitorPartNumber: string | null;
+  readonly competitorPartDescription: string | null;
   readonly price: string | null;
-  readonly currency: string | null;
   readonly quantityQuoted: number | null;
   readonly stockStatus: string | null;
-  readonly leadTime: string | null;
-  readonly warranty: string | null;
-  readonly discount: string | null;
   readonly notes: string | null;
-  readonly dateQuoteReceived: Date | null;
-  /** The analyst's reason on a Rejected quote — the author needs it to revise
-   *  (also pushed via notification). Null unless rejected. */
+  readonly notesSecondary: string | null;
+  readonly confidenceCode: "High" | "Moderate" | "Low" | null;
+  readonly paperQuote: boolean;
+  /** The analyst's reason on a Rejected line — the author needs it to revise. */
   readonly rejectionReason: string | null;
-  /** The author's explanation for a flagged price; persists across resubmit. */
   readonly justification: string | null;
 }
 
-const QUOTE_VIEW_SELECT = {
+const QUOTE_LINE_VIEW_SELECT = {
   id: true,
+  marketQuoteId: true,
   benchmarkItemId: true,
-  quoteNumber: true,
+  quoteLineNumber: true,
   state: true,
   createdById: true,
   competitorBrand: true,
-  dealerName: true,
-  dealerLocation: true,
-  dealerUrl: true,
+  competitorPartNumber: true,
+  competitorPartDescription: true,
   price: true,
-  currency: true,
   quantityQuoted: true,
   stockStatus: true,
-  leadTime: true,
-  warranty: true,
-  discount: true,
   notes: true,
-  dateQuoteReceived: true,
+  notesSecondary: true,
+  confidenceCode: true,
+  paperQuote: true,
   rejectionReason: true,
   justification: true,
   createdBy: { select: { name: true } },
 } as const;
 
 /**
- * Create a new Draft Quote against a Benchmark Item, allocating its per-item
- * Quote Number. Gates, in order: the caller is a Researcher (role); the item
- * exists; the caller is in the item's Country pool (#6 — only the pool may work
- * it). The number is allocated by atomically incrementing the item's `quoteSeq`
- * inside the insert transaction (ADR-0010): two concurrent creators serialize on
- * the item row and get distinct consecutive numbers, with no MAX race.
+ * Atomically allocate the next Market Quote Number for a (study, country),
+ * creating the sequence row on first use (ADR-0026). Single-statement
+ * INSERT … ON CONFLICT … DO UPDATE … RETURNING — the maybe-absent-row
+ * generalization of ADR-0010's atomic-increment idiom: the row-level lock the
+ * conflicting UPDATE takes serializes concurrent creators with no MAX race and no
+ * retry loop. Runs on the tenant transaction's pinned connection, so the RLS GUC
+ * applies.
  */
-export async function createDraftQuote(
+async function allocateMarketQuoteNumber(
+  tx: TenantClient,
+  studyId: string,
+  clientId: string,
+  country: string,
+): Promise<number> {
+  const rows = await tx.$queryRaw<{ seq: number }[]>`
+    INSERT INTO "quote_number_sequence"
+      ("id", "studyId", "clientId", "country", "marketQuoteSeq", "quoteLineSeq", "createdAt", "updatedAt")
+    VALUES (gen_random_uuid()::text, ${studyId}, ${clientId}, ${country}, 1, 0, now(), now())
+    ON CONFLICT ("studyId", "country") DO UPDATE
+      SET "marketQuoteSeq" = "quote_number_sequence"."marketQuoteSeq" + 1, "updatedAt" = now()
+    RETURNING "marketQuoteSeq" AS seq`;
+  return rows[0].seq;
+}
+
+/** Atomically allocate the next (flat) Quote Line Number for a (study, country),
+ *  creating the sequence row on first use — the line-counter twin of
+ *  allocateMarketQuoteNumber (ADR-0026). */
+async function allocateQuoteLineNumber(
+  tx: TenantClient,
+  studyId: string,
+  clientId: string,
+  country: string,
+): Promise<number> {
+  const rows = await tx.$queryRaw<{ seq: number }[]>`
+    INSERT INTO "quote_number_sequence"
+      ("id", "studyId", "clientId", "country", "marketQuoteSeq", "quoteLineSeq", "createdAt", "updatedAt")
+    VALUES (gen_random_uuid()::text, ${studyId}, ${clientId}, ${country}, 0, 1, now(), now())
+    ON CONFLICT ("studyId", "country") DO UPDATE
+      SET "quoteLineSeq" = "quote_number_sequence"."quoteLineSeq" + 1, "updatedAt" = now()
+    RETURNING "quoteLineSeq" AS seq`;
+  return rows[0].seq;
+}
+
+/**
+ * Create a new Draft Market Quote (dealer document) in a (study, country),
+ * allocating its Market Quote Number. Gates, in order: the caller is a Researcher
+ * (role); the study exists; the caller is in the (study, country) pool (#6 — only
+ * the pool may work a market). The document has no lifecycle state; its Quote Lines
+ * are added next and carry the state.
+ */
+export async function createMarketQuote(
   principal: Principal,
-  itemId: string,
-  fields: QuoteFields = {},
-): Promise<{ readonly id: string; readonly quoteNumber: number }> {
+  studyId: string,
+  country: string,
+  header: MarketQuoteHeaderFields = {},
+): Promise<{ readonly id: string; readonly marketQuoteNumber: number }> {
   if (!canCreateQuote(principal)) {
-    throw new QuoteAccessError("Only Researchers may create a Quote");
+    throw new QuoteAccessError("Only Researchers may create a Market Quote");
   }
 
   return withTenant(principal, async (tx) => {
-    const item = await tx.benchmarkItem.findUnique({
-      where: { id: itemId },
-      select: { id: true, studyId: true, country: true, clientId: true },
+    const study = await tx.study.findUnique({
+      where: { id: studyId },
+      select: { id: true, clientId: true },
     });
-    if (item === null) {
-      throw new QuoteAccessError(`Benchmark Item not found: ${itemId}`);
+    if (study === null) {
+      throw new QuoteAccessError(`Study not found: ${studyId}`);
     }
 
     const membership = await tx.countryAssignment.findFirst({
-      where: { studyId: item.studyId, country: item.country, researcherId: principal.userId },
+      where: { studyId, country, researcherId: principal.userId },
       select: { id: true },
     });
     if (membership === null) {
       throw new QuoteAccessError(
-        `Not assigned to Country "${item.country}" — ask the Engagement Manager`,
+        `Not assigned to Country "${country}" — ask the Engagement Manager`,
       );
     }
 
-    // Atomic monotonic allocation: the increment takes a row lock on the item,
-    // so concurrent creators can't collide on a number (ADR-0010).
-    const { quoteSeq } = await tx.benchmarkItem.update({
-      where: { id: itemId },
-      data: { quoteSeq: { increment: 1 } },
-      select: { quoteSeq: true },
-    });
-    return tx.quote.create({
+    const marketQuoteNumber = await allocateMarketQuoteNumber(
+      tx,
+      studyId,
+      study.clientId,
+      country,
+    );
+    return tx.marketQuote.create({
       data: {
-        benchmarkItemId: itemId,
-        // Denormalized RLS tenant column (ADR-0021), copied from the parent item.
-        clientId: item.clientId,
-        quoteNumber: quoteSeq,
+        studyId,
+        clientId: study.clientId,
+        country,
+        marketQuoteNumber,
         createdById: principal.userId,
-        state: "Draft",
-        ...toData(fields),
+        ...toData(header),
       },
-      select: { id: true, quoteNumber: true },
+      select: { id: true, marketQuoteNumber: true },
     });
   });
 }
 
 /**
- * Edit a Draft Quote's fields. Owner-only and Draft-only: a researcher may edit
- * only their own quote, and only while it is still a Draft (a Submitted quote is
- * immutable to the researcher — corrections come via rejection in #11).
+ * Add a Draft Quote Line to a Market Quote, allocating its (flat) Quote Line
+ * Number. Owner-only: only the document's author may add lines (a Market Quote is
+ * single-author; ADR-0026). The Benchmark Item must be in the SAME (study, country)
+ * as the document, and there may be at most one line per item per document — the
+ * @@unique(marketQuoteId, benchmarkItemId) backstop surfaces a duplicate as an
+ * access error. The line's scope (studyId/country/clientId/createdById) is
+ * denormalized from the parent document on insert (ADR-0026).
  */
-export async function updateDraftQuote(
+export async function addQuoteLine(
   principal: Principal,
-  quoteId: string,
-  fields: QuoteFields,
+  marketQuoteId: string,
+  benchmarkItemId: string,
+  fields: QuoteLineFields = {},
+): Promise<{ readonly id: string; readonly quoteLineNumber: number }> {
+  if (!canCreateQuote(principal)) {
+    throw new QuoteAccessError("Only Researchers may add a Quote Line");
+  }
+
+  return withTenant(principal, async (tx) => {
+    const doc = await tx.marketQuote.findUnique({
+      where: { id: marketQuoteId },
+      select: { id: true, studyId: true, country: true, clientId: true, createdById: true },
+    });
+    if (doc === null) {
+      throw new QuoteAccessError(`Market Quote not found: ${marketQuoteId}`);
+    }
+    if (doc.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the document's author may add a Quote Line");
+    }
+
+    const item = await tx.benchmarkItem.findUnique({
+      where: { id: benchmarkItemId },
+      select: { id: true, studyId: true, country: true },
+    });
+    if (item === null) {
+      throw new QuoteAccessError(`Benchmark Item not found: ${benchmarkItemId}`);
+    }
+    if (item.studyId !== doc.studyId || item.country !== doc.country) {
+      throw new QuoteAccessError(
+        "Benchmark Item is not in this Market Quote's study and country",
+      );
+    }
+
+    const quoteLineNumber = await allocateQuoteLineNumber(
+      tx,
+      doc.studyId,
+      doc.clientId,
+      doc.country,
+    );
+    try {
+      return await tx.quoteLine.create({
+        data: {
+          marketQuoteId,
+          benchmarkItemId,
+          clientId: doc.clientId,
+          studyId: doc.studyId,
+          country: doc.country,
+          createdById: principal.userId,
+          quoteLineNumber,
+          state: "Draft",
+          ...toData(fields),
+        },
+        select: { id: true, quoteLineNumber: true },
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new QuoteAccessError(
+          "This Market Quote already has a Quote Line for that Benchmark Item",
+        );
+      }
+      throw error;
+    }
+  });
+}
+
+/**
+ * Edit a Draft Quote Line's fields. Owner-only and Draft-only: the document's
+ * author may edit only while the line is still a Draft (a Submitted line is
+ * immutable to the researcher — corrections come via rejection).
+ */
+export async function updateDraftLine(
+  principal: Principal,
+  lineId: string,
+  fields: QuoteLineFields,
 ): Promise<void> {
   await withTenant(principal, async (tx) => {
-    await requireOwnDraft(tx, principal, quoteId);
-    await tx.quote.update({ where: { id: quoteId }, data: toData(fields) });
+    await requireOwnDraftLine(tx, principal, lineId);
+    await tx.quoteLine.update({ where: { id: lineId }, data: toData(fields) });
   });
 }
 
 /**
- * Hard-delete a Draft Quote (abandon). Owner-only and Draft-only. The item's
- * `quoteSeq` is NOT rewound, so the abandoned number becomes a permanent gap and
- * is never reused (ADR-0010).
+ * Hard-delete a Draft Quote Line (discard). Owner-only and Draft-only. The
+ * sequence's `quoteLineSeq` is NOT rewound, so the discarded number becomes a
+ * permanent gap and is never reused (ADR-0026).
  */
-export async function deleteDraftQuote(principal: Principal, quoteId: string): Promise<void> {
+export async function deleteDraftLine(principal: Principal, lineId: string): Promise<void> {
   await withTenant(principal, async (tx) => {
-    await requireOwnDraft(tx, principal, quoteId);
-    await tx.quote.delete({ where: { id: quoteId } });
+    await requireOwnDraftLine(tx, principal, lineId);
+    await tx.quoteLine.delete({ where: { id: lineId } });
   });
 }
 
 /**
- * Submit a Draft Quote. Owner-only; the Draft→Submitted decision and the
- * required-field validation are the pure core's (`transition`). Returns the
- * core's result verbatim: `missing-fields` (with the list) and
- * `illegal-transition` write nothing; `ok` persists the new state under a
- * conditional update so a concurrent submit can't double-apply.
+ * List the Quote Lines on a Benchmark Item that the caller may read (issue #8 read
+ * AC, ported). Internal staff only. Draft privacy (ADR-0011): the caller sees their
+ * own lines in any state, plus other authors' lines only once they have left Draft.
  */
-export async function submitQuote(
-  principal: Principal,
-  quoteId: string,
-): Promise<TransitionResult> {
-  if (!isInternal(principal)) {
-    throw new QuoteAccessError("Internal staff only");
-  }
-  return withTenant(principal, async (tx) => {
-    const quote = await tx.quote.findUnique({
-      where: { id: quoteId },
-      select: {
-        createdById: true,
-        state: true,
-        competitorBrand: true,
-        dealerName: true,
-        dealerLocation: true,
-        price: true,
-        currency: true,
-        quantityQuoted: true,
-        dateQuoteReceived: true,
-        benchmarkItem: { select: { studyId: true } },
-      },
-    });
-    if (quote === null) {
-      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
-    }
-    if (quote.createdById !== principal.userId) {
-      throw new QuoteAccessError("Only the author may submit their Quote");
-    }
-
-    const submittable: SubmittableQuote = {
-      competitorBrand: quote.competitorBrand,
-      dealerName: quote.dealerName,
-      dealerLocation: quote.dealerLocation,
-      price: quote.price === null ? null : Number(quote.price),
-      currency: quote.currency,
-      quantityQuoted: quote.quantityQuoted,
-      dateQuoteReceived: quote.dateQuoteReceived,
-    };
-
-    const result = transition(quote.state, { kind: "submit", quote: submittable });
-    if (!result.ok) return result;
-
-    // Persist under a guard so a concurrent submit applies exactly once. Conversion
-    // is NOT fetched here — submit only marks it pending, and the background sweep
-    // pins the rate once the quote's date has closed (ADR-0013). This preserves the
-    // invariant "null ⇔ Draft; once Submitted, always pending → auto/manual".
-    //
-    // `submittedAt` stamps FIFO queue position (#11). On a RESUBMIT (after revise)
-    // this also clears the prior verdict — reason/reviewer/time — so a re-queued
-    // quote carries no stale verdict; the author's `justification` is deliberately
-    // left intact (the analyst must read it to approve a still-flagged quote).
-    const applied = await tx.quote.updateMany({
-      where: { id: quoteId, state: "Draft" },
-      data: {
-        state: "Submitted",
-        conversionStatus: "pending",
-        submittedAt: new Date(),
-        rejectionReason: null,
-        reviewedById: null,
-        reviewedAt: null,
-      },
-    });
-    // Record only if the guarded update actually transitioned a row — a raced
-    // concurrent submit that matched 0 rows changed nothing and logs nothing
-    // (ADR-0019: one event per real change, atomic with the transition).
-    if (applied.count === 1) {
-      await recordAuditEvents(tx, [
-        auditQuoteLifecycle("submit", {
-          actorId: principal.userId,
-          studyId: quote.benchmarkItem.studyId,
-          quoteId,
-        }),
-      ]);
-    }
-    return result;
-  });
-}
-
-/**
- * List the Quotes on a Benchmark Item that the caller may read (issue #8 read
- * AC). Internal staff only. Draft privacy (ADR-0011): the caller sees their own
- * quotes in any state, plus other authors' quotes only once they have left Draft
- * — never another author's Draft.
- */
-export async function listQuotesForItem(
+export async function listLinesForItem(
   principal: Principal,
   itemId: string,
-): Promise<QuoteView[]> {
+): Promise<QuoteLineView[]> {
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
   const rows = await withTenant(principal, (tx) =>
-    tx.quote.findMany({
+    tx.quoteLine.findMany({
       where: {
         benchmarkItemId: itemId,
         OR: [{ createdById: principal.userId }, { state: { not: "Draft" } }],
       },
-      select: QUOTE_VIEW_SELECT,
-      orderBy: { quoteNumber: "asc" },
+      select: QUOTE_LINE_VIEW_SELECT,
+      orderBy: { quoteLineNumber: "asc" },
     }),
   );
   return rows.map(({ createdBy, ...r }) => ({
@@ -310,16 +361,96 @@ export async function listQuotesForItem(
   }));
 }
 
-/** One row of the analyst review queue (#11): the Quote plus the Benchmark Item
- *  context and the computed QC flag the analyst needs to render a verdict. The
- *  Client Price is shown to the analyst (never to researchers; ADR-0003), so it
- *  is safe to surface here behind the Analyst-only gate. */
+/**
+ * Submit a Draft Quote Line. Owner-only; the Draft→Submitted decision and required-
+ * field validation are the pure core's (`transition`), reading the line's own
+ * fields PLUS the parent document's source/date/currency. Returns the core's result
+ * verbatim. On `ok`, the line moves to Submitted under a guard, and the parent
+ * Market Quote is marked `pending` if it is not already converted (one rate per
+ * document; the deferred sweep pins it once the date closes — ADR-0013/0026).
+ */
+export async function submitLine(
+  principal: Principal,
+  lineId: string,
+): Promise<TransitionResult> {
+  if (!isInternal(principal)) {
+    throw new QuoteAccessError("Internal staff only");
+  }
+  return withTenant(principal, async (tx) => {
+    const line = await tx.quoteLine.findUnique({
+      where: { id: lineId },
+      select: {
+        createdById: true,
+        state: true,
+        marketQuoteId: true,
+        competitorBrand: true,
+        price: true,
+        quantityQuoted: true,
+        studyId: true,
+        marketQuote: {
+          select: { sourceName: true, sourceLocation: true, currency: true, dateQuoteReceived: true },
+        },
+      },
+    });
+    if (line === null) {
+      throw new QuoteAccessError(`Quote Line not found: ${lineId}`);
+    }
+    if (line.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the author may submit their Quote Line");
+    }
+
+    const submittable: SubmittableQuote = {
+      competitorBrand: line.competitorBrand,
+      dealerName: line.marketQuote.sourceName,
+      dealerLocation: line.marketQuote.sourceLocation,
+      price: line.price === null ? null : Number(line.price),
+      currency: line.marketQuote.currency,
+      quantityQuoted: line.quantityQuoted,
+      dateQuoteReceived: line.marketQuote.dateQuoteReceived,
+    };
+
+    const result = transition(line.state, { kind: "submit", quote: submittable });
+    if (!result.ok) return result;
+
+    const applied = await tx.quoteLine.updateMany({
+      where: { id: lineId, state: "Draft" },
+      data: {
+        state: "Submitted",
+        submittedAt: new Date(),
+        rejectionReason: null,
+        reviewedById: null,
+        reviewedAt: null,
+      },
+    });
+    if (applied.count === 1) {
+      // Mark the document pending only if it has no pinned conversion yet — never
+      // clobber an already auto/manual document (the sticky guard).
+      await tx.marketQuote.updateMany({
+        where: { id: line.marketQuoteId, conversionStatus: null },
+        data: { conversionStatus: "pending" },
+      });
+      await recordAuditEvents(tx, [
+        auditQuoteLifecycle("submit", {
+          actorId: principal.userId,
+          studyId: line.studyId,
+          lineId,
+        }),
+      ]);
+    }
+    return result;
+  });
+}
+
+/** One row of the analyst review queue (#11), ported to the line: the Quote Line
+ *  plus its parent document and Benchmark Item context and the computed QC flag. */
 export interface ReviewQueueItem {
   readonly id: string;
-  readonly quoteNumber: number;
+  /** The parent document — the manual-rate override is per Market Quote (ADR-0026). */
+  readonly marketQuoteId: string;
+  readonly quoteLineNumber: number;
   readonly competitorBrand: string | null;
-  readonly dealerName: string | null;
-  readonly dealerLocation: string | null;
+  readonly sourceName: string | null;
+  readonly sourceLocation: string | null;
   readonly price: string | null;
   readonly currency: string | null;
   readonly quantityQuoted: number | null;
@@ -329,48 +460,33 @@ export interface ReviewQueueItem {
   readonly justification: string | null;
   readonly submittedAt: Date | null;
   readonly authorName: string;
-  // Benchmark Item / study context:
   readonly studyName: string;
   readonly clientName: string;
   readonly country: string;
   readonly clientItemNumber: string;
   readonly itemDescription: string;
-  /** Null when the item is unpriced (ADR-0015) — then `flag.comparable` is false. */
   readonly clientPrice: string | null;
-  /** The resolved QC Threshold as a FRACTION (per-item ?? study default, #86). */
   readonly qcThreshold: string;
-  /** The QC out-of-range evaluation (ADR-0014); `comparable: false` while pending
-   *  OR when the item has no Client Price (ADR-0015). */
   readonly flag: PriceFlagResult;
 }
 
 /**
- * Just the depth of the analyst review queue — how many Quotes sit Submitted
- * across all studies and tenants (analysts are not tenant-scoped — CONTEXT.md:
- * Analyst). The home's review-queue signal (#58) needs only this number, so it
- * counts at the DB rather than materialising every row + QC flag the way
- * listReviewQueue does. Analyst-only, same gate as the queue it summarises.
+ * Just the depth of the analyst review queue — how many Quote Lines sit Submitted
+ * across all studies and tenants. Analyst-only.
  */
 export async function countReviewQueue(principal: Principal): Promise<number> {
   if (!canReviewQuote(principal)) {
     throw new QuoteAccessError("Only Analysts may review quotes");
   }
-  return withTenant(principal, (tx) => tx.quote.count({ where: { state: "Submitted" } }));
+  return withTenant(principal, (tx) => tx.quoteLine.count({ where: { state: "Submitted" } }));
 }
 
 /**
- * How many Quotes the signed-in researcher has sitting in a given state, keyed to
- * `createdById = me` — the author scope, not the item's Primary Researcher (a
- * Rejected quote returns to its author, CONTEXT.md: Approved/Rejected). The home's
- * Researcher signals (#59) need only the number, so they count at the DB.
- *
- * Self-scoped by construction: the `createdById` key means the query can only ever
- * see the caller's own rows, so no role gate is needed beyond `isInternal` — the
- * security rationale that hard-gates countReviewQueue (a global, cross-tenant queue)
- * does not apply here. Drafts counted this way stay private to their author anyway
- * (ADR-0011). Researchers are not tenant-scoped, so this spans all studies/tenants.
+ * How many Quote Lines the signed-in researcher has in a given state, keyed to
+ * `createdById = me`. Self-scoped by construction, so no role gate beyond
+ * isInternal. Spans all studies/tenants (researchers are not tenant-scoped).
  */
-async function countMyQuotesInState(
+async function countMyLinesInState(
   principal: Principal,
   state: "Rejected" | "Draft",
 ): Promise<number> {
@@ -378,69 +494,74 @@ async function countMyQuotesInState(
     throw new QuoteAccessError("Internal staff only");
   }
   return withTenant(principal, (tx) =>
-    tx.quote.count({ where: { state, createdById: principal.userId } }),
+    tx.quoteLine.count({ where: { state, createdById: principal.userId } }),
   );
 }
 
-/** Count of the researcher's own Quotes in Rejected state — the most actionable
- *  home signal (each is a quote to revise; also notification-backed). */
-export function countMyRejectedQuotes(principal: Principal): Promise<number> {
-  return countMyQuotesInState(principal, "Rejected");
+/** Count of the researcher's own Rejected Quote Lines — the most actionable signal. */
+export function countMyRejectedLines(principal: Principal): Promise<number> {
+  return countMyLinesInState(principal, "Rejected");
 }
 
-/** Count of the researcher's own Quotes still in Draft — work in progress. */
-export function countMyDrafts(principal: Principal): Promise<number> {
-  return countMyQuotesInState(principal, "Draft");
+/** Count of the researcher's own Draft Quote Lines — work in progress. */
+export function countMyDraftLines(principal: Principal): Promise<number> {
+  return countMyLinesInState(principal, "Draft");
 }
 
 /**
- * The analyst review queue: every Submitted Quote across all studies and tenants
- * (analysts are not tenant-scoped — CONTEXT.md: Analyst), oldest-submitted first
- * so nothing starves (FIFO by `submittedAt`). Analyst-only. Each row carries the
- * computed QC flag (ADR-0014): a pending quote is `comparable: false` (no USD
- * figure yet), an `auto`/`manual` quote is compared against its item's Client
- * Price using the study's QC Threshold.
+ * The analyst review queue: every Submitted Quote Line across all studies and
+ * tenants, oldest-submitted first (FIFO by `submittedAt`). Analyst-only. Each row
+ * carries the computed QC flag (ADR-0014): a line whose document is pending is
+ * `comparable: false`; an auto/manual document's lines are compared against the
+ * item's Client Price using the resolved QC Threshold.
  */
 export async function listReviewQueue(principal: Principal): Promise<ReviewQueueItem[]> {
   if (!canReviewQuote(principal)) {
     throw new QuoteAccessError("Only Analysts may review quotes");
   }
   const rows = await withTenant(principal, (tx) =>
-    tx.quote.findMany({
-    where: { state: "Submitted" },
-    orderBy: { submittedAt: "asc" },
-    select: {
-      id: true,
-      quoteNumber: true,
-      competitorBrand: true,
-      dealerName: true,
-      dealerLocation: true,
-      price: true,
-      currency: true,
-      quantityQuoted: true,
-      convertedUsdPrice: true,
-      convertedUsdPricePerUnit: true,
-      conversionStatus: true,
-      justification: true,
-      submittedAt: true,
-      createdBy: { select: { name: true } },
-      benchmarkItem: {
-        select: {
-          country: true,
-          clientItemNumber: true,
-          itemDescription: true,
-          clientPrice: true,
-          qcThreshold: true,
-          study: { select: { name: true, qcThreshold: true, client: { select: { name: true } } } },
+    tx.quoteLine.findMany({
+      where: { state: "Submitted" },
+      orderBy: { submittedAt: "asc" },
+      select: {
+        id: true,
+        marketQuoteId: true,
+        quoteLineNumber: true,
+        competitorBrand: true,
+        price: true,
+        quantityQuoted: true,
+        convertedUsdPrice: true,
+        convertedUsdPricePerUnit: true,
+        justification: true,
+        submittedAt: true,
+        createdBy: { select: { name: true } },
+        marketQuote: {
+          select: {
+            sourceName: true,
+            sourceLocation: true,
+            currency: true,
+            conversionStatus: true,
+          },
+        },
+        benchmarkItem: {
+          select: {
+            country: true,
+            clientItemNumber: true,
+            itemDescription: true,
+            clientPrice: true,
+            qcThreshold: true,
+            study: { select: { name: true, qcThreshold: true, client: { select: { name: true } } } },
+          },
         },
       },
-    },
-  }));
+    }),
+  );
 
   return rows.map((r) => {
-    const usdPerUnit = r.convertedUsdPricePerUnit === null ? null : Number(r.convertedUsdPricePerUnit);
-    const clientPrice = r.benchmarkItem.clientPrice === null ? null : Number(r.benchmarkItem.clientPrice);
-    // Per-item QC Threshold with study-default fallback (#86); both fractions.
+    const usdPerUnit =
+      r.convertedUsdPricePerUnit === null ? null : Number(r.convertedUsdPricePerUnit);
+    const clientPrice =
+      r.benchmarkItem.clientPrice === null ? null : Number(r.benchmarkItem.clientPrice);
     const threshold = resolveQcThreshold(
       r.benchmarkItem.qcThreshold === null ? null : Number(r.benchmarkItem.qcThreshold),
       Number(r.benchmarkItem.study.qcThreshold),
@@ -448,17 +569,18 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
     const flag = evaluatePriceFlag({ usdPricePerUnit: usdPerUnit, clientPrice, threshold });
     return {
       id: r.id,
-      quoteNumber: r.quoteNumber,
+      marketQuoteId: r.marketQuoteId,
+      quoteLineNumber: r.quoteLineNumber,
       competitorBrand: r.competitorBrand,
-      dealerName: r.dealerName,
-      dealerLocation: r.dealerLocation,
+      sourceName: r.marketQuote.sourceName,
+      sourceLocation: r.marketQuote.sourceLocation,
       price: r.price === null ? null : r.price.toString(),
-      currency: r.currency,
+      currency: r.marketQuote.currency,
       quantityQuoted: r.quantityQuoted,
       convertedUsdPrice: r.convertedUsdPrice === null ? null : r.convertedUsdPrice.toString(),
       convertedUsdPricePerUnit:
         r.convertedUsdPricePerUnit === null ? null : r.convertedUsdPricePerUnit.toString(),
-      conversionStatus: r.conversionStatus,
+      conversionStatus: r.marketQuote.conversionStatus,
       justification: r.justification,
       submittedAt: r.submittedAt,
       authorName: r.createdBy.name,
@@ -467,7 +589,8 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
       country: r.benchmarkItem.country,
       clientItemNumber: r.benchmarkItem.clientItemNumber,
       itemDescription: r.benchmarkItem.itemDescription,
-      clientPrice: r.benchmarkItem.clientPrice === null ? null : r.benchmarkItem.clientPrice.toString(),
+      clientPrice:
+        r.benchmarkItem.clientPrice === null ? null : r.benchmarkItem.clientPrice.toString(),
       qcThreshold: threshold.toString(),
       flag,
     };
@@ -475,31 +598,29 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
 }
 
 /**
- * Approve a Submitted Quote (Analyst verdict). The approve guard is the pure
- * core's (`transition`): blocked while conversion is `pending` (ADR-0013), and —
- * if the quote is flagged against its Client Price — blocked until the author has
- * supplied a Justification (ADR-0014). On success, the verdict and its analyst/
- * time are pinned under a `state = Submitted` guard so a concurrent verdict can't
- * double-apply.
+ * Approve a Submitted Quote Line (Analyst verdict). The approve guard is the pure
+ * core's: blocked while the parent document's conversion is `pending` (ADR-0013),
+ * and — if the line is flagged against its Client Price — blocked until the author
+ * has supplied a Justification (ADR-0014). Pinned under a `state = Submitted` guard.
  */
-export async function approveQuote(
+export async function approveLine(
   principal: Principal,
-  quoteId: string,
+  lineId: string,
 ): Promise<TransitionResult> {
   if (!canReviewQuote(principal)) {
     throw new QuoteAccessError("Only Analysts may review quotes");
   }
   return withTenant(principal, async (tx) => {
-    const quote = await tx.quote.findUnique({
-      where: { id: quoteId },
+    const line = await tx.quoteLine.findUnique({
+      where: { id: lineId },
       select: {
         state: true,
-        conversionStatus: true,
+        studyId: true,
         convertedUsdPricePerUnit: true,
         justification: true,
+        marketQuote: { select: { conversionStatus: true } },
         benchmarkItem: {
           select: {
-            studyId: true,
             clientPrice: true,
             qcThreshold: true,
             study: { select: { qcThreshold: true } },
@@ -507,41 +628,41 @@ export async function approveQuote(
         },
       },
     });
-    if (quote === null) {
-      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    if (line === null) {
+      throw new QuoteAccessError(`Quote Line not found: ${lineId}`);
     }
 
     const flag = evaluatePriceFlag({
       usdPricePerUnit:
-        quote.convertedUsdPricePerUnit === null ? null : Number(quote.convertedUsdPricePerUnit),
+        line.convertedUsdPricePerUnit === null ? null : Number(line.convertedUsdPricePerUnit),
       clientPrice:
-        quote.benchmarkItem.clientPrice === null ? null : Number(quote.benchmarkItem.clientPrice),
+        line.benchmarkItem.clientPrice === null ? null : Number(line.benchmarkItem.clientPrice),
       threshold: resolveQcThreshold(
-        quote.benchmarkItem.qcThreshold === null ? null : Number(quote.benchmarkItem.qcThreshold),
-        Number(quote.benchmarkItem.study.qcThreshold),
+        line.benchmarkItem.qcThreshold === null ? null : Number(line.benchmarkItem.qcThreshold),
+        Number(line.benchmarkItem.study.qcThreshold),
       ),
     });
     const flagged = flag.comparable && flag.flagged;
-    const hasJustification = quote.justification !== null && quote.justification.trim() !== "";
+    const hasJustification = line.justification !== null && line.justification.trim() !== "";
 
-    const result = transition(quote.state, {
+    const result = transition(line.state, {
       kind: "approve",
-      conversionStatus: quote.conversionStatus,
+      conversionStatus: line.marketQuote.conversionStatus,
       flagged,
       hasJustification,
     });
     if (!result.ok) return result;
 
-    const applied = await tx.quote.updateMany({
-      where: { id: quoteId, state: "Submitted" },
+    const applied = await tx.quoteLine.updateMany({
+      where: { id: lineId, state: "Submitted" },
       data: { state: "Approved", reviewedById: principal.userId, reviewedAt: new Date() },
     });
     if (applied.count === 1) {
       await recordAuditEvents(tx, [
         auditQuoteLifecycle("approve", {
           actorId: principal.userId,
-          studyId: quote.benchmarkItem.studyId,
-          quoteId,
+          studyId: line.studyId,
+          lineId,
         }),
       ]);
     }
@@ -549,27 +670,23 @@ export async function approveQuote(
   });
 }
 
-/** Outcome of a manual rate override: success, or a user-fixable rejection —
- *  the rate didn't parse, or the quote is no longer pending (already converted,
- *  the sticky guard). Role/not-found failures still throw QuoteAccessError. */
+/** Outcome of a manual rate override: success, or a user-fixable rejection. */
 export type SetManualRateResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: "invalid-rate" | "not-pending" };
 
 /**
- * Set a manual Exchange Rate on a Submitted Quote whose conversion is `pending`
- * (#70 / ADR-0023) — the analyst's escape hatch for a currency the provider
- * doesn't cover. Analyst-gated (mirrors approveQuote). The rate is validated by
- * the pure `parseManualRate`; the USD figures are derived by `convertManual`
- * (same math as the auto path, rateDate pinned to the quote's date). Sticky: the
- * guarded `updateMany` only fires while `conversionStatus = pending`, so it never
- * clobbers an already-`auto`/`manual` quote nor races the background sweep. The
- * override is recorded as a `manualRateOverride` Audit Event inside the same
- * transaction (ADR-0019), carrying the new USD total as `after` (ADR-0023).
+ * Set a manual Exchange Rate on a Market Quote whose conversion is `pending` (#70 /
+ * ADR-0023/0026) — the analyst's escape hatch for a currency the provider doesn't
+ * cover. The rate now lives on the DOCUMENT (one rate for every line), so this
+ * derives each line's USD figures from that single rate and pins the rate + status
+ * on the document. Analyst-gated. Sticky: the guarded update only fires while
+ * `conversionStatus = pending`. The override is one `manualRateOverride` Audit Event
+ * (subject = Market Quote) carrying the document-total USD as `after` (ADR-0023).
  */
-export async function setManualRate(
+export async function setMarketQuoteManualRate(
   principal: Principal,
-  quoteId: string,
+  marketQuoteId: string,
   rateInput: string | number,
 ): Promise<SetManualRateResult> {
   if (!canReviewQuote(principal)) {
@@ -579,98 +696,106 @@ export async function setManualRate(
   if (!parsed.ok) return { ok: false, reason: "invalid-rate" };
 
   return withTenant(principal, async (tx) => {
-    const quote = await tx.quote.findUnique({
-      where: { id: quoteId },
+    const doc = await tx.marketQuote.findUnique({
+      where: { id: marketQuoteId },
       select: {
         conversionStatus: true,
-        price: true,
         currency: true,
-        quantityQuoted: true,
         dateQuoteReceived: true,
-        benchmarkItem: { select: { studyId: true } },
+        studyId: true,
+        quoteLines: { select: { id: true, price: true, quantityQuoted: true } },
       },
     });
-    if (quote === null) {
-      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    if (doc === null) {
+      throw new QuoteAccessError(`Market Quote not found: ${marketQuoteId}`);
     }
-    if (quote.conversionStatus !== "pending") {
+    if (doc.conversionStatus !== "pending") {
       return { ok: false, reason: "not-pending" };
     }
 
-    // A pending quote always carries a price + date (both required at submit);
-    // convertManual reads primitives, so map off the Prisma Decimal. Currency is
-    // unused by the manual path (rate is supplied, not looked up).
-    const pinned = convertManual(
-      {
-        price: Number(quote.price),
-        currency: quote.currency ?? "",
-        quantityQuoted: quote.quantityQuoted,
-        dateQuoteReceived: quote.dateQuoteReceived as Date,
-      },
-      parsed.rate,
-    );
-
-    // Sticky guard: only a still-Submitted, still-pending row is overridden, so a
-    // concurrent auto-pin or a second override can't double-apply (mirrors the
-    // verdict guards). The count gates the atomic audit write (ADR-0019).
-    const applied = await tx.quote.updateMany({
-      where: { id: quoteId, state: "Submitted", conversionStatus: "pending" },
-      data: {
-        conversionStatus: "manual",
-        exchangeRate: pinned.exchangeRate,
-        rateDate: pinned.rateDate,
-        convertedUsdPrice: pinned.convertedUsdPrice,
-        convertedUsdPricePerUnit: pinned.convertedUsdPricePerUnit,
-      },
+    // Derive each line's USD from the one document rate; sum the totals for the
+    // audit `after` (ADR-0023: the money that moved across the whole document).
+    let total = 0;
+    let pinnedRateDate: Date | null = null;
+    let pinnedRate = parsed.rate;
+    const lineUpdates = doc.quoteLines.map((line) => {
+      const pinned = convertManual(
+        {
+          price: Number(line.price),
+          currency: doc.currency ?? "",
+          quantityQuoted: line.quantityQuoted,
+          dateQuoteReceived: doc.dateQuoteReceived as Date,
+        },
+        parsed.rate,
+      );
+      total += Number(pinned.convertedUsdPrice);
+      pinnedRateDate = pinned.rateDate;
+      pinnedRate = pinned.exchangeRate;
+      return tx.quoteLine.update({
+        where: { id: line.id },
+        data: {
+          convertedUsdPrice: pinned.convertedUsdPrice,
+          convertedUsdPricePerUnit: pinned.convertedUsdPricePerUnit,
+        },
+      });
     });
-    if (applied.count === 1) {
-      await recordAuditEvents(tx, [
-        auditManualRateOverride({
-          actorId: principal.userId,
-          studyId: quote.benchmarkItem.studyId,
-          quoteId,
-          after: pinned.convertedUsdPrice,
-        }),
-      ]);
+
+    // Sticky guard: only a still-pending document is overridden, so a concurrent
+    // auto-pin or a second override can't double-apply. The count gates the lines'
+    // USD writes and the atomic audit (ADR-0019).
+    const applied = await tx.marketQuote.updateMany({
+      where: { id: marketQuoteId, conversionStatus: "pending" },
+      data: { conversionStatus: "manual", exchangeRate: pinnedRate, rateDate: pinnedRateDate },
+    });
+    if (applied.count !== 1) {
+      return { ok: false, reason: "not-pending" };
     }
+    await Promise.all(lineUpdates);
+    await recordAuditEvents(tx, [
+      auditManualRateOverride({
+        actorId: principal.userId,
+        studyId: doc.studyId,
+        marketQuoteId,
+        after: total,
+      }),
+    ]);
     return { ok: true };
   });
 }
 
 /**
- * Reject a Submitted Quote with a reason (Analyst verdict). Also the vehicle for
- * "return for justification": the reason states the divergence direction, never
- * the Client Price value (ADR-0003). The reason is required (the pure core's
- * `missing-reason` guard). On success the quote returns to its author as Rejected
- * under a `state = Submitted` guard.
+ * Reject a Submitted Quote Line with a reason (Analyst verdict). Also the vehicle
+ * for "return for justification": the reason states the divergence direction, never
+ * the Client Price value (ADR-0003). The reason is required (the core's guard). On
+ * success the line returns to its author as Rejected, and the author is notified.
  */
-export async function rejectQuote(
+export async function rejectLine(
   principal: Principal,
-  quoteId: string,
+  lineId: string,
   reason: string,
 ): Promise<TransitionResult> {
   if (!canReviewQuote(principal)) {
     throw new QuoteAccessError("Only Analysts may review quotes");
   }
   return withTenant(principal, async (tx) => {
-    const quote = await tx.quote.findUnique({
-      where: { id: quoteId },
+    const line = await tx.quoteLine.findUnique({
+      where: { id: lineId },
       select: {
         state: true,
         createdById: true,
+        studyId: true,
         createdBy: { select: { status: true } },
-        benchmarkItem: { select: { studyId: true } },
       },
     });
-    if (quote === null) {
-      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    if (line === null) {
+      throw new QuoteAccessError(`Quote Line not found: ${lineId}`);
     }
 
-    const result = transition(quote.state, { kind: "reject", reason });
+    const result = transition(line.state, { kind: "reject", reason });
     if (!result.ok) return result;
 
-    const applied = await tx.quote.updateMany({
-      where: { id: quoteId, state: "Submitted" },
+    const applied = await tx.quoteLine.updateMany({
+      where: { id: lineId, state: "Submitted" },
       data: {
         state: "Rejected",
         rejectionReason: reason,
@@ -682,19 +807,18 @@ export async function rejectQuote(
       await recordAuditEvents(tx, [
         auditQuoteLifecycle("reject", {
           actorId: principal.userId,
-          studyId: quote.benchmarkItem.studyId,
-          quoteId,
+          studyId: line.studyId,
+          lineId,
         }),
       ]);
-      // Push the rejection to its AUTHOR — the one who can revise it (createdById,
-      // not necessarily the item's Primary Researcher; ADR-0020). Only an active
-      // author is notified; a deactivated (offboarded) author is skipped.
-      if (quote.createdBy.status === "active") {
+      // Push the rejection to its AUTHOR (createdById; ADR-0020). Only an active
+      // author is notified; a deactivated author is skipped.
+      if (line.createdBy.status === "active") {
         await recordNotifications(tx, [
           notifyQuoteRejected({
-            recipientId: quote.createdById,
-            studyId: quote.benchmarkItem.studyId,
-            quoteId,
+            recipientId: line.createdById,
+            studyId: line.studyId,
+            lineId,
             reason,
           }),
         ]);
@@ -705,71 +829,81 @@ export async function rejectQuote(
 }
 
 /**
- * Revise a Rejected Quote back to Draft (the author's return path; ADR-0014). The
- * ONLY way out of Rejected. Owner-only — only the author may revise their own
- * quote. Resets conversion to unconverted (null) and clears the FIFO stamp, so a
- * later resubmit re-converts from scratch and re-queues at the back; the Quote
- * Number is retained. The rejection reason is left visible while the author works
- * the Draft (it is cleared on resubmit, in submitQuote).
+ * Revise a Rejected Quote Line back to Draft (the author's return path; ADR-0014).
+ * The ONLY way out of Rejected. Owner-only. Clears the FIFO stamp; the Quote Line
+ * Number is retained. The revise loop does NOT re-pin conversion — the rate lives
+ * on the parent document and stands (ADR-0026). The rejection reason stays visible
+ * while the author works the Draft (cleared on resubmit, in submitLine).
  */
-export async function reviseQuote(
+export async function reviseLine(
   principal: Principal,
-  quoteId: string,
+  lineId: string,
 ): Promise<TransitionResult> {
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
   return withTenant(principal, async (tx) => {
-    const quote = await tx.quote.findUnique({
-      where: { id: quoteId },
+    const line = await tx.quoteLine.findUnique({
+      where: { id: lineId },
       select: { createdById: true, state: true },
     });
-    if (quote === null) {
-      throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+    if (line === null) {
+      throw new QuoteAccessError(`Quote Line not found: ${lineId}`);
     }
-    if (quote.createdById !== principal.userId) {
-      throw new QuoteAccessError("Only the author may revise their Quote");
+    if (line.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the author may revise their Quote Line");
     }
 
-    const result = transition(quote.state, { kind: "revise" });
+    const result = transition(line.state, { kind: "revise" });
     if (!result.ok) return result;
 
-    await tx.quote.updateMany({
-      where: { id: quoteId, state: "Rejected", createdById: principal.userId },
-      data: { state: "Draft", conversionStatus: null, submittedAt: null },
+    await tx.quoteLine.updateMany({
+      where: { id: lineId, state: "Rejected", createdById: principal.userId },
+      data: { state: "Draft", submittedAt: null },
     });
     return result;
   });
 }
 
-/** Load a Quote and assert the caller owns it and it is still a Draft. The single
- *  gate behind every researcher write that mutates an existing Quote. */
-async function requireOwnDraft(
+/** Load a Quote Line and assert the caller owns it and it is still a Draft. The
+ *  single gate behind every researcher write that mutates an existing line. */
+async function requireOwnDraftLine(
   tx: TenantClient,
   principal: Principal,
-  quoteId: string,
+  lineId: string,
 ): Promise<void> {
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
-  const quote = await tx.quote.findUnique({
-    where: { id: quoteId },
+  const line = await tx.quoteLine.findUnique({
+    where: { id: lineId },
     select: { createdById: true, state: true },
   });
-  if (quote === null) {
-    throw new QuoteAccessError(`Quote not found: ${quoteId}`);
+  if (line === null) {
+    throw new QuoteAccessError(`Quote Line not found: ${lineId}`);
   }
-  if (quote.createdById !== principal.userId) {
-    throw new QuoteAccessError("Only the author may edit their Quote");
+  if (line.createdById !== principal.userId) {
+    throw new QuoteAccessError("Only the author may edit their Quote Line");
   }
-  if (quote.state !== "Draft") {
-    throw new QuoteAccessError("Only a Draft Quote can be edited");
+  if (line.state !== "Draft") {
+    throw new QuoteAccessError("Only a Draft Quote Line can be edited");
   }
+}
+
+/** True for a Prisma unique-constraint violation (P2002), without importing the
+ *  Prisma namespace — the @@unique(marketQuoteId, benchmarkItemId) backstop. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "P2002"
+  );
 }
 
 /** Map the optional input fields to a Prisma data object, omitting keys not
  *  supplied so an edit only touches the fields it carries. */
-function toData(fields: QuoteFields) {
+function toData(fields: object) {
   const data: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(fields)) {
     if (value !== undefined) data[key] = value;

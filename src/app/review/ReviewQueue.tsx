@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { approveQuoteAction, rejectQuoteAction, setManualRateAction } from "@/lib/quotes/actions";
+import { approveLineAction, rejectLineAction, setMarketQuoteManualRateAction } from "@/lib/quotes/actions";
 import type { ReviewQueueItem } from "@/lib/quotes/repository";
 
 // The analyst-facing queue rows (issue #11). A client component because each row
@@ -72,7 +72,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
     const dir = item.flag.comparable ? item.flag.direction : "unexpected";
     const word = dir === "above" ? "higher" : dir === "below" ? "lower" : "different";
     run(() =>
-      rejectQuoteAction(item.id, `Price is ${word} than expected — please confirm and justify.`),
+      rejectLineAction(item.id, `Price is ${word} than expected — please confirm and justify.`),
     );
   }
 
@@ -86,9 +86,9 @@ function Row({ item }: { item: ReviewQueueItem }) {
         <span style={{ color: "#777" }}>{item.itemDescription}</span>
       </td>
       <td style={cell}>
-        #{item.quoteNumber} · {item.competitorBrand ?? "—"}
+        #{item.quoteLineNumber} · {item.competitorBrand ?? "—"}
         <br />
-        {item.dealerName ?? "—"}, {item.dealerLocation ?? "—"}
+        {item.sourceName ?? "—"}, {item.sourceLocation ?? "—"}
         <br />
         <span style={{ color: "#777" }}>by {item.authorName}</span>
       </td>
@@ -119,7 +119,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
                 type="button"
                 style={btn}
                 disabled={pending}
-                onClick={() => run(() => setManualRateAction(item.id, rate))}
+                onClick={() => run(() => setMarketQuoteManualRateAction(item.marketQuoteId, rate))}
               >
                 Save rate
               </button>
@@ -168,7 +168,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
                 ? "Blocked: flagged price needs the author's justification"
                 : "Approve"
           }
-          onClick={() => run(() => approveQuoteAction(item.id))}
+          onClick={() => run(() => approveLineAction(item.id))}
         >
           Approve
         </button>
@@ -192,7 +192,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
               type="button"
               style={btn}
               disabled={pending}
-              onClick={() => run(() => rejectQuoteAction(item.id, reason))}
+              onClick={() => run(() => rejectLineAction(item.id, reason))}
             >
               Confirm reject
             </button>

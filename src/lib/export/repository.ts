@@ -50,29 +50,37 @@ function mayRunClientExport(principal: Principal): boolean {
   );
 }
 
+// The shared line columns both exports read, with the parent Market Quote joined
+// for source/currency (ADR-0026). The pure builders still take `quoteNumber`,
+// `dealerName/Location`, and the free-text `leadTime/warranty/discount`, so the
+// adapter maps the Quote Line's number, its document's source, and the structured
+// fields into those shapes — keeping the export domain cores untouched this slice.
+const LINE_EXPORT_SELECT = {
+  quoteLineNumber: true,
+  competitorBrand: true,
+  price: true,
+  quantityQuoted: true,
+  convertedUsdPrice: true,
+  convertedUsdPricePerUnit: true,
+  stockStatus: true,
+  leadTimeValue: true,
+  leadTimeUnit: true,
+  warranty1Value: true,
+  warranty1Unit: true,
+  discountValue: true,
+  discountType: true,
+  notes: true,
+  marketQuote: { select: { sourceName: true, sourceLocation: true, currency: true } },
+} as const;
+
 const CLIENT_ITEM_SELECT = {
   country: true,
   clientItemNumber: true,
   itemDescription: true,
-  quotes: {
+  quoteLines: {
     where: { state: "Approved" as const },
-    orderBy: { quoteNumber: "asc" as const },
-    select: {
-      quoteNumber: true,
-      competitorBrand: true,
-      dealerName: true,
-      dealerLocation: true,
-      price: true,
-      currency: true,
-      quantityQuoted: true,
-      convertedUsdPrice: true,
-      convertedUsdPricePerUnit: true,
-      stockStatus: true,
-      leadTime: true,
-      warranty: true,
-      discount: true,
-      notes: true,
-    },
+    orderBy: { quoteLineNumber: "asc" as const },
+    select: LINE_EXPORT_SELECT,
   },
 } as const;
 
@@ -122,20 +130,20 @@ async function loadReleasedItems(
     country: row.country,
     clientItemNumber: row.clientItemNumber,
     itemDescription: row.itemDescription,
-    quotes: row.quotes.map((q) => ({
-      quoteNumber: q.quoteNumber,
+    quotes: row.quoteLines.map((q) => ({
+      quoteNumber: q.quoteLineNumber,
       competitorBrand: q.competitorBrand,
-      dealerName: q.dealerName,
-      dealerLocation: q.dealerLocation,
+      dealerName: q.marketQuote.sourceName,
+      dealerLocation: q.marketQuote.sourceLocation,
       price: toNumber(q.price),
-      currency: q.currency,
+      currency: q.marketQuote.currency,
       quantityQuoted: q.quantityQuoted,
       convertedUsdPrice: toNumber(q.convertedUsdPrice),
       usdPricePerUnit: toNumber(q.convertedUsdPricePerUnit),
       stockStatus: q.stockStatus,
-      leadTime: q.leadTime,
-      warranty: q.warranty,
-      discount: q.discount,
+      leadTime: fmtMeasure(q.leadTimeValue, q.leadTimeUnit),
+      warranty: fmtMeasure(q.warranty1Value, q.warranty1Unit),
+      discount: fmtMeasure(q.discountValue, q.discountType),
       notes: q.notes,
     })),
   }));
@@ -146,25 +154,12 @@ const INTERNAL_ITEM_SELECT = {
   clientItemNumber: true,
   itemDescription: true,
   clientPrice: true,
-  quotes: {
+  quoteLines: {
     where: { NOT: { state: "Draft" as const } },
-    orderBy: { quoteNumber: "asc" as const },
+    orderBy: { quoteLineNumber: "asc" as const },
     select: {
+      ...LINE_EXPORT_SELECT,
       state: true,
-      quoteNumber: true,
-      competitorBrand: true,
-      dealerName: true,
-      dealerLocation: true,
-      price: true,
-      currency: true,
-      quantityQuoted: true,
-      convertedUsdPrice: true,
-      convertedUsdPricePerUnit: true,
-      stockStatus: true,
-      leadTime: true,
-      warranty: true,
-      discount: true,
-      notes: true,
       justification: true,
       rejectionReason: true,
     },
@@ -195,26 +190,26 @@ export async function exportInternalWorkbook(
 
   const quotes: InternalExportQuote[] = [];
   for (const item of study.benchmarkItems) {
-    for (const q of item.quotes) {
+    for (const q of item.quoteLines) {
       quotes.push({
         country: item.country,
         clientItemNumber: item.clientItemNumber,
         itemDescription: item.itemDescription,
         clientPrice: toNumber(item.clientPrice),
         state: q.state,
-        quoteNumber: q.quoteNumber,
+        quoteNumber: q.quoteLineNumber,
         competitorBrand: q.competitorBrand,
-        dealerName: q.dealerName,
-        dealerLocation: q.dealerLocation,
+        dealerName: q.marketQuote.sourceName,
+        dealerLocation: q.marketQuote.sourceLocation,
         price: toNumber(q.price),
-        currency: q.currency,
+        currency: q.marketQuote.currency,
         quantityQuoted: q.quantityQuoted,
         convertedUsdPrice: toNumber(q.convertedUsdPrice),
         usdPricePerUnit: toNumber(q.convertedUsdPricePerUnit),
         stockStatus: q.stockStatus,
-        leadTime: q.leadTime,
-        warranty: q.warranty,
-        discount: q.discount,
+        leadTime: fmtMeasure(q.leadTimeValue, q.leadTimeUnit),
+        warranty: fmtMeasure(q.warranty1Value, q.warranty1Unit),
+        discount: fmtMeasure(q.discountValue, q.discountType),
         notes: q.notes,
         justification: q.justification,
         rejectionReason: q.rejectionReason,
@@ -246,4 +241,13 @@ async function scopedStudy(tx: TenantClient, principal: Principal, studyId: stri
 /** Prisma Decimal → number (or null), for the pure builders' plain-number cells. */
 function toNumber(value: Prisma.Decimal | null): number | null {
   return value === null ? null : value.toNumber();
+}
+
+/** Render a structured value+unit pair as the single free-text cell the export
+ *  builders still take (e.g. lead time, warranty, discount). Null when no value —
+ *  a migrated row's legacy free-text lives in its secondary note instead. */
+function fmtMeasure(value: Prisma.Decimal | null, unit: string | null): string | null {
+  if (value === null) return null;
+  const n = value.toNumber();
+  return unit === null ? `${n}` : `${n} ${unit}`;
 }

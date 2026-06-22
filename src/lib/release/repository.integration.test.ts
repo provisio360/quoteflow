@@ -90,24 +90,42 @@ async function seedItem(
   for (let i = 0; i < states.length; i++) {
     const state = states[i];
     const approved = state === "Approved";
-    await prisma.quote.create({
+    // Each seed quote is a one-line Market Quote (ADR-0026): document facts +
+    // conversion on the Market Quote, the per-item state + derived USD on the line.
+    const doc = await prisma.marketQuote.create({
       data: {
-        benchmarkItemId: item.id,
+        studyId,
         clientId,
-        quoteNumber: i + 1,
-        state,
+        country,
+        marketQuoteNumber: i + 1,
         createdById: researcher.userId,
-        competitorBrand: "Caterpillar",
-        dealerName: "Acme",
-        dealerLocation: "Town",
-        price: "1000.0000",
+        sourceName: "Acme",
+        sourceLocation: "Town",
         currency: "EUR",
-        quantityQuoted: 1,
         ...(approved
           ? {
               conversionStatus: "auto",
               exchangeRate: "1.10000000",
               rateDate: new Date("2026-06-01"),
+            }
+          : {}),
+      },
+    });
+    await prisma.quoteLine.create({
+      data: {
+        marketQuoteId: doc.id,
+        benchmarkItemId: item.id,
+        clientId,
+        studyId,
+        country,
+        quoteLineNumber: i + 1,
+        state,
+        createdById: researcher.userId,
+        competitorBrand: "Caterpillar",
+        price: "1000.0000",
+        quantityQuoted: 1,
+        ...(approved
+          ? {
               convertedUsdPrice: "1100.0000",
               convertedUsdPricePerUnit: "1100.0000",
               reviewedById: analyst.userId,

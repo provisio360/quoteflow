@@ -2,20 +2,20 @@ import { describe, it, expect } from "vitest";
 import { auditManualRateOverride, auditActionLabel, type AuditAction } from "./events";
 
 describe("auditManualRateOverride", () => {
-  it("records a Quote-subject manual override carrying the new USD total as after", () => {
+  it("records a Market Quote-subject manual override carrying the new USD total as after", () => {
     expect(
       auditManualRateOverride({
         actorId: "analyst-1",
         studyId: "study-1",
-        quoteId: "quote-1",
+        marketQuoteId: "market-quote-1",
         after: 1375.55,
       }),
     ).toEqual({
       action: "manualRateOverride",
       actorId: "analyst-1",
       studyId: "study-1",
-      subjectType: "Quote",
-      subjectId: "quote-1",
+      subjectType: "MarketQuote",
+      subjectId: "market-quote-1",
       beforeValue: null,
       afterValue: 1375.55,
     });

@@ -49,37 +49,36 @@ export interface CountryReleaseStatus {
  *  competitive data the client's results are built from. */
 export interface ReleasedQuoteView {
   readonly id: string;
-  readonly quoteNumber: number;
+  readonly quoteLineNumber: number;
   readonly country: string;
   readonly clientItemNumber: string;
   readonly itemDescription: string;
   readonly competitorBrand: string | null;
-  readonly dealerName: string | null;
-  readonly dealerLocation: string | null;
-  readonly dealerUrl: string | null;
+  readonly sourceName: string | null;
+  readonly sourceLocation: string | null;
+  readonly sourceUrl: string | null;
   readonly price: string | null;
   readonly currency: string | null;
   readonly quantityQuoted: number | null;
   readonly convertedUsdPrice: string | null;
   readonly convertedUsdPricePerUnit: string | null;
   readonly stockStatus: string | null;
-  readonly leadTime: string | null;
-  readonly warranty: string | null;
-  readonly discount: string | null;
   readonly notes: string | null;
   readonly dateQuoteReceived: Date | null;
 }
 
-/** Fold a Benchmark Item's quote states into the counts the pure gate reads.
- *  In-flight = Draft or Submitted; a Rejected quote is neither approved nor
- *  in-flight, so it never blocks release (ADR-0002). */
+/** Fold a Benchmark Item's Quote Line states into the counts the pure gate reads.
+ *  In-flight = Draft or Submitted; a Rejected line is neither approved nor
+ *  in-flight, so it never blocks release (ADR-0002). With at most one line per item
+ *  per Market Quote, counting Approved lines IS the count of distinct documents with
+ *  an approved line for the item — the Required Quotes measure (ADR-0026). */
 function toItemStatus(item: {
   requiredQuotes: number;
-  quotes: { state: string }[];
+  quoteLines: { state: string }[];
 }): ItemReleaseStatus {
   let approvedCount = 0;
   let inFlightCount = 0;
-  for (const q of item.quotes) {
+  for (const q of item.quoteLines) {
     if (q.state === "Approved") approvedCount += 1;
     else if (q.state === "Draft" || q.state === "Submitted") inFlightCount += 1;
   }
@@ -88,7 +87,7 @@ function toItemStatus(item: {
 
 const ITEM_COUNT_SELECT = {
   requiredQuotes: true,
-  quotes: { select: { state: true } },
+  quoteLines: { select: { state: true } },
 } as const;
 
 /**
@@ -251,30 +250,31 @@ export async function listReleasedQuotesForStudy(
     if (released.length === 0) return [];
     const releasedCountries = released.map((r) => r.country);
 
-    const rows = await tx.quote.findMany({
+    const rows = await tx.quoteLine.findMany({
       where: {
         state: "Approved",
         benchmarkItem: { studyId, country: { in: releasedCountries } },
       },
-      orderBy: [{ benchmarkItem: { country: "asc" } }, { quoteNumber: "asc" }],
+      orderBy: [{ benchmarkItem: { country: "asc" } }, { quoteLineNumber: "asc" }],
       select: {
         id: true,
-        quoteNumber: true,
+        quoteLineNumber: true,
         competitorBrand: true,
-        dealerName: true,
-        dealerLocation: true,
-        dealerUrl: true,
         price: true,
-        currency: true,
         quantityQuoted: true,
         convertedUsdPrice: true,
         convertedUsdPricePerUnit: true,
         stockStatus: true,
-        leadTime: true,
-        warranty: true,
-        discount: true,
         notes: true,
-        dateQuoteReceived: true,
+        marketQuote: {
+          select: {
+            sourceName: true,
+            sourceLocation: true,
+            sourceUrl: true,
+            currency: true,
+            dateQuoteReceived: true,
+          },
+        },
         benchmarkItem: {
           select: { country: true, clientItemNumber: true, itemDescription: true },
         },
@@ -283,25 +283,22 @@ export async function listReleasedQuotesForStudy(
 
     return rows.map((r) => ({
     id: r.id,
-    quoteNumber: r.quoteNumber,
+    quoteLineNumber: r.quoteLineNumber,
     country: r.benchmarkItem.country,
     clientItemNumber: r.benchmarkItem.clientItemNumber,
     itemDescription: r.benchmarkItem.itemDescription,
     competitorBrand: r.competitorBrand,
-    dealerName: r.dealerName,
-    dealerLocation: r.dealerLocation,
-    dealerUrl: r.dealerUrl,
+    sourceName: r.marketQuote.sourceName,
+    sourceLocation: r.marketQuote.sourceLocation,
+    sourceUrl: r.marketQuote.sourceUrl,
     price: decimalString(r.price),
-    currency: r.currency,
+    currency: r.marketQuote.currency,
     quantityQuoted: r.quantityQuoted,
     convertedUsdPrice: decimalString(r.convertedUsdPrice),
     convertedUsdPricePerUnit: decimalString(r.convertedUsdPricePerUnit),
     stockStatus: r.stockStatus,
-    leadTime: r.leadTime,
-    warranty: r.warranty,
-    discount: r.discount,
     notes: r.notes,
-    dateQuoteReceived: r.dateQuoteReceived,
+    dateQuoteReceived: r.marketQuote.dateQuoteReceived,
   }));
   });
 }

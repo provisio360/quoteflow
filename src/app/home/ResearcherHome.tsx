@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Principal } from "@/domains/authz/principal";
-import { countMyRejectedQuotes, countMyDrafts } from "@/lib/quotes/repository";
+import { countMyRejectedLines, countMyDraftLines } from "@/lib/quotes/repository";
 import { countMyAssignedCountries } from "@/lib/assignments/repository";
 import { ZeroState } from "./ZeroState";
 
@@ -15,8 +15,8 @@ import { ZeroState } from "./ZeroState";
 // convention at zero. One launchpad CTA to /studies, the researcher's work.
 export async function ResearcherHome({ principal }: { principal: Principal }) {
   const [rejected, drafts, assignedCountries] = await Promise.all([
-    countMyRejectedQuotes(principal),
-    countMyDrafts(principal),
+    countMyRejectedLines(principal),
+    countMyDraftLines(principal),
     countMyAssignedCountries(principal),
   ]);
 
