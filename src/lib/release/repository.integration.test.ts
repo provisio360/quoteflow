@@ -160,6 +160,13 @@ beforeAll(async () => {
   await seedItem(studyA, "France", 2, ["Approved"]);
   //  Spain — NOT releasable: Required met but a quote is still in-flight.
   await seedItem(studyA, "Spain", 1, ["Approved", "Draft"]);
+  //  Portugal — releasable on the distinct-Market-Quote count (ADR-0026): one
+  //  item needs 2, satisfied by 2 Approved lines that live in 2 distinct Market
+  //  Quotes (seedItem puts each line in its own one-line document). With at most
+  //  one line per item per document (@@unique(marketQuoteId, benchmarkItemId)),
+  //  the Approved-line count IS the count of distinct dealers — so this proves
+  //  Required Quotes is met by N distinct quotes, not N lines in one document.
+  await seedItem(studyA, "Portugal", 2, ["Approved", "Approved"]);
 
   // Study B (other tenant) — a releasable country, used for isolation checks.
   await seedItem(studyB, "Italy", 1, ["Approved"]);
@@ -208,6 +215,7 @@ describe("releaseCountry — the precondition gate", () => {
       reasons: { shortItems: 0, inFlightItems: 0 },
     });
   });
+
 });
 
 describe("release / reopen / re-release and the client read path", () => {
@@ -355,5 +363,24 @@ describe("countReleasableCountries — the home release-backlog signal (#58)", (
     await prisma.notification.deleteMany({ where: { studyId: study } });
     await prisma.auditEvent.deleteMany({ where: { studyId: study } });
     await prisma.study.delete({ where: { id: study } });
+  });
+});
+
+describe("the distinct-Market-Quote release count (#91 / ADR-0026)", () => {
+  it("releases when Required Quotes is met by approved lines in distinct Market Quotes", async () => {
+    // Portugal's one item needs 2 quotes and has 2 Approved lines, each in its
+    // own one-line Market Quote — N distinct dealers priced it. With at most one
+    // line per item per document (@@unique(marketQuoteId, benchmarkItemId)), the
+    // Approved-line count IS the count of distinct documents, so the gate is met
+    // by 2 distinct quotes (not 2 lines in one document) and the country releases,
+    // exposing both approved lines to the client. (Placed last so it doesn't
+    // release studyA before the earlier tests' "nothing released yet" assumptions.)
+    expect(await releaseCountry(analyst, studyA, "Portugal")).toEqual({ releasable: true });
+    const row = await prisma.countryRelease.findUnique({
+      where: { studyId_country: { studyId: studyA, country: "Portugal" } },
+    });
+    expect(row?.state).toBe("released");
+    const visible = await listReleasedQuotesForStudy(clientUserA, studyA);
+    expect(visible.filter((q) => q.country === "Portugal")).toHaveLength(2);
   });
 });
