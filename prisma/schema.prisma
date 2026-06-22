@@ -93,8 +93,9 @@ model User {
   countryAssignments CountryAssignment[] @relation("AssignedResearcher")
   assignmentsMade    CountryAssignment[] @relation("AssignedBy")
   itemsAsPrimary     BenchmarkItem[]     @relation("PrimaryResearcher")
-  quotesCreated      Quote[]             @relation("QuoteCreatedBy")
-  quotesReviewed     Quote[]             @relation("QuoteReviewedBy")
+  marketQuotesCreated MarketQuote[]      @relation("MarketQuoteCreatedBy")
+  quoteLinesCreated   QuoteLine[]        @relation("QuoteLineCreatedBy")
+  quoteLinesReviewed  QuoteLine[]        @relation("QuoteLineReviewedBy")
   countriesReleased  CountryRelease[]    @relation("ReleasedBy")
   countriesReopened  CountryRelease[]    @relation("ReopenedBy")
   exportsRun         ExportAudit[]       @relation("ExportRunBy")
@@ -215,6 +216,8 @@ model Study {
   benchmarkItems     BenchmarkItem[]
   countryAssignments CountryAssignment[]
   countryReleases    CountryRelease[]
+  marketQuotes         MarketQuote[]
+  quoteNumberSequences QuoteNumberSequence[]
 
   @@index([clientId])
   @@index([createdById])
@@ -284,17 +287,12 @@ model BenchmarkItem {
   // keeps a lead from pointing at a vanished user; #25 nulls it on Country
   // unassignment.
   primaryResearcherId  String?
-  // Monotonic per-item allocator for Quote Numbers (ADR-0010). Incremented
-  // atomically as each Quote (Draft) is created and never reset, so numbers are
-  // sequential, gap-tolerant (a hard-deleted Draft leaves a permanent gap), and
-  // never reused. Starts at 0; the first Quote gets 1.
-  quoteSeq             Int      @default(0)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   study             Study   @relation(fields: [studyId], references: [id], onDelete: Cascade)
   primaryResearcher User?   @relation("PrimaryResearcher", fields: [primaryResearcherId], references: [id], onDelete: Restrict)
-  quotes            Quote[]
+  quoteLines        QuoteLine[]
 
   @@unique([studyId, country, clientItemNumberKey])
   @@index([studyId])
@@ -343,16 +341,18 @@ model CountryAssignment {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Quote (#8) — one competitive data point a Researcher collects against a
-// Benchmark Item. See CONTEXT.md (Quote, Draft, Quote Lifecycle, Quote Number),
-// ADR-0010 (per-item monotonic numbering) and ADR-0011 (Draft is private to its
-// author). The Draft→Submitted lifecycle and submit-time validation live in the
-// pure core src/domains/quotes/lifecycle; this is only the row.
+// Market Quote + Quote Line (#87) — the two-level aggregate that replaces the
+// flat Quote (ADR-0026). A Market Quote is one dealer's quotation DOCUMENT (one
+// source, date, currency, and the single pinned conversion); it HAS MANY Quote
+// Lines, one per Benchmark Item it prices. The Market Quote has NO lifecycle
+// state — state lives on the line. Numbering is two per-(study, country) counters
+// held on QuoteNumberSequence. See CONTEXT.md (Market Quote, Quote Line, Market
+// Quote Number, Quote Line Number) and ADRs 0026/0010(superseded)/0011/0021.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The Quote Lifecycle states (CONTEXT.md). All four exist from day one; only
-/// Draft→Submitted is a legal transition in v1 (the analyst verdicts land in
-/// #11). The enum is the persisted mirror of QuoteState in the pure core.
+/// The Quote Lifecycle states (CONTEXT.md), carried on the Quote LINE (ADR-0026 —
+/// the Market Quote has none). Draft→Submitted is the only researcher transition;
+/// analyst verdicts (#11) move it on. The persisted mirror of QuoteState.
 enum QuoteState {
   Draft
   Submitted
@@ -360,73 +360,144 @@ enum QuoteState {
   Rejected
 }
 
-/// Where a Quote's currency conversion stands (CONTEXT.md: Conversion Status,
-/// ADR-0004). The column is NULLABLE; null = "unconverted" (a Draft, before
-/// conversion is attempted). `pending` = provider unreachable or no rate within
-/// the look-back window (no USD figures yet; blocks approval in #11); `auto` =
-/// a provider rate pinned; `manual` = analyst override for an uncovered currency
-/// (sticky — the retry job never overwrites it). Pure mirror of ConversionStatus
-/// in src/domains/quotes/conversion.
+/// Where a MARKET QUOTE's currency conversion stands — one status for the whole
+/// document, not per line (CONTEXT.md: Conversion Status, ADR-0004/0026). NULLABLE;
+/// null = unconverted (lines still Draft). `pending` = submitted, awaiting the
+/// worker (no USD figures, blocks approval of every line); `auto` = a provider rate
+/// pinned; `manual` = analyst override (sticky). Pure mirror of ConversionStatus.
 enum ConversionStatus {
   pending
   auto
   manual
 }
 
-/// A Quote against a Benchmark Item. The competitive fields are ALL nullable: a
-/// Draft saves with partial data, and "required to submit" is enforced only by
-/// the pure lifecycle core at the Draft→Submitted transition — never by a DB
-/// constraint (issue #8). The currency-conversion columns (#9) are also nullable
-/// and pin a HISTORICAL, immutable conversion (ADR-0004): `exchangeRate` (USD per
-/// 1 unit of `currency`) and `rateDate` (the date that rate is actually for — the
-/// nearest prior business day on a closed quote date), with `convertedUsdPrice`
-/// and `convertedUsdPricePerUnit` DERIVED from them, never hand-entered.
-/// `conversionStatus` is null until conversion runs at submit (wired in #11).
-/// `price` is the dealer's final quoted price in `currency` (local). `quoteNumber`
-/// is the
-/// per-item label allocated from BenchmarkItem.quoteSeq (ADR-0010); the @@unique
-/// is its backstop. `createdById` is the author — the only one who may edit,
-/// submit, or delete this Quote (owner-only writes), and the sole reader of it
-/// while it is a Draft (ADR-0011).
-model Quote {
-  id              String     @id @default(cuid())
-  benchmarkItemId String
-  // Denormalized owning tenant — the RLS backstop column (ADR-0021). Immutable,
-  // copied from the parent Benchmark Item on insert; verified by WITH CHECK.
-  clientId        String
-  quoteNumber     Int
-  state           QuoteState @default(Draft)
-  createdById     String
+/// The researcher's per-line confidence in a Quote Line (CONTEXT.md: Quote Line).
+/// Per-line (may vary across a document) and defaulted at entry; nullable — a
+/// migrated walking-skeleton line has no recorded assessment (#87).
+enum ConfidenceCode {
+  High
+  Moderate
+  Low
+}
 
-  competitorBrand   String?
-  dealerName        String?
-  dealerLocation    String?
-  dealerUrl         String?
-  price             Decimal?  @db.Decimal(14, 4)
+/// One dealer's quotation document (ADR-0026): the facts shared by all its lines —
+/// source name/location/url, the Date Quote Received, the local currency, and the
+/// single pinned conversion (`exchangeRate`/`rateDate`/`conversionStatus`, null
+/// until the document is submitted; pinned per document in a later slice). It has
+/// NO lifecycle state of its own. `marketQuoteNumber` is the per-(study, country)
+/// document label (restarts per market); the @@unique is its backstop. `createdById`
+/// is the single author who collected the document — only they add/edit/submit its
+/// lines. `studyId`/`country` scope the numbering and tenant; `clientId` is the RLS
+/// backstop (ADR-0021), copied from the study on insert and verified by WITH CHECK.
+model MarketQuote {
+  id          String   @id @default(cuid())
+  studyId     String
+  // Denormalized owning tenant — the RLS backstop column (ADR-0021), copied from
+  // the parent study on insert; verified by WITH CHECK.
+  clientId    String
+  country     String
+  marketQuoteNumber Int
+  createdById String
+
+  sourceName        String?
+  sourceLocation    String?
+  sourceUrl         String?
   currency          String?
-  quantityQuoted    Int?
-  stockStatus       String?
-  leadTime          String?
-  warranty          String?
-  discount          String?
-  notes             String?
   dateQuoteReceived DateTime?
 
-  // Pinned currency conversion (#9 / ADR-0004). Null until conversion runs.
-  exchangeRate             Decimal?          @db.Decimal(18, 8)
-  rateDate                 DateTime?
-  convertedUsdPrice        Decimal?          @db.Decimal(14, 4)
-  convertedUsdPricePerUnit Decimal?          @db.Decimal(14, 4)
-  conversionStatus         ConversionStatus?
+  // The single pinned conversion for the whole document (#9 / ADR-0004/0026). Null
+  // until the document is submitted; one rate drives every line's derived USD.
+  exchangeRate     Decimal?          @db.Decimal(18, 8)
+  rateDate         DateTime?
+  conversionStatus ConversionStatus?
 
-  // Analyst review (#11 / ADR-0014). `submittedAt` stamps the Draft→Submitted
-  // transition for FIFO queue ordering (stable under the conversion worker's
-  // writes, unlike updatedAt); cleared on revise and re-stamped on resubmit.
-  // `rejectionReason` carries the analyst's reason back to the author and is
-  // cleared on resubmit. `reviewedById`/`reviewedAt` record the latest verdict's
-  // analyst and time (full history is the audit slice #16/#42), also cleared on
-  // resubmit. `justification` is the author's explanation for a flagged price; it
-  // PERSISTS across resubmit (the analyst must read it to approve).
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  study      Study       @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  createdBy  User        @relation("MarketQuoteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  quoteLines QuoteLine[]
+
+  @@unique([studyId, country, marketQuoteNumber])
+  @@index([studyId])
+  @@index([createdById])
+  @@index([clientId])
+  @@map("market_quote")
+}
+
+/// One competitive data point within a Market Quote (ADR-0026): the competitor's
+/// equivalent part priced against one Benchmark Item, CARRYING THE LIFECYCLE
+/// `state`. Per-item facts are all nullable (a Draft saves partial data; required-
+/// ness is enforced only by the pure lifecycle core at submit). `quoteLineNumber`
+/// is the stored, stable flat per-(study, country) handle ("Row 87"); the @@unique
+/// on (studyId, country, quoteLineNumber) is its backstop, and @@unique
+/// (marketQuoteId, benchmarkItemId) enforces exactly one line per item per document.
+/// `studyId`/`country`/`clientId`/`createdById` are denormalized scoping scalars
+/// copied from the parent document on insert — `clientId` is the RLS backstop
+/// (ADR-0021, WITH CHECK), `createdById` keeps owner-only writes and Draft-privacy
+/// reads (ADR-0011) join-free. The derived USD figures live here (each from the
+/// document's one rate); the rate/status itself lives on the MarketQuote.
+model QuoteLine {
+  id            String     @id @default(cuid())
+  marketQuoteId String
+  benchmarkItemId String
+  // Denormalized scoping scalars (ADR-0026), copied from the parent document on
+  // insert. `clientId` is the RLS backstop (ADR-0021); `studyId`/`country` scope
+  // the Quote Line Number; `createdById` is the document's author.
+  clientId      String
+  studyId       String
+  country       String
+  createdById   String
+  quoteLineNumber Int
+  state         QuoteState @default(Draft)
+
+  // Competitor identity + descriptive part fields. Brand is per-line (defaulted at
+  // entry, may vary across a document).
+  competitorBrand          String?
+  competitorPartNumber     String?
+  competitorPartDescription String?
+
+  price          Decimal? @db.Decimal(14, 4)
+  quantityQuoted Int?
+  stockStatus    String?
+
+  // Structured lead time (value + unit) — replaces the flat free-text `leadTime`.
+  leadTimeValue Decimal? @db.Decimal(14, 4)
+  leadTimeUnit  String?
+
+  // Up to two warranties, each a value + unit pair.
+  warranty1Value Decimal? @db.Decimal(14, 4)
+  warranty1Unit  String?
+  warranty2Value Decimal? @db.Decimal(14, 4)
+  warranty2Unit  String?
+
+  // Discount: available + applied flags, value + type.
+  discountAvailable Boolean?
+  discountApplied   Boolean?
+  discountValue     Decimal? @db.Decimal(14, 4)
+  discountType      String?
+
+  // Landed cost: a flag the price already includes it, plus a free-text note.
+  landedCostIncluded Boolean?
+  landedCostNote     String?
+
+  // Two free-text notes. On migration the old `notes` maps to `notes` 1:1 and the
+  // legacy leadTime/warranty/discount strings fold into `notesSecondary` (#87).
+  notes          String?
+  notesSecondary String?
+
+  confidenceCode ConfidenceCode?
+  paperQuote     Boolean         @default(false)
+
+  // Derived USD figures (#9 / ADR-0004/0026), each computed from the parent
+  // document's one pinned rate; never hand-entered.
+  convertedUsdPrice        Decimal? @db.Decimal(14, 4)
+  convertedUsdPricePerUnit Decimal? @db.Decimal(14, 4)
+
+  // Analyst review (#11 / ADR-0014), per line. `submittedAt` stamps FIFO position;
+  // `rejectionReason` carries the analyst's reason (cleared on resubmit);
+  // `reviewedById`/`reviewedAt` record the latest verdict; `justification` persists
+  // across resubmit (the analyst must read it to approve a flagged line).
   submittedAt     DateTime?
   rejectionReason String?
   reviewedById    String?
@@ -436,16 +507,46 @@ model Quote {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  marketQuote   MarketQuote   @relation(fields: [marketQuoteId], references: [id], onDelete: Cascade)
   benchmarkItem BenchmarkItem @relation(fields: [benchmarkItemId], references: [id], onDelete: Cascade)
-  createdBy     User          @relation("QuoteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  reviewedBy    User?         @relation("QuoteReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  createdBy     User          @relation("QuoteLineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewedBy    User?         @relation("QuoteLineReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
 
-  @@unique([benchmarkItemId, quoteNumber])
+  @@unique([marketQuoteId, benchmarkItemId])
+  @@unique([studyId, country, quoteLineNumber])
+  @@index([marketQuoteId])
   @@index([benchmarkItemId])
   @@index([createdById])
   @@index([reviewedById])
   @@index([clientId])
-  @@map("quote")
+  @@map("quote_line")
+}
+
+/// The per-(study, country) home for the two monotonic counters that supersede
+/// ADR-0010's per-item `quoteSeq` (ADR-0026). There is no guaranteed row at this
+/// grain (a CountryRelease exists only after release), so this lightweight row is
+/// created LAZILY on first allocation and incremented atomically with a single
+/// `INSERT … ON CONFLICT (studyId, country) DO UPDATE SET seq = seq + 1 RETURNING`
+/// — the maybe-absent-row generalization of ADR-0010's atomic-increment idiom.
+/// `marketQuoteSeq` restarts per market; `quoteLineSeq` is the flat 1..N handle.
+/// Gaps are intended (a hard-deleted document/line is never renumbered). `clientId`
+/// is the RLS backstop (ADR-0021).
+model QuoteNumberSequence {
+  id        String @id @default(cuid())
+  studyId   String
+  clientId  String
+  country   String
+  marketQuoteSeq Int @default(0)
+  quoteLineSeq   Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  study Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  @@unique([studyId, country])
+  @@index([clientId])
+  @@map("quote_number_sequence")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -562,7 +663,12 @@ enum AuditAction {
 /// integrity is enforced app-layer-first (ADR-0008), as with the country strings
 /// on CountryAssignment/CountryRelease.
 enum AuditSubjectType {
+  // `Quote` is RETAINED as a legacy value (ADR-0026): pre-split history rows keep
+  // it, and because the migration preserves line ids, their subjectId still
+  // resolves. New events use MarketQuote (submit) / QuoteLine (approve/reject).
   Quote
+  MarketQuote
+  QuoteLine
   BenchmarkItem
   CountryRelease
   CountryAssignment
@@ -615,7 +721,11 @@ enum NotificationKind {
 /// What a Notification links back to. Polymorphic plain-string subjectId, like
 /// AuditEvent — no FK (the source may change or be revised after the snapshot).
 enum NotificationSubjectType {
+  // `Quote` retained as a legacy value (ADR-0026); pre-split rejection
+  // notifications keep it and still resolve (line ids are preserved). New
+  // rejection notifications target QuoteLine.
   Quote
+  QuoteLine
   CountryRelease
 }
 

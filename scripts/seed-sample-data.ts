@@ -143,25 +143,60 @@ async function main() {
     ],
   });
 
-  // ── Quotes in a spread of lifecycle states ──────────────────────────────
-  // Helper to allocate a per-item quote number atomically (mirrors ADR-0010).
+  // ── Quotes in a spread of lifecycle states (ADR-0026) ───────────────────
+  // Each seed call becomes a one-line Market Quote (the by-row case): document
+  // facts (source/date/currency/conversion) on the Market Quote, per-item facts +
+  // state on the Quote Line. Numbers run 1..N per (study, country), held in memory
+  // since the seed is single-threaded.
+  const DOC_KEYS = new Set(["currency", "dateQuoteReceived", "exchangeRate", "rateDate", "conversionStatus"]);
+  const RENAME: Record<string, string> = {
+    dealerName: "sourceName",
+    dealerLocation: "sourceLocation",
+    dealerUrl: "sourceUrl",
+  };
+  const seqByMarket = new Map<string, number>();
+
   async function addQuote(
     itemId: string,
     createdById: string,
     data: Record<string, unknown>,
   ) {
-    const item = await prisma.benchmarkItem.update({
+    const item = await prisma.benchmarkItem.findUniqueOrThrow({
       where: { id: itemId },
-      data: { quoteSeq: { increment: 1 } },
-      select: { quoteSeq: true },
+      select: { studyId: true, country: true },
     });
-    return prisma.quote.create({
+    const key = `${item.studyId}|${item.country}`;
+    const n = (seqByMarket.get(key) ?? 0) + 1;
+    seqByMarket.set(key, n);
+
+    const docData: Record<string, unknown> = {};
+    const lineData: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (k in RENAME) docData[RENAME[k]] = v;
+      else if (DOC_KEYS.has(k)) docData[k] = v;
+      else lineData[k] = v;
+    }
+
+    const doc = await prisma.marketQuote.create({
       data: {
+        studyId: item.studyId,
+        clientId: client.id,
+        country: item.country,
+        marketQuoteNumber: n,
+        createdById,
+        ...docData,
+      },
+    });
+    return prisma.quoteLine.create({
+      data: {
+        marketQuoteId: doc.id,
         benchmarkItemId: itemId,
         clientId: client.id,
-        quoteNumber: item.quoteSeq,
+        studyId: item.studyId,
+        country: item.country,
         createdById,
-        ...data,
+        quoteLineNumber: n,
+        ...lineData,
       },
     });
   }

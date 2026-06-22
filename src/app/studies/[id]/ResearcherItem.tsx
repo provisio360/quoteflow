@@ -4,11 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { selfAssignBenchmarkItemAction } from "@/lib/benchmark-items/actions";
 import {
-  deleteDraftQuoteAction,
-  reviseQuoteAction,
-  submitQuoteAction,
+  deleteDraftLineAction,
+  reviseLineAction,
+  submitLineAction,
 } from "@/lib/quotes/actions";
-import type { QuoteView } from "@/lib/quotes/repository";
+import type { QuoteLineView } from "@/lib/quotes/repository";
 import type { TransitionResult } from "@/domains/quotes/lifecycle";
 import { QuoteEditor } from "./QuoteEditor";
 import {
@@ -57,12 +57,14 @@ function Guidance({ label, value }: { label: string; value: string | null }) {
 export function ResearcherItem({
   item,
   mode,
+  studyId,
   quotes,
   myUserId,
 }: {
   item: Item;
   mode: ItemMode;
-  quotes: QuoteView[];
+  studyId: string;
+  quotes: QuoteLineView[];
   myUserId: string;
 }) {
   const router = useRouter();
@@ -119,8 +121,8 @@ export function ResearcherItem({
                 const can = quoteAffordances(q, myUserId);
                 return (
                   <li key={q.id} style={{ padding: "0.25rem 0" }}>
-                    #{q.quoteNumber} · <strong>{q.state}</strong> · {q.competitorBrand ?? "—"} / {q.dealerName ?? "—"}{" "}
-                    {q.price ?? "—"} {q.currency ?? ""} — {q.authorName}
+                    #{q.quoteLineNumber} · <strong>{q.state}</strong> · {q.competitorBrand ?? "—"}{" "}
+                    {q.price ?? "—"} — {q.authorName}
                     {(can.canEdit || can.canSubmit || can.canDelete) && (
                       <span style={{ marginLeft: "0.4rem" }}>
                         {can.canEdit && (
@@ -129,12 +131,12 @@ export function ResearcherItem({
                           </button>
                         )}
                         {can.canSubmit && (
-                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => submitQuoteAction(q.id))}>
+                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => submitLineAction(q.id))}>
                             Submit
                           </button>
                         )}
                         {can.canDelete && (
-                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => deleteDraftQuoteAction(q.id))}>
+                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => deleteDraftLineAction(q.id))}>
                             Delete
                           </button>
                         )}
@@ -142,7 +144,7 @@ export function ResearcherItem({
                     )}
                     {can.canRevise && (
                       <span style={{ marginLeft: "0.4rem" }}>
-                        <button type="button" style={btn} disabled={pending} onClick={() => run(() => reviseQuoteAction(q.id))}>
+                        <button type="button" style={btn} disabled={pending} onClick={() => run(() => reviseLineAction(q.id))}>
                           Revise
                         </button>
                       </span>
@@ -152,8 +154,8 @@ export function ResearcherItem({
                     )}
                     {can.canEdit && editingId === q.id && (
                       <QuoteEditor
-                        mode={{ type: "edit", quoteId: q.id }}
-                        initial={initialFromQuote(q)}
+                        mode={{ type: "edit", lineId: q.id }}
+                        initial={initialFromLine(q)}
                         onDone={() => setEditingId(null)}
                       />
                     )}
@@ -165,7 +167,10 @@ export function ResearcherItem({
 
           {mode === "mine" &&
             (adding ? (
-              <QuoteEditor mode={{ type: "create", itemId: item.id }} onDone={() => setAdding(false)} />
+              <QuoteEditor
+                mode={{ type: "create", studyId, country: item.country, itemId: item.id }}
+                onDone={() => setAdding(false)}
+              />
             ) : (
               <button type="button" style={{ ...btn, marginTop: "0.3rem" }} onClick={() => setAdding(true)}>
                 + Add quote
@@ -183,24 +188,18 @@ export function ResearcherItem({
   );
 }
 
-/** Prefill the editor from an existing draft (Decimal/Date already marshalled to
- *  strings on QuoteView, except quantity/date which we format for the inputs). */
-function initialFromQuote(q: QuoteView): Record<string, string> {
-  const date = q.dateQuoteReceived ? new Date(q.dateQuoteReceived).toISOString().slice(0, 10) : "";
+/** Prefill the line editor from an existing Draft line (Decimal already marshalled
+ *  to a string on QuoteLineView; quantity formatted for the input). The dealer/
+ *  date/currency live on the parent document, not the line, so they are not here. */
+function initialFromLine(q: QuoteLineView): Record<string, string> {
   return {
     competitorBrand: q.competitorBrand ?? "",
-    dealerName: q.dealerName ?? "",
-    dealerLocation: q.dealerLocation ?? "",
-    dealerUrl: q.dealerUrl ?? "",
-    currency: q.currency ?? "",
+    competitorPartNumber: q.competitorPartNumber ?? "",
+    competitorPartDescription: q.competitorPartDescription ?? "",
     stockStatus: q.stockStatus ?? "",
-    leadTime: q.leadTime ?? "",
-    warranty: q.warranty ?? "",
-    discount: q.discount ?? "",
     notes: q.notes ?? "",
     justification: q.justification ?? "",
     price: q.price ?? "",
     quantityQuoted: q.quantityQuoted === null ? "" : String(q.quantityQuoted),
-    dateQuoteReceived: date,
   };
 }

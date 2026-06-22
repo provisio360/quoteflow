@@ -8,8 +8,10 @@
 /** The two v1 events that push (CONTEXT.md: Notification). */
 export type NotificationKind = "quoteRejected" | "countryReleased";
 
-/** What a Notification links back to (CONTEXT.md: Notification subject). */
-export type NotificationSubjectType = "Quote" | "CountryRelease";
+/** What a Notification links back to (CONTEXT.md: Notification subject). `Quote`
+ *  is a LEGACY value retained for pre-split rejection notifications (ADR-0026);
+ *  new rejections target the Quote Line that returned to its author. */
+export type NotificationSubjectType = "Quote" | "QuoteLine" | "CountryRelease";
 
 /** One push signal ready to persist. `reason` snapshots a rejection's reason
  *  (ephemeral — cleared on resubmit); `country` snapshots a release's country;
@@ -24,21 +26,21 @@ export interface NotificationInput {
   readonly country: string | null;
 }
 
-/** A Quote was rejected — notify its author (createdById, not necessarily the
- *  Primary Researcher; CONTEXT.md: Approved / Rejected). Snapshots the rejection
- *  reason, which the source Quote clears on resubmit. */
+/** A Quote Line was rejected — notify its author (the document's createdById, not
+ *  necessarily the Primary Researcher; CONTEXT.md: Approved / Rejected). Snapshots
+ *  the rejection reason, which the source line clears on resubmit. */
 export function notifyQuoteRejected(input: {
   recipientId: string;
   studyId: string;
-  quoteId: string;
+  lineId: string;
   reason: string;
 }): NotificationInput {
   return {
     recipientId: input.recipientId,
     kind: "quoteRejected",
     studyId: input.studyId,
-    subjectType: "Quote",
-    subjectId: input.quoteId,
+    subjectType: "QuoteLine",
+    subjectId: input.lineId,
     reason: input.reason,
     country: null,
   };

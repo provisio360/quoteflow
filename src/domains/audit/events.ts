@@ -36,9 +36,14 @@ export function auditActionLabel(action: AuditAction): string {
   return AUDIT_ACTION_LABELS[action];
 }
 
-/** The kind of entity an event is about (CONTEXT.md: Audit Event subject). */
+/** The kind of entity an event is about (CONTEXT.md: Audit Event subject).
+ *  `Quote` is a LEGACY value retained for pre-split history (ADR-0026); new
+ *  events target the Market Quote (manual-rate) or the Quote Line
+ *  (submit/approve/reject) of the two-level aggregate. */
 export type AuditSubjectType =
   | "Quote"
+  | "MarketQuote"
+  | "QuoteLine"
   | "BenchmarkItem"
   | "CountryRelease"
   | "CountryAssignment";
@@ -57,18 +62,19 @@ export interface AuditEvent {
 }
 
 /** A Quote Lifecycle move by its actor — submit (researcher), or approve/reject
- *  (analyst verdict). Subject is the Quote; no monetary delta (the price isn't
- *  changed by these moves). One builder for the three because they share shape. */
+ *  (analyst verdict). Subject is the Quote LINE that moved (ADR-0026 — state is
+ *  per line); no monetary delta (the price isn't changed by these moves). One
+ *  builder for the three because they share shape. */
 export function auditQuoteLifecycle(
   action: "submit" | "approve" | "reject",
-  input: { actorId: string; studyId: string; quoteId: string },
+  input: { actorId: string; studyId: string; lineId: string },
 ): AuditEvent {
   return {
     action,
     actorId: input.actorId,
     studyId: input.studyId,
-    subjectType: "Quote",
-    subjectId: input.quoteId,
+    subjectType: "QuoteLine",
+    subjectId: input.lineId,
     beforeValue: null,
     afterValue: null,
   };
@@ -129,23 +135,25 @@ export function auditRelease(
   };
 }
 
-/** An analyst hand-set a Quote's Exchange Rate for a currency the provider doesn't
- *  cover (#70 / ADR-0023). Subject is the Quote. Carries the before/after monetary
- *  pair: `before` is null (a pending quote had no USD figure) and `after` is the
- *  newly-pinned Converted USD Price (the total) — not the raw rate, whose precision
- *  exceeds this Decimal(14,4) channel; the rate lives on the Quote row itself. */
+/** An analyst hand-set a Market Quote's Exchange Rate for a currency the provider
+ *  doesn't cover (#70 / ADR-0023/0026). The rate now lives on the DOCUMENT (one
+ *  rate for all its lines), so the subject is the Market Quote. Carries the
+ *  before/after monetary pair: `before` is null (a pending document had no USD
+ *  figure) and `after` is the newly-pinned document-total Converted USD Price —
+ *  not the raw rate, whose precision exceeds this Decimal(14,4) channel; the rate
+ *  lives on the Market Quote row itself. */
 export function auditManualRateOverride(input: {
   actorId: string;
   studyId: string;
-  quoteId: string;
+  marketQuoteId: string;
   after: number;
 }): AuditEvent {
   return {
     action: "manualRateOverride",
     actorId: input.actorId,
     studyId: input.studyId,
-    subjectType: "Quote",
-    subjectId: input.quoteId,
+    subjectType: "MarketQuote",
+    subjectId: input.marketQuoteId,
     beforeValue: null,
     afterValue: input.after,
   };

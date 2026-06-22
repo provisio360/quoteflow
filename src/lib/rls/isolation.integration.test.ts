@@ -68,8 +68,14 @@ beforeAll(async () => {
         requiredQuotes: 1,
       },
     });
-    await owner.quote.create({
-      data: { benchmarkItemId: item.id, clientId: tenant, quoteNumber: 1, createdById: u.id },
+    const doc = await owner.marketQuote.create({
+      data: { studyId: study.id, clientId: tenant, country: "US", marketQuoteNumber: 1, createdById: u.id },
+    });
+    await owner.quoteLine.create({
+      data: {
+        marketQuoteId: doc.id, benchmarkItemId: item.id, clientId: tenant,
+        studyId: study.id, country: "US", quoteLineNumber: 1, createdById: u.id,
+      },
     });
   }
 });
@@ -135,9 +141,9 @@ describe.skipIf(!enabled)("RLS tenant isolation backstop", () => {
     expect(tenants.has(tenantB)).toBe(true);
   });
 
-  it("a child table (quote) isolates by its own denormalized clientId", async () => {
+  it("a child table (quote_line) isolates by its own denormalized clientId", async () => {
     const rows = await asAppRole({ tenantId: tenantA }, (tx) =>
-      tx.$queryRawUnsafe<{ id: string; clientId: string }[]>('SELECT id, "clientId" FROM quote'),
+      tx.$queryRawUnsafe<{ id: string; clientId: string }[]>('SELECT id, "clientId" FROM quote_line'),
     );
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.clientId === tenantA)).toBe(true);

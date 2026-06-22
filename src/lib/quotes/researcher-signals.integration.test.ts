@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
-import { countMyRejectedQuotes, countMyDrafts, QuoteAccessError } from "./repository";
+import { countMyRejectedLines, countMyDraftLines, QuoteAccessError } from "./repository";
 import { countMyAssignedCountries } from "@/lib/assignments/repository";
 import { AssignmentAccessError } from "@/lib/assignments/repository";
 import type { ClientPrincipal, InternalPrincipal } from "@/domains/authz/principal";
@@ -43,11 +43,28 @@ async function seedQuote(
   authorId: string,
   state: "Draft" | "Submitted" | "Approved" | "Rejected",
 ): Promise<void> {
-  await prisma.quote.create({
+  const n = ++quoteSeq;
+  const item = await prisma.benchmarkItem.findUniqueOrThrow({
+    where: { id: itemId },
+    select: { studyId: true, country: true },
+  });
+  const doc = await prisma.marketQuote.create({
     data: {
+      studyId: item.studyId,
+      clientId: tenantId,
+      country: item.country,
+      marketQuoteNumber: n,
+      createdById: authorId,
+    },
+  });
+  await prisma.quoteLine.create({
+    data: {
+      marketQuoteId: doc.id,
       benchmarkItemId: itemId,
       clientId: tenantId,
-      quoteNumber: ++quoteSeq,
+      studyId: item.studyId,
+      country: item.country,
+      quoteLineNumber: n,
       state,
       createdById: authorId,
     },
@@ -87,7 +104,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.quote.deleteMany({ where: { clientId: tenantId } });
+  await prisma.quoteLine.deleteMany({ where: { clientId: tenantId } });
+  await prisma.marketQuote.deleteMany({ where: { clientId: tenantId } });
+  await prisma.quoteNumberSequence.deleteMany({ where: { clientId: tenantId } });
   await prisma.countryAssignment.deleteMany({ where: { clientId: tenantId } });
   await prisma.benchmarkItem.deleteMany({ where: { clientId: tenantId } });
   await prisma.study.deleteMany({ where: { clientId: tenantId } });
@@ -97,8 +116,8 @@ afterAll(async () => {
 
 describe("Researcher home signals (#59)", () => {
   it("counts only my own Rejected and Draft quotes, ignoring other states and other authors", async () => {
-    expect(await countMyRejectedQuotes(me)).toBe(0);
-    expect(await countMyDrafts(me)).toBe(0);
+    expect(await countMyRejectedLines(me)).toBe(0);
+    expect(await countMyDraftLines(me)).toBe(0);
 
     await seedQuote(me.userId, "Rejected");
     await seedQuote(me.userId, "Rejected");
@@ -110,8 +129,8 @@ describe("Researcher home signals (#59)", () => {
     await seedQuote(other.userId, "Rejected");
     await seedQuote(other.userId, "Draft");
 
-    expect(await countMyRejectedQuotes(me)).toBe(2);
-    expect(await countMyDrafts(me)).toBe(1);
+    expect(await countMyRejectedLines(me)).toBe(2);
+    expect(await countMyDraftLines(me)).toBe(1);
   });
 
   it("counts each (study, country) assignment once — same country in two studies counts twice", async () => {
@@ -136,8 +155,8 @@ describe("Researcher home signals (#59)", () => {
 
   it("rejects a client user — researcher signals are internal-only", async () => {
     const client: ClientPrincipal = { kind: "client", userId: randomUUID(), tenantId };
-    await expect(countMyRejectedQuotes(client)).rejects.toBeInstanceOf(QuoteAccessError);
-    await expect(countMyDrafts(client)).rejects.toBeInstanceOf(QuoteAccessError);
+    await expect(countMyRejectedLines(client)).rejects.toBeInstanceOf(QuoteAccessError);
+    await expect(countMyDraftLines(client)).rejects.toBeInstanceOf(QuoteAccessError);
     await expect(countMyAssignedCountries(client)).rejects.toBeInstanceOf(
       AssignmentAccessError,
     );

@@ -133,10 +133,16 @@ describe("listAuditEventsForStudy — subject label resolution (issue #72 Q2)", 
         itemDescription: "Pump", clientSourceUnit: "X1", requiredQuotes: 3,
       },
     });
-    const quote = await prisma.quote.create({
+    const doc = await prisma.marketQuote.create({
       data: {
-        benchmarkItemId: item.id, clientId: tenant, quoteNumber: 7,
+        studyId, clientId: tenant, country: "Germany", marketQuoteNumber: 1,
         createdById: researcher.userId,
+      },
+    });
+    const quote = await prisma.quoteLine.create({
+      data: {
+        marketQuoteId: doc.id, benchmarkItemId: item.id, clientId: tenant,
+        studyId, country: "Germany", quoteLineNumber: 7, createdById: researcher.userId,
       },
     });
     const release = await prisma.countryRelease.create({
@@ -153,24 +159,25 @@ describe("listAuditEventsForStudy — subject label resolution (issue #72 Q2)", 
     });
     const danglingId = randomUUID();
 
-    await seedEvent({ subjectType: "Quote", subjectId: quote.id, createdAt: new Date("2026-02-05") });
+    await seedEvent({ subjectType: "QuoteLine", subjectId: quote.id, createdAt: new Date("2026-02-05") });
     await seedEvent({ subjectType: "BenchmarkItem", subjectId: item.id, createdAt: new Date("2026-02-04") });
     await seedEvent({ subjectType: "CountryRelease", subjectId: release.id, createdAt: new Date("2026-02-03") });
     await seedEvent({ subjectType: "CountryAssignment", subjectId: assignment.id, createdAt: new Date("2026-02-02") });
-    await seedEvent({ subjectType: "Quote", subjectId: danglingId, createdAt: new Date("2026-02-01") });
+    await seedEvent({ subjectType: "QuoteLine", subjectId: danglingId, createdAt: new Date("2026-02-01") });
 
     const labels = (await listAuditEventsForStudy(analyst, studyId)).map((e) => e.subjectLabel);
 
     // researcher's display name is "Researcher" (set in makeUser).
     expect(labels).toEqual([
-      "Quote 7",
+      "Line 7",
       "PN-42 · Germany",
       "France",
       "Researcher · Spain",
       danglingId,
     ]);
 
-    await prisma.quote.deleteMany({ where: { benchmarkItemId: item.id } });
+    await prisma.quoteLine.deleteMany({ where: { benchmarkItemId: item.id } });
+    await prisma.marketQuote.deleteMany({ where: { id: doc.id } });
     await prisma.benchmarkItem.deleteMany({ where: { id: item.id } });
     await prisma.countryRelease.deleteMany({ where: { id: release.id } });
     await prisma.countryAssignment.deleteMany({ where: { id: assignment.id } });

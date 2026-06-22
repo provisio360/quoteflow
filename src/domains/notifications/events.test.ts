@@ -6,11 +6,11 @@ import { notifyQuoteRejected, notifyCountryReleased } from "./events";
 // stamps the right kind/subject and snapshots the ephemeral display text.
 
 describe("notifyQuoteRejected", () => {
-  it("targets the recipient with a Quote subject and snapshots the reason", () => {
+  it("targets the recipient with a Quote Line subject and snapshots the reason", () => {
     const input = notifyQuoteRejected({
       recipientId: "author-1",
       studyId: "study-1",
-      quoteId: "quote-1",
+      lineId: "line-1",
       reason: "Price higher than expected",
     });
 
@@ -18,8 +18,8 @@ describe("notifyQuoteRejected", () => {
       recipientId: "author-1",
       kind: "quoteRejected",
       studyId: "study-1",
-      subjectType: "Quote",
-      subjectId: "quote-1",
+      subjectType: "QuoteLine",
+      subjectId: "line-1",
       reason: "Price higher than expected",
       country: null,
     });
