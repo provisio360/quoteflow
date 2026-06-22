@@ -165,6 +165,55 @@ export async function computeConversion(
   };
 }
 
+/**
+ * The events that move a Market Quote's Conversion Status (CONTEXT.md: Conversion
+ * Status). `submit` is the bulk Draft→Submitted move; `autoResolved` is the worker
+ * pinning a provider rate; `manualSet` is the analyst's override.
+ */
+export type ConversionEvent =
+  | { readonly kind: "submit" }
+  | { readonly kind: "autoResolved" }
+  | { readonly kind: "manualSet" };
+
+/** The status of a Market Quote's conversion, including the unconverted (null) state. */
+export type ConversionStatusState = ConversionStatus | null;
+
+/** What `nextConversionStatus` returns: the resulting status and whether it changed
+ *  (so a caller can skip a no-op write), or an illegal transition. */
+export type ConversionStatusResult =
+  | { readonly ok: true; readonly status: ConversionStatus; readonly changed: boolean }
+  | { readonly ok: false; readonly reason: "illegal-transition" };
+
+/**
+ * The Conversion Status machine (CONTEXT.md: Conversion Status, ADR-0026). One
+ * place owns the invariant **null ⇔ not-yet-submitted; once submitted, pending →
+ * auto/manual**, and the stickiness of a resolved rate.
+ *
+ *   - submit:       null → pending. Already pending/auto/manual ⇒ sticky no-op
+ *                   (a revised line resubmitted into a converted document never
+ *                   re-pins — ADR-0028), so the status is kept and `changed` is false.
+ *   - autoResolved: pending → auto. Anything else is illegal (the worker only acts
+ *                   on a pending document, and never overwrites a manual rate).
+ *   - manualSet:    pending → manual. Anything else is illegal (a non-pending
+ *                   document is not awaiting an override — #70's `not-pending`).
+ */
+export function nextConversionStatus(
+  current: ConversionStatusState,
+  event: ConversionEvent,
+): ConversionStatusResult {
+  switch (event.kind) {
+    case "submit":
+      if (current === null) return { ok: true, status: "pending", changed: true };
+      return { ok: true, status: current, changed: false };
+    case "autoResolved":
+      if (current === "pending") return { ok: true, status: "auto", changed: true };
+      return { ok: false, reason: "illegal-transition" };
+    case "manualSet":
+      if (current === "pending") return { ok: true, status: "manual", changed: true };
+      return { ok: false, reason: "illegal-transition" };
+  }
+}
+
 /** A validated manual rate, or a rejection (non-numeric / non-positive input). */
 export type ParsedManualRate =
   | { readonly ok: true; readonly rate: number }

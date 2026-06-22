@@ -6,10 +6,10 @@ import { selfAssignBenchmarkItemAction } from "@/lib/benchmark-items/actions";
 import {
   deleteDraftLineAction,
   reviseLineAction,
-  submitLineAction,
+  submitMarketQuoteAction,
 } from "@/lib/quotes/actions";
 import type { QuoteLineView } from "@/lib/quotes/repository";
-import type { TransitionResult } from "@/domains/quotes/lifecycle";
+import type { TransitionResult, SubmitDocumentResult } from "@/domains/quotes/lifecycle";
 import { QuoteEditor } from "./QuoteEditor";
 import {
   quoteAffordances,
@@ -19,14 +19,24 @@ import {
 
 type Item = GuidanceFields;
 
-type ActionResult = { ok: boolean; message?: string } | TransitionResult;
+type ActionResult =
+  | { ok: boolean; message?: string }
+  | TransitionResult
+  | SubmitDocumentResult;
 
 function failureMessage(r: ActionResult): string {
   if (r.ok) return "";
   if ("reason" in r) {
     switch (r.reason) {
-      case "missing-fields":
-        return `Fill required fields first: ${r.missing.join(", ")}.`;
+      case "lines-incomplete": {
+        // Bulk submit is all-or-nothing: report which lines still lack what (#88).
+        const detail = r.perLine
+          .map((l) => `line ${l.lineId} (${l.missing.join(", ")})`)
+          .join("; ");
+        return `Fill required fields before submitting the market quote: ${detail}.`;
+      }
+      case "no-draft-lines":
+        return "This market quote has no draft lines to submit.";
       case "illegal-transition":
         return "This quote can't change state right now (already actioned).";
       case "conversion-pending":
@@ -131,8 +141,11 @@ export function ResearcherItem({
                           </button>
                         )}
                         {can.canSubmit && (
-                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => submitLineAction(q.id))}>
-                            Submit
+                          // Interim: submit fires at the document grain (#88); the
+                          // proper per-document Submit control is #97. Submitting
+                          // here moves every Draft line in this line's Market Quote.
+                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => submitMarketQuoteAction(q.marketQuoteId))} title="Submits all draft lines in this market quote">
+                            Submit market quote
                           </button>
                         )}
                         {can.canDelete && (

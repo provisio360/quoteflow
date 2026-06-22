@@ -4,14 +4,17 @@ import { isInternal } from "@/domains/authz/principal";
 import { canCreateQuote, canReviewQuote } from "@/domains/authz/quotes";
 import {
   transition,
-  type SubmittableQuote,
+  submitDocument,
+  type DocumentHeader,
+  type SubmittableLine,
+  type SubmitDocumentResult,
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
 import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
 import { resolveQcThreshold } from "@/domains/benchmark-items/qc-threshold";
-import { convertManual, parseManualRate } from "@/domains/quotes/conversion";
+import { convertManual, parseManualRate, nextConversionStatus } from "@/domains/quotes/conversion";
 import { recordAuditEvents } from "@/lib/audit/repository";
-import { auditQuoteLifecycle, auditManualRateOverride } from "@/domains/audit/events";
+import { auditQuoteLifecycle, auditDocumentSubmit, auditManualRateOverride } from "@/domains/audit/events";
 import { recordNotifications } from "@/lib/notifications/dispatch";
 import { notifyQuoteRejected } from "@/domains/notifications/events";
 
@@ -362,58 +365,71 @@ export async function listLinesForItem(
 }
 
 /**
- * Submit a Draft Quote Line. Owner-only; the Draft→Submitted decision and required-
- * field validation are the pure core's (`transition`), reading the line's own
- * fields PLUS the parent document's source/date/currency. Returns the core's result
- * verbatim. On `ok`, the line moves to Submitted under a guard, and the parent
- * Market Quote is marked `pending` if it is not already converted (one rate per
- * document; the deferred sweep pins it once the date closes — ADR-0013/0026).
+ * Bulk-submit a Market Quote document (#88, ADR-0026): the ONE bulk transition.
+ * Owner-only. Every Draft line in the document moves Draft→Submitted together,
+ * all-or-nothing — the pure `submitDocument` guard validates the shared document
+ * facts once (a missing currency fails every line) and each line's own facts, and
+ * if any Draft line is incomplete nothing transitions (the caller gets the per-line
+ * missing-field report). Non-Draft siblings (from a prior revise loop) are untouched.
+ *
+ * Conversion (ADR-0026/0028): the Conversion Status machine decides the document's
+ * move — an unconverted document becomes `pending` (the deferred sweep pins one rate
+ * once its date closes); an already-`auto`/`manual` document is NOT re-pinned, but
+ * each just-submitted line's USD is RE-DERIVED from the pinned rate (a corrected
+ * price never leaves a stale USD — ADR-0028). One `submit` Audit Event per document,
+ * subject the Market Quote.
  */
-export async function submitLine(
+export async function submitMarketQuote(
   principal: Principal,
-  lineId: string,
-): Promise<TransitionResult> {
+  marketQuoteId: string,
+): Promise<SubmitDocumentResult> {
   if (!isInternal(principal)) {
     throw new QuoteAccessError("Internal staff only");
   }
   return withTenant(principal, async (tx) => {
-    const line = await tx.quoteLine.findUnique({
-      where: { id: lineId },
+    const doc = await tx.marketQuote.findUnique({
+      where: { id: marketQuoteId },
       select: {
         createdById: true,
-        state: true,
-        marketQuoteId: true,
-        competitorBrand: true,
-        price: true,
-        quantityQuoted: true,
         studyId: true,
-        marketQuote: {
-          select: { sourceName: true, sourceLocation: true, currency: true, dateQuoteReceived: true },
+        sourceName: true,
+        sourceLocation: true,
+        currency: true,
+        dateQuoteReceived: true,
+        conversionStatus: true,
+        exchangeRate: true,
+        quoteLines: {
+          select: { id: true, state: true, competitorBrand: true, price: true, quantityQuoted: true },
         },
       },
     });
-    if (line === null) {
-      throw new QuoteAccessError(`Quote Line not found: ${lineId}`);
+    if (doc === null) {
+      throw new QuoteAccessError(`Market Quote not found: ${marketQuoteId}`);
     }
-    if (line.createdById !== principal.userId) {
-      throw new QuoteAccessError("Only the author may submit their Quote Line");
+    if (doc.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the author may submit their Market Quote");
     }
 
-    const submittable: SubmittableQuote = {
-      competitorBrand: line.competitorBrand,
-      dealerName: line.marketQuote.sourceName,
-      dealerLocation: line.marketQuote.sourceLocation,
-      price: line.price === null ? null : Number(line.price),
-      currency: line.marketQuote.currency,
-      quantityQuoted: line.quantityQuoted,
-      dateQuoteReceived: line.marketQuote.dateQuoteReceived,
+    const header: DocumentHeader = {
+      sourceName: doc.sourceName,
+      sourceLocation: doc.sourceLocation,
+      currency: doc.currency,
+      dateQuoteReceived: doc.dateQuoteReceived,
     };
+    const lines: SubmittableLine[] = doc.quoteLines.map((l) => ({
+      lineId: l.id,
+      state: l.state as SubmittableLine["state"],
+      competitorBrand: l.competitorBrand,
+      price: l.price === null ? null : Number(l.price),
+      quantityQuoted: l.quantityQuoted,
+    }));
 
-    const result = transition(line.state, { kind: "submit", quote: submittable });
+    const result = submitDocument({ header, lines });
     if (!result.ok) return result;
 
-    const applied = await tx.quoteLine.updateMany({
-      where: { id: lineId, state: "Draft" },
+    // Move every targeted Draft line to Submitted under a state guard.
+    await tx.quoteLine.updateMany({
+      where: { id: { in: [...result.toSubmit] }, state: "Draft" },
       data: {
         state: "Submitted",
         submittedAt: new Date(),
@@ -422,21 +438,55 @@ export async function submitLine(
         reviewedAt: null,
       },
     });
-    if (applied.count === 1) {
-      // Mark the document pending only if it has no pinned conversion yet — never
-      // clobber an already auto/manual document (the sticky guard).
+
+    // The document's conversion move. `changed` ⇒ null→pending (guard on null so a
+    // concurrent pin is never clobbered). An already-auto/manual document stays put
+    // (sticky) but its just-submitted lines need their USD re-derived from the
+    // pinned rate (ADR-0028).
+    const conversion = nextConversionStatus(doc.conversionStatus, { kind: "submit" });
+    if (conversion.ok && conversion.changed) {
       await tx.marketQuote.updateMany({
-        where: { id: line.marketQuoteId, conversionStatus: null },
+        where: { id: marketQuoteId, conversionStatus: null },
         data: { conversionStatus: "pending" },
       });
-      await recordAuditEvents(tx, [
-        auditQuoteLifecycle("submit", {
-          actorId: principal.userId,
-          studyId: line.studyId,
-          lineId,
-        }),
-      ]);
+    } else if (
+      conversion.ok &&
+      (conversion.status === "auto" || conversion.status === "manual") &&
+      doc.exchangeRate !== null
+    ) {
+      const rate = Number(doc.exchangeRate);
+      const date = doc.dateQuoteReceived as Date;
+      await Promise.all(
+        doc.quoteLines
+          .filter((l) => result.toSubmit.includes(l.id))
+          .map((l) => {
+            const pinned = convertManual(
+              {
+                price: Number(l.price),
+                currency: doc.currency as string,
+                quantityQuoted: l.quantityQuoted,
+                dateQuoteReceived: date,
+              },
+              rate,
+            );
+            return tx.quoteLine.update({
+              where: { id: l.id },
+              data: {
+                convertedUsdPrice: pinned.convertedUsdPrice,
+                convertedUsdPricePerUnit: pinned.convertedUsdPricePerUnit,
+              },
+            });
+          }),
+      );
     }
+
+    await recordAuditEvents(tx, [
+      auditDocumentSubmit({
+        actorId: principal.userId,
+        studyId: doc.studyId,
+        marketQuoteId,
+      }),
+    ]);
     return result;
   });
 }

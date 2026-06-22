@@ -61,12 +61,13 @@ export interface AuditEvent {
   readonly afterValue: number | null;
 }
 
-/** A Quote Lifecycle move by its actor — submit (researcher), or approve/reject
- *  (analyst verdict). Subject is the Quote LINE that moved (ADR-0026 — state is
- *  per line); no monetary delta (the price isn't changed by these moves). One
- *  builder for the three because they share shape. */
+/** An analyst's per-line verdict — approve or reject (ADR-0026: verdicts are per
+ *  line). Subject is the Quote LINE; no monetary delta (the price isn't changed by
+ *  these moves). One builder for the two because they share shape. Submit is NOT
+ *  here — it is a bulk document act, audited once per document by
+ *  `auditDocumentSubmit`. */
 export function auditQuoteLifecycle(
-  action: "submit" | "approve" | "reject",
+  action: "approve" | "reject",
   input: { actorId: string; studyId: string; lineId: string },
 ): AuditEvent {
   return {
@@ -75,6 +76,26 @@ export function auditQuoteLifecycle(
     studyId: input.studyId,
     subjectType: "QuoteLine",
     subjectId: input.lineId,
+    beforeValue: null,
+    afterValue: null,
+  };
+}
+
+/** A researcher's bulk submit of a Market Quote (ADR-0026: submit is the one bulk
+ *  transition — all the document's Draft lines move together). One event PER
+ *  DOCUMENT, subject the Market Quote; no monetary delta (USD pins later, via the
+ *  worker or a manual override). */
+export function auditDocumentSubmit(input: {
+  actorId: string;
+  studyId: string;
+  marketQuoteId: string;
+}): AuditEvent {
+  return {
+    action: "submit",
+    actorId: input.actorId,
+    studyId: input.studyId,
+    subjectType: "MarketQuote",
+    subjectId: input.marketQuoteId,
     beforeValue: null,
     afterValue: null,
   };

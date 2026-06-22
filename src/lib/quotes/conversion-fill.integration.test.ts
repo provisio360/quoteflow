@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import {
   createMarketQuote,
   addQuoteLine,
-  submitLine,
+  submitMarketQuote,
   type MarketQuoteHeaderFields,
 } from "./repository";
 import { fillPendingConversions } from "./conversion-fill";
@@ -30,6 +30,7 @@ let tenantId: string;
 let em: InternalPrincipal;
 let studyId: string;
 let itemId: string;
+let itemId2: string;
 let researcher: InternalPrincipal;
 
 // A complete document header except dateQuoteReceived, which each test sets.
@@ -44,7 +45,7 @@ const line = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1 
 async function submittedPending(dateQuoteReceived: Date): Promise<{ docId: string; lineId: string }> {
   const doc = await createMarketQuote(researcher, studyId, "Germany", { ...header, dateQuoteReceived });
   const { id: lineId } = await addQuoteLine(researcher, doc.id, itemId, line);
-  const result = await submitLine(researcher, lineId);
+  const result = await submitMarketQuote(researcher, doc.id);
   if (!result.ok) throw new Error("seed line failed to submit");
   return { docId: doc.id, lineId };
 }
@@ -63,6 +64,11 @@ beforeAll(async () => {
   itemId = (
     await prisma.benchmarkItem.create({
       data: { studyId, clientId: tenantId, country: "Germany", clientItemNumber: "PN-1", clientItemNumberKey: "pn-1", itemDescription: "Widget", requiredQuotes: 1, clientPrice: "123.4500" },
+    })
+  ).id;
+  itemId2 = (
+    await prisma.benchmarkItem.create({
+      data: { studyId, clientId: tenantId, country: "Germany", clientItemNumber: "PN-2", clientItemNumberKey: "pn-2", itemDescription: "Gadget", requiredQuotes: 1, clientPrice: "123.4500" },
     })
   ).id;
 
@@ -101,6 +107,31 @@ describe("fillPendingConversions", () => {
     const row = await prisma.quoteLine.findUnique({ where: { id: lineId } });
     expect(Number(row?.convertedUsdPrice)).toBeCloseTo(1350.54, 4);
     expect(Number(row?.convertedUsdPricePerUnit)).toBeCloseTo(1350.54, 4);
+  });
+
+  it("pins ONE rate across a multi-line document, deriving each line from it", async () => {
+    // Two items priced in one dealer document at different prices/quantities.
+    const doc = await createMarketQuote(researcher, studyId, "Germany", { ...header, dateQuoteReceived: CLOSED_DATE });
+    const a = await addQuoteLine(researcher, doc.id, itemId, { competitorBrand: "Cat", price: 1250.5, quantityQuoted: 1 });
+    const b = await addQuoteLine(researcher, doc.id, itemId2, { competitorBrand: "Cat", price: 800, quantityQuoted: 4 });
+    const submitted = await submitMarketQuote(researcher, doc.id);
+    if (!submitted.ok) throw new Error("seed doc failed to submit");
+    const provider = new InMemoryRateProvider().set("EUR", CLOSED_DATE, 1.08);
+
+    await fillPendingConversions(provider, NOW);
+
+    // One rate pinned on the document...
+    const pinned = await prisma.marketQuote.findUnique({ where: { id: doc.id } });
+    expect(pinned?.conversionStatus).toBe("auto");
+    expect(Number(pinned?.exchangeRate)).toBeCloseTo(1.08, 8);
+
+    // ...and every line's USD derived from that single rate.
+    const rowA = await prisma.quoteLine.findUnique({ where: { id: a.id } });
+    expect(Number(rowA?.convertedUsdPrice)).toBeCloseTo(1350.54, 4); // 1250.5 × 1.08
+    expect(Number(rowA?.convertedUsdPricePerUnit)).toBeCloseTo(1350.54, 4); // ÷ 1
+    const rowB = await prisma.quoteLine.findUnique({ where: { id: b.id } });
+    expect(Number(rowB?.convertedUsdPrice)).toBeCloseTo(864, 4); // 800 × 1.08
+    expect(Number(rowB?.convertedUsdPricePerUnit)).toBeCloseTo(216, 4); // 864 ÷ 4
   });
 
   it("leaves a document pending when its date has not yet closed (UTC guard)", async () => {

@@ -6,6 +6,7 @@ import {
   computeConversion,
   convertManual,
   parseManualRate,
+  nextConversionStatus,
   MAX_LOOKBACK_DAYS,
 } from "./conversion";
 import type { ConvertibleQuote } from "./conversion";
@@ -231,5 +232,65 @@ describe("parseManualRate", () => {
     expect(parseManualRate("")).toEqual({ ok: false });
     expect(parseManualRate("   ")).toEqual({ ok: false });
     expect(parseManualRate(Number.NaN)).toEqual({ ok: false });
+  });
+});
+
+describe("nextConversionStatus", () => {
+  it("moves an unconverted document to pending on submit", () => {
+    expect(nextConversionStatus(null, { kind: "submit" })).toEqual({
+      ok: true,
+      status: "pending",
+      changed: true,
+    });
+  });
+
+  it("keeps an already-converted document's status on resubmit (sticky no-op)", () => {
+    // A revised line resubmitted into a pinned document never re-pins (ADR-0028).
+    for (const current of ["pending", "auto", "manual"] as const) {
+      expect(nextConversionStatus(current, { kind: "submit" })).toEqual({
+        ok: true,
+        status: current,
+        changed: false,
+      });
+    }
+  });
+
+  it("resolves a pending document to auto when the worker pins a rate", () => {
+    expect(nextConversionStatus("pending", { kind: "autoResolved" })).toEqual({
+      ok: true,
+      status: "auto",
+      changed: true,
+    });
+  });
+
+  it("resolves a pending document to manual on an analyst override", () => {
+    expect(nextConversionStatus("pending", { kind: "manualSet" })).toEqual({
+      ok: true,
+      status: "manual",
+      changed: true,
+    });
+  });
+
+  it("never overwrites a manual rate (worker auto on manual is illegal)", () => {
+    expect(nextConversionStatus("manual", { kind: "autoResolved" })).toEqual({
+      ok: false,
+      reason: "illegal-transition",
+    });
+  });
+
+  it("rejects a manual override of a non-pending document", () => {
+    for (const current of [null, "auto", "manual"] as const) {
+      expect(nextConversionStatus(current, { kind: "manualSet" })).toEqual({
+        ok: false,
+        reason: "illegal-transition",
+      });
+    }
+  });
+
+  it("rejects an auto resolution of an unconverted (unsubmitted) document", () => {
+    expect(nextConversionStatus(null, { kind: "autoResolved" })).toEqual({
+      ok: false,
+      reason: "illegal-transition",
+    });
   });
 });

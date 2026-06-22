@@ -1,65 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { transition, missingRequiredFields } from "./lifecycle";
-import type { SubmittableQuote, QuoteState, QuoteEvent } from "./lifecycle";
-
-// A Draft carrying every required-to-submit field (ADR-0011 / CONTEXT.md: Draft).
-// Optional fields (dealerUrl, stockStatus, leadTime, warranty, discount, notes)
-// are deliberately absent — they never gate submit.
-const completeDraft: SubmittableQuote = {
-  competitorBrand: "Caterpillar",
-  dealerName: "Acme Equipment",
-  dealerLocation: "Munich, Germany",
-  price: 1250.5,
-  currency: "EUR",
-  quantityQuoted: 1,
-  dateQuoteReceived: new Date("2026-06-01"),
-};
-
-describe("transition: Draft → Submitted", () => {
-  it("submits a Draft that has every required field", () => {
-    expect(transition("Draft", { kind: "submit", quote: completeDraft })).toEqual({
-      ok: true,
-      state: "Submitted",
-    });
-  });
-
-  it("blocks submit when a required field is absent, naming the missing field", () => {
-    const noPrice = { ...completeDraft, price: null };
-    expect(transition("Draft", { kind: "submit", quote: noPrice })).toEqual({
-      ok: false,
-      reason: "missing-fields",
-      missing: ["price"],
-    });
-  });
-
-  it("treats a blank or whitespace-only string field as missing", () => {
-    const blankDealer = { ...completeDraft, dealerName: "   " };
-    expect(transition("Draft", { kind: "submit", quote: blankDealer })).toEqual({
-      ok: false,
-      reason: "missing-fields",
-      missing: ["dealerName"],
-    });
-  });
-
-  it("rejects submit from an already-Submitted quote as an illegal transition", () => {
-    // One-way submit (ADR: lifecycle): even a complete quote can't re-submit.
-    expect(transition("Submitted", { kind: "submit", quote: completeDraft })).toEqual({
-      ok: false,
-      reason: "illegal-transition",
-    });
-  });
-
-  it("rejects submit from the analyst-verdict states (no submit edge from there)", () => {
-    // A Submitted quote re-enters Draft via `revise`, not `submit`.
-    const verdictStates: QuoteState[] = ["Approved", "Rejected"];
-    for (const from of verdictStates) {
-      expect(transition(from, { kind: "submit", quote: completeDraft })).toEqual({
-        ok: false,
-        reason: "illegal-transition",
-      });
-    }
-  });
-});
+import { transition, submitDocument } from "./lifecycle";
+import type {
+  QuoteState,
+  QuoteEvent,
+  DocumentHeader,
+  SubmittableLine,
+} from "./lifecycle";
 
 describe("transition: approve (Submitted → Approved)", () => {
   const approve = (over: Partial<Extract<QuoteEvent, { kind: "approve" }>> = {}) =>
@@ -149,29 +95,79 @@ describe("transition: revise (Rejected → Draft)", () => {
   });
 });
 
-describe("missingRequiredFields", () => {
-  it("lists every required field, in order, for an empty Draft", () => {
-    const empty: SubmittableQuote = {
-      competitorBrand: null,
-      dealerName: null,
-      dealerLocation: null,
-      price: null,
-      currency: null,
-      quantityQuoted: null,
-      dateQuoteReceived: null,
-    };
-    expect(missingRequiredFields(empty)).toEqual([
-      "competitorBrand",
-      "dealerName",
-      "dealerLocation",
-      "price",
-      "currency",
-      "quantityQuoted",
-      "dateQuoteReceived",
-    ]);
+// The shared document facts (one Source, one date, one currency) that every line
+// inherits at submit (CONTEXT.md: Market Quote).
+const completeHeader: DocumentHeader = {
+  sourceName: "Acme Equipment",
+  sourceLocation: "Munich, Germany",
+  currency: "EUR",
+  dateQuoteReceived: new Date("2026-06-01"),
+};
+
+const draftLine = (lineId: string, over: Partial<SubmittableLine> = {}): SubmittableLine => ({
+  lineId,
+  state: "Draft",
+  competitorBrand: "Bosch",
+  price: 1250.5,
+  quantityQuoted: 2,
+  ...over,
+});
+
+describe("submitDocument (bulk submit guard)", () => {
+  it("submits every Draft line when the header and all lines are complete", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1"), draftLine("l2")],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1", "l2"] });
   });
 
-  it("returns nothing when every required field is present, regardless of optional fields", () => {
-    expect(missingRequiredFields(completeDraft)).toEqual([]);
+  it("is all-or-nothing: one incomplete line blocks the whole submit", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1"), draftLine("l2", { price: null })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l2", missing: ["price"] }],
+    });
+  });
+
+  it("reports a missing document field against every Draft line", () => {
+    // One missing shared fact (currency) fails all lines at once.
+    const result = submitDocument({
+      header: { ...completeHeader, currency: "  " },
+      lines: [draftLine("l1"), draftLine("l2")],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [
+        { lineId: "l1", missing: ["currency"] },
+        { lineId: "l2", missing: ["currency"] },
+      ],
+    });
+  });
+
+  it("only targets Draft lines, leaving non-Draft siblings untouched", () => {
+    // A revised document: one Draft line among already-actioned siblings.
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [
+        draftLine("approved", { state: "Approved" }),
+        draftLine("rejected", { state: "Rejected" }),
+        draftLine("l3"),
+      ],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l3"] });
+  });
+
+  it("rejects a document with no Draft lines rather than silently no-op", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("a", { state: "Submitted" })],
+    });
+    expect(result).toEqual({ ok: false, reason: "no-draft-lines" });
   });
 });

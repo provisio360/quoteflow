@@ -24,28 +24,14 @@ import type { ConversionStatus } from "./conversion";
 /** Every state a Quote can occupy (CONTEXT.md: Quote Lifecycle). */
 export type QuoteState = "Draft" | "Submitted" | "Approved" | "Rejected";
 
-/** The fields the submit guard inspects — primitives only, so the core never
- *  imports Prisma. The repository maps a Quote row to this shape. Optional Quote
- *  fields are omitted: they never gate submit. */
-export interface SubmittableQuote {
-  readonly competitorBrand: string | null;
-  readonly dealerName: string | null;
-  readonly dealerLocation: string | null;
-  readonly price: number | null;
-  readonly currency: string | null;
-  readonly quantityQuoted: number | null;
-  readonly dateQuoteReceived: Date | null;
-}
-
 /**
- * The events that drive transitions, each carrying its own guard inputs. A
- * discriminated union keeps every edge's data separate instead of one fat
- * context object: submit needs the Draft's fields; approve needs the conversion
- * status plus whether the quote is flagged and justified; reject needs a reason;
- * revise needs nothing the core decides on.
+ * The events that drive a single line's verdict/revise transitions, each carrying
+ * its own guard inputs. Submit is NOT here — it is the document-level bulk
+ * transition (`submitDocument`), the only bulk move (ADR-0026). approve needs the
+ * conversion status plus whether the line is flagged and justified; reject needs a
+ * reason; revise needs nothing the core decides on.
  */
 export type QuoteEvent =
-  | { readonly kind: "submit"; readonly quote: SubmittableQuote }
   | {
       readonly kind: "approve";
       readonly conversionStatus: ConversionStatus | null;
@@ -55,44 +41,95 @@ export type QuoteEvent =
   | { readonly kind: "reject"; readonly reason: string | null }
   | { readonly kind: "revise" };
 
-/** The fields that must be present to leave Draft (grilling for #8). Optional
- *  competitive context (dealerUrl, stockStatus, leadTime, warranty, discount,
- *  notes) is deliberately not here — it never gates submit. */
-export const REQUIRED_TO_SUBMIT = [
-  "competitorBrand",
-  "dealerName",
-  "dealerLocation",
-  "price",
+// --- Bulk submit over a Market Quote document (ADR-0026) ---------------------
+//
+// Submit is the ONE bulk transition: a researcher submits a whole document and
+// all its Draft lines move together, ALL-OR-NOTHING (CONTEXT.md: Quote Lifecycle).
+// The guard splits required-to-submit into the document's shared facts (validated
+// ONCE — a missing currency fails every line) and each line's own facts.
+
+/** The Market Quote's shared facts every line inherits at submit. */
+export interface DocumentHeader {
+  readonly sourceName: string | null;
+  readonly sourceLocation: string | null;
+  readonly currency: string | null;
+  readonly dateQuoteReceived: Date | null;
+}
+
+/** A line the bulk submit considers: its state plus its own required-to-submit
+ *  facts. Optional competitive context is omitted — it never gates submit. */
+export interface SubmittableLine {
+  readonly lineId: string;
+  readonly state: QuoteState;
+  readonly competitorBrand: string | null;
+  readonly price: number | null;
+  readonly quantityQuoted: number | null;
+}
+
+/** Document-level required-to-submit fields (validated once for the whole doc). */
+export const DOC_REQUIRED_TO_SUBMIT = [
+  "sourceName",
+  "sourceLocation",
   "currency",
-  "quantityQuoted",
   "dateQuoteReceived",
 ] as const;
 
-export type RequiredField = (typeof REQUIRED_TO_SUBMIT)[number];
+/** Per-line required-to-submit fields. */
+export const LINE_REQUIRED_TO_SUBMIT = ["competitorBrand", "price", "quantityQuoted"] as const;
+
+export type DocRequiredField = (typeof DOC_REQUIRED_TO_SUBMIT)[number];
+export type LineRequiredField = (typeof LINE_REQUIRED_TO_SUBMIT)[number];
+export type BulkRequiredField = DocRequiredField | LineRequiredField;
+
+/** One incomplete line and the required fields it still lacks (doc + line fields). */
+export interface IncompleteLine {
+  readonly lineId: string;
+  readonly missing: readonly BulkRequiredField[];
+}
+
+export type SubmitDocumentResult =
+  | { readonly ok: true; readonly toSubmit: readonly string[] }
+  | { readonly ok: false; readonly reason: "no-draft-lines" }
+  | { readonly ok: false; readonly reason: "lines-incomplete"; readonly perLine: readonly IncompleteLine[] };
+
+function missingValue(value: string | number | Date | null): boolean {
+  if (value === null) return true;
+  if (typeof value === "string") return value.trim() === "";
+  return false;
+}
 
 /**
- * The required-to-submit fields a Quote is still missing, in declaration order.
- * Exported standalone so a UI can preview "what's left" without attempting a
- * transition. A field is "missing" when null; a string field is also missing
- * when blank or whitespace-only.
+ * Decide a Market Quote's bulk submit. Targets only the document's Draft lines;
+ * non-Draft siblings (a Submitted/Approved/Rejected line from a prior revise loop)
+ * are untouched. ALL-OR-NOTHING: if any Draft line is missing a required-to-submit
+ * field (its own OR an inherited document field), nothing submits and every
+ * incomplete line is reported with what it lacks. A document with no Draft lines
+ * yields `no-draft-lines` rather than a silent no-op.
  */
-export function missingRequiredFields(quote: SubmittableQuote): RequiredField[] {
-  return REQUIRED_TO_SUBMIT.filter((field) => {
-    const value = quote[field];
-    if (value === null) return true;
-    if (typeof value === "string") return value.trim() === "";
-    return false;
-  });
+export function submitDocument(input: {
+  readonly header: DocumentHeader;
+  readonly lines: readonly SubmittableLine[];
+}): SubmitDocumentResult {
+  const drafts = input.lines.filter((line) => line.state === "Draft");
+  if (drafts.length === 0) return { ok: false, reason: "no-draft-lines" };
+
+  // The shared document fields are missing for every line at once.
+  const docMissing = DOC_REQUIRED_TO_SUBMIT.filter((field) => missingValue(input.header[field]));
+
+  const perLine: IncompleteLine[] = [];
+  for (const line of drafts) {
+    const lineMissing = LINE_REQUIRED_TO_SUBMIT.filter((field) => missingValue(line[field]));
+    const missing = [...docMissing, ...lineMissing];
+    if (missing.length > 0) perLine.push({ lineId: line.lineId, missing });
+  }
+  if (perLine.length > 0) return { ok: false, reason: "lines-incomplete", perLine };
+
+  return { ok: true, toSubmit: drafts.map((line) => line.lineId) };
 }
 
 export type TransitionResult =
   | { readonly ok: true; readonly state: QuoteState }
   | { readonly ok: false; readonly reason: "illegal-transition" }
-  | {
-      readonly ok: false;
-      readonly reason: "missing-fields";
-      readonly missing: readonly RequiredField[];
-    }
   | { readonly ok: false; readonly reason: "conversion-pending" }
   | { readonly ok: false; readonly reason: "needs-justification" }
   | { readonly ok: false; readonly reason: "missing-reason" };
@@ -109,12 +146,6 @@ function hasText(value: string | null): boolean {
  */
 export function transition(from: QuoteState, event: QuoteEvent): TransitionResult {
   switch (event.kind) {
-    case "submit": {
-      if (from !== "Draft") return { ok: false, reason: "illegal-transition" };
-      const missing = missingRequiredFields(event.quote);
-      if (missing.length > 0) return { ok: false, reason: "missing-fields", missing };
-      return { ok: true, state: "Submitted" };
-    }
     case "approve": {
       if (from !== "Submitted") return { ok: false, reason: "illegal-transition" };
       // No USD figure yet ⇒ cannot approve (ADR-0013). `pending` and the
