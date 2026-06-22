@@ -416,6 +416,61 @@ describe("bulk submit over a Market Quote document (#88)", () => {
   });
 });
 
+describe("audit + notification re-point to Market Quote / Quote Line (#92 / ADR-0026)", () => {
+  it("approve writes one per-line audit event, subject the Quote Line", async () => {
+    const lineId = await submittedConverted(researcherA, itemG1, 123.45); // in range
+    const approved = await approveLine(analyst, lineId);
+    expect(approved.ok).toBe(true);
+
+    const events = await prisma.auditEvent.findMany({
+      where: { action: "approve", subjectId: lineId },
+      select: { subjectType: true, beforeValue: true, afterValue: true },
+    });
+    expect(events).toEqual([{ subjectType: "QuoteLine", beforeValue: null, afterValue: null }]);
+  });
+
+  it("reject writes one per-line audit event, subject the Quote Line", async () => {
+    const lineId = await submittedConverted(researcherA, itemG2, 123.45);
+    const rejected = await rejectLine(analyst, lineId, "Please re-check the source.");
+    expect(rejected.ok).toBe(true);
+
+    const events = await prisma.auditEvent.findMany({
+      where: { action: "reject", subjectId: lineId },
+      select: { subjectType: true, beforeValue: true, afterValue: true },
+    });
+    expect(events).toEqual([{ subjectType: "QuoteLine", beforeValue: null, afterValue: null }]);
+  });
+
+  it("manualRateOverride writes one per-document event whose after is the document-total USD summed across lines", async () => {
+    // Two lines with DIFFERENT prices, so the audited total is provably a SUM,
+    // not a single line's figure (the per-quote → document-total amendment).
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, { competitorBrand: "Caterpillar", price: 1000, quantityQuoted: 1 });
+    await addQuoteLine(researcherA, d.id, itemG2, { competitorBrand: "Caterpillar", price: 250.5, quantityQuoted: 1 });
+    await submitMarketQuote(researcherA, d.id); // document → pending
+
+    const result = await setMarketQuoteManualRate(analyst, d.id, "1.10");
+    expect(result.ok).toBe(true);
+
+    // The expected after = sum of each line's freshly-pinned convertedUsdPrice.
+    const lines = await prisma.quoteLine.findMany({
+      where: { marketQuoteId: d.id },
+      select: { convertedUsdPrice: true },
+    });
+    const docTotal = lines.reduce((sum, l) => sum + Number(l.convertedUsdPrice), 0);
+    expect(docTotal).toBeCloseTo((1000 + 250.5) * 1.1, 2); // sanity: spans both lines
+
+    const events = await prisma.auditEvent.findMany({
+      where: { action: "manualRateOverride", subjectId: d.id },
+      select: { subjectType: true, beforeValue: true, afterValue: true },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].subjectType).toBe("MarketQuote");
+    expect(events[0].beforeValue).toBeNull();
+    expect(Number(events[0].afterValue)).toBeCloseTo(docTotal, 4);
+  });
+});
+
 describe("Price Flag + Justification gate (#90 / ADR-0014)", () => {
   // Client Price on every seeded item is 123.45; the study default QC Threshold is
   // 0.25 (25%). The flag uses the SYMMETRIC relative difference
