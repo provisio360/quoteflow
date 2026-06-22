@@ -7,7 +7,7 @@ import {
   addQuoteLine,
   updateDraftLine,
   deleteDraftLine,
-  submitLine,
+  submitMarketQuote,
   approveLine,
   rejectLine,
   reviseLine,
@@ -17,11 +17,16 @@ import {
   type QuoteLineFields,
   type SetManualRateResult,
 } from "./repository";
-import type { TransitionResult } from "@/domains/quotes/lifecycle";
+import type { TransitionResult, SubmitDocumentResult } from "@/domains/quotes/lifecycle";
 
 /** A verdict/transition result, or an access failure surfaced as a message. */
 export type QuoteTransitionActionResult =
   | TransitionResult
+  | { readonly ok: false; readonly reason: "access"; readonly message: string };
+
+/** A bulk-submit result, or an access failure surfaced as a message (#88). */
+export type SubmitMarketQuoteActionResult =
+  | SubmitDocumentResult
   | { readonly ok: false; readonly reason: "access"; readonly message: string };
 
 // Server actions backing the Market Quote entry form (#87). Pure wiring:
@@ -94,14 +99,18 @@ export async function deleteDraftLineAction(
   }
 }
 
-/** Submit a Draft Quote Line. Returns the lifecycle core's result so the UI can
- *  show the missing-fields list or the illegal-transition case. */
-export async function submitLineAction(
-  lineId: string,
-): Promise<QuoteTransitionActionResult> {
+/** Bulk-submit a Market Quote document (#88): all its Draft lines together, all-or-
+ *  nothing. Returns the core's result so the UI can show the per-line missing-field
+ *  report, the no-draft-lines case, or success. Revalidates the study screen the
+ *  researcher submits from. */
+export async function submitMarketQuoteAction(
+  marketQuoteId: string,
+): Promise<SubmitMarketQuoteActionResult> {
   const principal = await requirePrincipal();
   try {
-    return await submitLine(principal, lineId);
+    const result = await submitMarketQuote(principal, marketQuoteId);
+    if (result.ok) revalidatePath("/studies");
+    return result;
   } catch (error) {
     if (error instanceof QuoteAccessError) {
       return { ok: false, reason: "access", message: error.message };

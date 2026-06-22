@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import {
   createMarketQuote,
   addQuoteLine,
-  submitLine,
+  submitMarketQuote,
   rejectLine,
   approveLine,
   type MarketQuoteHeaderFields,
@@ -82,7 +82,11 @@ async function seedUser(
 /** A Submitted Quote Line authored by `author`, ready to reject. */
 async function submittedQuote(): Promise<string> {
   const id = await makeLine(itemId);
-  await submitLine(author, id);
+  const { marketQuoteId } = await prisma.quoteLine.findUniqueOrThrow({
+    where: { id },
+    select: { marketQuoteId: true },
+  });
+  await submitMarketQuote(author, marketQuoteId);
   return id;
 }
 
@@ -112,8 +116,8 @@ async function seedCountry(country: string): Promise<string> {
  *  (requiredQuotes 1, no in-flight). Pins USD figures to clear the conversion gate. */
 async function approveQuoteOn(item: string): Promise<void> {
   const id = await makeLine(item);
-  await submitLine(author, id);
   const line = await prisma.quoteLine.findUniqueOrThrow({ where: { id }, select: { marketQuoteId: true } });
+  await submitMarketQuote(author, line.marketQuoteId);
   await prisma.marketQuote.update({
     where: { id: line.marketQuoteId },
     data: { conversionStatus: "auto", exchangeRate: "1.00000000", rateDate: new Date("2026-06-01") },

@@ -7,7 +7,7 @@ import {
   updateDraftLine,
   deleteDraftLine,
   listLinesForItem,
-  submitLine,
+  submitMarketQuote,
   approveLine,
   rejectLine,
   reviseLine,
@@ -95,7 +95,7 @@ async function submittedConverted(
 ): Promise<string> {
   const doc = await createMarketQuote(researcher, studyId, itemCountry(itemId), completeHeader);
   const { id } = await addQuoteLine(researcher, doc.id, itemId, completeLine);
-  await submitLine(researcher, id);
+  await submitMarketQuote(researcher, doc.id);
   await prisma.marketQuote.update({
     where: { id: doc.id },
     data: { conversionStatus: "auto", exchangeRate: "1.00000000", rateDate: new Date("2026-06-01") },
@@ -240,7 +240,7 @@ describe("Draft privacy on the line (ADR-0011)", () => {
     expect(aSees.some((l) => l.id === line.id)).toBe(true);
 
     // Once submitted, B sees it.
-    await submitLine(researcherA, line.id);
+    await submitMarketQuote(researcherA, d.id);
     bSees = await listLinesForItem(researcherB, itemG1);
     expect(bSees.some((l) => l.id === line.id)).toBe(true);
   });
@@ -266,7 +266,7 @@ describe("Draft-edit (owner-only, Draft-only)", () => {
   it("refuses an edit once the line has left Draft", async () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
     const line = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
-    await submitLine(researcherA, line.id);
+    await submitMarketQuote(researcherA, d.id);
     await expect(updateDraftLine(researcherA, line.id, { competitorBrand: "X" })).rejects.toThrow(
       QuoteAccessError,
     );
@@ -277,11 +277,11 @@ describe("ported per-line lifecycle", () => {
   it("blocks submit until required fields are present, then submits", async () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
     const line = await addQuoteLine(researcherA, d.id, itemG1, { competitorBrand: "Cat" }); // no price/qty
-    const blocked = await submitLine(researcherA, line.id);
+    const blocked = await submitMarketQuote(researcherA, d.id);
     expect(blocked.ok).toBe(false);
 
     await updateDraftLine(researcherA, line.id, { price: 100, quantityQuoted: 1 });
-    const ok = await submitLine(researcherA, line.id);
+    const ok = await submitMarketQuote(researcherA, d.id);
     expect(ok.ok).toBe(true);
     // Submitting marks the parent document pending.
     const doc = await prisma.marketQuote.findUnique({ where: { id: d.id }, select: { conversionStatus: true } });
@@ -305,7 +305,7 @@ describe("ported per-line lifecycle", () => {
   it("sets a manual rate on a pending document, deriving each line's USD", async () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
     const line = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
-    await submitLine(researcherA, line.id); // document → pending
+    await submitMarketQuote(researcherA, d.id); // document → pending
     const result = await setMarketQuoteManualRate(analyst, d.id, "1.10");
     expect(result.ok).toBe(true);
     const row = await prisma.quoteLine.findUnique({
@@ -313,5 +313,105 @@ describe("ported per-line lifecycle", () => {
       select: { convertedUsdPrice: true },
     });
     expect(Number(row?.convertedUsdPrice)).toBeCloseTo(1250.5 * 1.1, 2);
+  });
+});
+
+describe("bulk submit over a Market Quote document (#88)", () => {
+  it("transitions every Draft line together and marks the document pending", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+
+    const result = await submitMarketQuote(researcherA, d.id);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect([...result.toSubmit].sort()).toEqual([l1.id, l2.id].sort());
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { marketQuoteId: d.id },
+      select: { state: true },
+    });
+    expect(lines.map((l) => l.state)).toEqual(["Submitted", "Submitted"]);
+
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { conversionStatus: true },
+    });
+    expect(doc?.conversionStatus).toBe("pending");
+
+    // Exactly one submit Audit Event, subject the Market Quote document (ADR-0026).
+    const events = await prisma.auditEvent.findMany({
+      where: { action: "submit", subjectId: d.id },
+      select: { subjectType: true },
+    });
+    expect(events).toEqual([{ subjectType: "MarketQuote" }]);
+  });
+
+  it("is all-or-nothing: one incomplete line blocks the whole document", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await addQuoteLine(researcherA, d.id, itemG2, { competitorBrand: "Cat" }); // no price/qty
+
+    const result = await submitMarketQuote(researcherA, d.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.reason === "lines-incomplete") {
+      expect(result.perLine).toHaveLength(1);
+    }
+
+    // Nothing transitioned, the document was not marked pending, nothing audited.
+    const lines = await prisma.quoteLine.findMany({
+      where: { marketQuoteId: d.id },
+      select: { state: true },
+    });
+    expect(lines.every((l) => l.state === "Draft")).toBe(true);
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { conversionStatus: true },
+    });
+    expect(doc?.conversionStatus).toBeNull();
+    const events = await prisma.auditEvent.count({ where: { action: "submit", subjectId: d.id } });
+    expect(events).toBe(0);
+  });
+
+  it("re-derives a revised line's USD from the pinned rate without re-pinning (ADR-0028)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine); // price 1250.5
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine); // price 1250.5
+    await submitMarketQuote(researcherA, d.id); // → pending
+
+    // Simulate the worker pinning ONE rate (2.0) across the document and deriving USD.
+    await prisma.marketQuote.update({
+      where: { id: d.id },
+      data: { conversionStatus: "auto", exchangeRate: "2.00000000", rateDate: new Date("2026-06-01") },
+    });
+    await prisma.quoteLine.updateMany({
+      where: { marketQuoteId: d.id },
+      data: { convertedUsdPrice: "2501.0000", convertedUsdPricePerUnit: "2501.0000" },
+    });
+
+    // Analyst rejects l2; author revises, corrects the price, and resubmits.
+    await rejectLine(analyst, l2.id, "Please re-check the price.");
+    await reviseLine(researcherA, l2.id);
+    await updateDraftLine(researcherA, l2.id, { price: 1000 });
+    const resubmit = await submitMarketQuote(researcherA, d.id);
+    expect(resubmit.ok).toBe(true);
+    if (resubmit.ok) expect(resubmit.toSubmit).toEqual([l2.id]); // only the Draft line
+
+    // The document's rate is NOT re-pinned (still auto @ 2.0)...
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { conversionStatus: true, exchangeRate: true },
+    });
+    expect(doc?.conversionStatus).toBe("auto");
+    expect(Number(doc?.exchangeRate)).toBe(2);
+
+    // ...but l2's USD is re-derived from that rate at the corrected price (1000 × 2),
+    // while the untouched sibling l1 keeps its figure.
+    const after = await prisma.quoteLine.findMany({
+      where: { id: { in: [l1.id, l2.id] } },
+      select: { id: true, convertedUsdPrice: true },
+    });
+    const byId = Object.fromEntries(after.map((r) => [r.id, Number(r.convertedUsdPrice)]));
+    expect(byId[l2.id]).toBe(2000);
+    expect(byId[l1.id]).toBe(2501);
   });
 });
