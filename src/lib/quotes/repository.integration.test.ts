@@ -415,3 +415,86 @@ describe("bulk submit over a Market Quote document (#88)", () => {
     expect(byId[l1.id]).toBe(2501);
   });
 });
+
+describe("Price Flag + Justification gate (#90 / ADR-0014)", () => {
+  // Client Price on every seeded item is 123.45; the study default QC Threshold is
+  // 0.25 (25%). The flag uses the SYMMETRIC relative difference
+  //   |usd - clientPrice| / ((usd + clientPrice) / 2)
+  // (price-flag.ts) — keep test usd figures consistent with that, not "% of CP".
+
+  it("blocks approval of a flagged line until a Justification exists, then approves through the revise loop", async () => {
+    // usd 1250.5 vs CP 123.45 ⇒ symmetric diff ≫ 0.25 ⇒ flagged (direction above).
+    const lineId = await submittedConverted(researcherA, itemG1, 1250.5);
+
+    // 1. Flagged + no justification ⇒ approval blocked.
+    const blocked = await approveLine(analyst, lineId);
+    expect(blocked).toEqual({ ok: false, reason: "needs-justification" });
+
+    // 2. Analyst returns the line for justification, stating only the DIRECTION —
+    //    never the Client Price value (ADR-0003). The reason is what the author reads.
+    const reason = "Quoted price is higher than expected — please justify or correct.";
+    const returned = await rejectLine(analyst, lineId, reason);
+    expect(returned.ok).toBe(true);
+    const rejected = await prisma.quoteLine.findUnique({
+      where: { id: lineId },
+      select: { state: true, rejectionReason: true },
+    });
+    expect(rejected?.state).toBe("Rejected");
+    expect(rejected?.rejectionReason).toBe(reason);
+    expect(rejected?.rejectionReason).not.toContain("123"); // no Client Price leak
+
+    // 3. Author revises → Draft, supplies a Justification, and resubmits.
+    await reviseLine(researcherA, lineId);
+    await updateDraftLine(researcherA, lineId, {
+      justification: "Genuine premium part; dealer is sole regional supplier.",
+    });
+    const resubmit = await submitMarketQuote(
+      researcherA,
+      (await prisma.quoteLine.findUnique({ where: { id: lineId }, select: { marketQuoteId: true } }))!
+        .marketQuoteId,
+    );
+    expect(resubmit.ok).toBe(true);
+
+    // 4. The justification PERSISTS across resubmit; the rejection reason is cleared.
+    const afterResubmit = await prisma.quoteLine.findUnique({
+      where: { id: lineId },
+      select: { state: true, rejectionReason: true, justification: true },
+    });
+    expect(afterResubmit?.state).toBe("Submitted");
+    expect(afterResubmit?.rejectionReason).toBeNull();
+    expect(afterResubmit?.justification).toContain("Genuine premium part");
+
+    // 5. Still flagged, but now justified ⇒ approval succeeds.
+    const approved = await approveLine(analyst, lineId);
+    expect(approved).toEqual({ ok: true, state: "Approved" });
+  });
+
+  it("approves an in-range (unflagged) line straight through, no justification needed", async () => {
+    // usd 130 vs CP 123.45 ⇒ symmetric diff ≈ 0.052 < 0.25 ⇒ not flagged.
+    const lineId = await submittedConverted(researcherA, itemG1, 130);
+    const approved = await approveLine(analyst, lineId);
+    expect(approved).toEqual({ ok: true, state: "Approved" });
+  });
+
+  it("uses the per-item QC Threshold over the study default (fallback override)", async () => {
+    // A tight per-item threshold (0.05) on an item the study default (0.25) would
+    // pass: usd 150 vs CP 123.45 ⇒ symmetric diff ≈ 0.194 — inside 0.25 but outside
+    // 0.05. Flagged ⇒ the per-item value was resolved, not the study default.
+    const tight = await prisma.benchmarkItem.create({
+      data: {
+        studyId,
+        clientId: tenantId,
+        country: "Germany",
+        clientItemNumber: "TIGHT",
+        clientItemNumberKey: "tight",
+        itemDescription: "Tight-tolerance item",
+        requiredQuotes: 2,
+        clientPrice: "123.4500",
+        qcThreshold: "0.0500",
+      },
+    });
+    const lineId = await submittedConverted(researcherA, tight.id, 150);
+    const blocked = await approveLine(analyst, lineId);
+    expect(blocked).toEqual({ ok: false, reason: "needs-justification" });
+  });
+});
