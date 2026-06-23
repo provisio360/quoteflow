@@ -28,6 +28,10 @@ export type PriceFlagResult =
       readonly comparable: true;
       readonly flagged: boolean;
       readonly direction: "above" | "below" | "equal";
+      /** The symmetric relative difference as a FRACTION (the value compared to
+       *  the threshold). The Internal Export's "Quoted Price Difference to Client
+       *  Price" column reads this directly (ADR-0029). */
+      readonly relativeDiff: number;
       readonly percentDiff: number;
     };
 
@@ -52,5 +56,5 @@ export function evaluatePriceFlag(input: PriceFlagInput): PriceFlagResult {
   const relativeDiff = mean === 0 ? 0 : Math.abs(a - b) / mean;
   const percentDiff = relativeDiff * 100;
   const direction = a > b ? "above" : a < b ? "below" : "equal";
-  return { comparable: true, flagged: relativeDiff > threshold, direction, percentDiff };
+  return { comparable: true, flagged: relativeDiff > threshold, direction, relativeDiff, percentDiff };
 }

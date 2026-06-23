@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import ExcelJS from "exceljs";
-import { renderWorkbook } from "./render";
+import { renderWorkbook, sanitizeSheetName } from "./render";
 import type { WorkbookData } from "@/domains/export/workbook";
 
 // Proves the generic WorkbookData → .xlsx renderer (issue #15) produces a real,
@@ -39,5 +39,16 @@ describe("renderWorkbook", () => {
     expect(quotes.getRow(1).values).toEqual([undefined, "Country", "Price", "Notes"]);
     expect(quotes.getRow(2).values).toEqual([undefined, "Germany", 1200]);
     expect(quotes.getRow(3).values).toEqual([undefined, "France", 900, "ex-demo"]);
+  });
+});
+
+describe("sanitizeSheetName", () => {
+  it("strips Excel-illegal characters and caps the name at 31 chars", () => {
+    expect(sanitizeSheetName("Q2 2026: Brazil/Boznia pump pricing study")).toBe("Q2 2026  Brazil Boznia pump pri");
+    expect(sanitizeSheetName("Q2 2026: Brazil/Boznia pump pricing study").length).toBeLessThanOrEqual(31);
+  });
+
+  it("falls back to a default when the name is empty after cleaning", () => {
+    expect(sanitizeSheetName("   ")).toBe("Sheet1");
   });
 });

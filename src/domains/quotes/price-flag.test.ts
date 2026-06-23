@@ -11,21 +11,21 @@ describe("evaluatePriceFlag", () => {
     // 110 vs 100: diff = |110-100| / ((110+100)/2) ≈ 0.0952 < 0.25.
     expect(
       evaluatePriceFlag({ usdPricePerUnit: 110, clientPrice: 100, threshold: 0.25 }),
-    ).toEqual({ comparable: true, flagged: false, direction: "above", percentDiff: expect.closeTo(9.5238, 3) });
+    ).toEqual({ comparable: true, flagged: false, direction: "above", relativeDiff: expect.closeTo(0.0952, 3), percentDiff: expect.closeTo(9.5238, 3) });
   });
 
   it("flags a quote dearer than the benchmark beyond the threshold (direction above)", () => {
     // 150 vs 100: diff = 50 / 125 = 0.40 > 0.25.
     expect(
       evaluatePriceFlag({ usdPricePerUnit: 150, clientPrice: 100, threshold: 0.25 }),
-    ).toEqual({ comparable: true, flagged: true, direction: "above", percentDiff: 40 });
+    ).toEqual({ comparable: true, flagged: true, direction: "above", relativeDiff: 0.4, percentDiff: 40 });
   });
 
   it("flags a quote cheaper than the benchmark beyond the threshold (direction below)", () => {
     // 60 vs 100: diff = 40 / 80 = 0.50 > 0.25.
     expect(
       evaluatePriceFlag({ usdPricePerUnit: 60, clientPrice: 100, threshold: 0.25 }),
-    ).toEqual({ comparable: true, flagged: true, direction: "below", percentDiff: 50 });
+    ).toEqual({ comparable: true, flagged: true, direction: "below", relativeDiff: 0.5, percentDiff: 50 });
   });
 
   it("is not comparable when the quote has no USD price-per-unit (pending/unconverted)", () => {
@@ -44,6 +44,6 @@ describe("evaluatePriceFlag", () => {
     // Choose a = 100, b = 60: diff = 40 / 80 = 0.50, threshold = 0.50.
     expect(
       evaluatePriceFlag({ usdPricePerUnit: 100, clientPrice: 60, threshold: 0.5 }),
-    ).toEqual({ comparable: true, flagged: false, direction: "above", percentDiff: 50 });
+    ).toEqual({ comparable: true, flagged: false, direction: "above", relativeDiff: 0.5, percentDiff: 50 });
   });
 });
