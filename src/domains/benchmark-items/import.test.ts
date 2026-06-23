@@ -138,7 +138,7 @@ describe("validateImport — all-or-nothing", () => {
       gridOf(
         {}, // row 2: valid
         { "Client Item Number": "PN-200", Country: "Atlantis", "Client Item Price": "-5" }, // row 3: two errors
-        { "Client Item Number": "PN-300", "Required Quotes": "2.5", "Client Item Offering": "Gold" }, // row 4: two errors
+        { "Client Item Number": "PN-300", "Required Quotes": "2.5", Quantity: "0" }, // row 4: two errors
       ),
     );
     expect(result.ok).toBe(false);
@@ -190,6 +190,40 @@ describe("validateImport — file structure & headers", () => {
     expect(result.errors).toContainEqual(
       expect.objectContaining({ row: null, message: expect.stringMatching(/no data|empty/i) }),
     );
+  });
+});
+
+describe("validateImport — client artifact header aliases", () => {
+  // The labels a real client brief carries: Country is "Market", most item
+  // columns are "Client"-prefixed, and Required Competitors are unspaced. Each
+  // must resolve to the same field as its canonical label.
+  const ALIAS_OF: Record<string, string> = {
+    Country: "Market",
+    "Item Description": "Client Item Description",
+    "Configuration Comment": "Client Item Configuration Comment",
+    Quantity: "Client Item Quantity",
+    "Source Unit Identifier": "Client Source Unit Identifier",
+    "Item Secondary Description": "Client Item Secondary Description",
+    "Required Competitor 1": "Required Competitor1",
+    "Required Competitor 2": "Required Competitor2",
+  };
+  const aliasHeaders = HEADERS.map((h) => ALIAS_OF[h] ?? h);
+  const aliasRow = HEADERS.map((h) => base[h] ?? "");
+
+  it("accepts a brief that uses the client aliases, mapping every aliased column", () => {
+    const result = validateImport([aliasHeaders, aliasRow]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      country: "Germany",
+      itemDescription: "Hydraulic pump",
+      configurationComment: "With seal kit",
+      quantity: 10,
+      sourceUnitIdentifier: "Rev-2",
+      itemSecondaryDescription: "Secondary desc",
+      requiredCompetitors: ["Bosch", "Denso"],
+    });
   });
 });
 
@@ -289,29 +323,31 @@ describe("validateImport — Required Competitors (advisory, up to 10)", () => {
   });
 });
 
-describe("validateImport — Client Item Offering (Standard/Premium)", () => {
-  it.each([["standard", "Standard"], ["  PREMIUM ", "Premium"]])(
-    "normalizes %s to canonical casing",
-    (input, expected) => {
-      const result = validateImport(gridOf({ "Client Item Offering": input }));
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.items[0].clientItemOffering).toBe(expected);
-    },
-  );
+describe("validateImport — Client Item Offering (free-form)", () => {
+  it.each([
+    "Standard",
+    "Premium",
+    "Gold",
+    "Standard (Premium dunkle)",
+  ])("keeps any non-blank offering verbatim: %s", (input) => {
+    const result = validateImport(gridOf({ "Client Item Offering": input }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items[0].clientItemOffering).toBe(input);
+  });
+
+  it("trims surrounding whitespace", () => {
+    const result = validateImport(gridOf({ "Client Item Offering": "  Premium " }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items[0].clientItemOffering).toBe("Premium");
+  });
 
   it("is null when blank", () => {
     const result = validateImport(gridOf({ "Client Item Offering": "" }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items[0].clientItemOffering).toBeNull();
-  });
-
-  it("rejects an offering outside Standard/Premium", () => {
-    const result = validateImport(gridOf({ "Client Item Offering": "Gold" }));
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.errors).toContainEqual(expect.objectContaining({ row: 2, field: "clientItemOffering" }));
   });
 });
 

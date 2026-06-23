@@ -71,9 +71,18 @@ const CANONICAL_HEADERS: Record<BenchmarkItemField, string> = {
   clientItemPriceQuantity: "Client Item Price Quantity",
 };
 
-/** The Client Item Offering values v1 recognises (matched case-insensitively). */
-const CLIENT_ITEM_OFFERINGS = ["Standard", "Premium"] as const;
-export type ClientItemOffering = (typeof CLIENT_ITEM_OFFERINGS)[number];
+/** Extra header labels a brief may carry for a field, beyond the canonical label
+ *  (matched just as loosely). Real client briefs name Country "Market" and prefix
+ *  most item columns with "Client" — e.g. "Client Item Description". Both the
+ *  canonical label and any alias resolve to the same field. */
+const HEADER_ALIASES: Partial<Record<BenchmarkItemField, readonly string[]>> = {
+  country: ["Market"],
+  itemDescription: ["Client Item Description"],
+  configurationComment: ["Client Item Configuration Comment"],
+  quantity: ["Client Item Quantity"],
+  sourceUnitIdentifier: ["Client Source Unit Identifier"],
+  itemSecondaryDescription: ["Client Item Secondary Description"],
+};
 
 /** A validated, normalised Benchmark Item ready to upsert (numbers parsed,
  *  country canonicalised, item-number key folded). `clientPrice` is the derived
@@ -88,7 +97,8 @@ export interface ValidatedBenchmarkItem {
   readonly clientSourceUnit: string | null;
   readonly sourceUnitIdentifier: string | null;
   readonly clientCategory: string | null;
-  readonly clientItemOffering: ClientItemOffering | null;
+  /** Free-form client offering label, kept verbatim; null when blank (#86). */
+  readonly clientItemOffering: string | null;
   readonly itemSecondaryDescription: string | null;
   readonly clientSecondaryItemNumber: string | null;
   readonly requiredQuotes: number;
@@ -209,11 +219,9 @@ export function validateImport(grid: readonly (readonly string[])[]): ImportVali
     if (qcThreshold !== null && (!Number.isFinite(qcThreshold) || qcThreshold <= 0))
       fail("qcThreshold", "Price Difference Threshold must be a fraction greater than 0 when provided");
 
-    // Client Item Offering: optional, but a present value must be Standard/Premium.
-    const offeringRaw = cell("clientItemOffering");
-    const clientItemOffering = canonicalOffering(offeringRaw);
-    if (offeringRaw !== "" && clientItemOffering === null)
-      fail("clientItemOffering", "Client Item Offering must be Standard or Premium");
+    // Client Item Offering: optional, free-form. Kept verbatim, blank → null;
+    // no enum constraint (briefs annotate it, e.g. "Standard (Premium dunkle)").
+    const clientItemOffering = cell("clientItemOffering") || null;
 
     // Quantity is optional, but a value that IS present must be a positive whole
     // number (the client's own quantity for the part).
@@ -279,8 +287,14 @@ function mapHeaders(header: readonly string[]): Map<BenchmarkItemField, number> 
 
   const columnOf = new Map<BenchmarkItemField, number>();
   for (const field of BENCHMARK_ITEM_FIELDS) {
-    const idx = byLabel.get(normaliseHeader(CANONICAL_HEADERS[field]));
-    if (idx !== undefined) columnOf.set(field, idx);
+    const labels = [CANONICAL_HEADERS[field], ...(HEADER_ALIASES[field] ?? [])];
+    for (const label of labels) {
+      const idx = byLabel.get(normaliseHeader(label));
+      if (idx !== undefined) {
+        columnOf.set(field, idx);
+        break;
+      }
+    }
   }
   return columnOf;
 }
@@ -293,15 +307,12 @@ function mapCompetitorColumns(header: readonly string[]): number[] {
 
   const columns: number[] = [];
   for (let n = 1; n <= MAX_REQUIRED_COMPETITORS; n++) {
-    const idx = byLabel.get(normaliseHeader(`Required Competitor ${n}`));
+    // Accept both "Required Competitor 1" and the unspaced "Required Competitor1"
+    // that client briefs emit (normaliseHeader keeps them distinct).
+    const idx =
+      byLabel.get(normaliseHeader(`Required Competitor ${n}`)) ??
+      byLabel.get(normaliseHeader(`Required Competitor${n}`));
     if (idx !== undefined) columns.push(idx);
   }
   return columns;
-}
-
-/** Fold a raw Client Item Offering to its canonical casing, or null if blank or
- *  unrecognised (the caller distinguishes blank from invalid). */
-function canonicalOffering(raw: string): ClientItemOffering | null {
-  const folded = raw.trim().toLowerCase();
-  return CLIENT_ITEM_OFFERINGS.find((o) => o.toLowerCase() === folded) ?? null;
 }

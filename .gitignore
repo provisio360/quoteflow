@@ -16,6 +16,9 @@ research/
 # Generated pricing-study spreadsheets (local scratch outputs, non-authoritative)
 pricing_study_*.xlsx
 
+# Excel lock files (created while a workbook is open)
+~$*.xlsx
+
 # Node / build output
 node_modules/
 .next/
