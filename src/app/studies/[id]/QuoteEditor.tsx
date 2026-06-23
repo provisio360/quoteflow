@@ -6,20 +6,26 @@ import {
   createMarketQuoteAction,
   addQuoteLineAction,
   updateDraftLineAction,
+  updateMarketQuoteAction,
 } from "@/lib/quotes/actions";
-import type { QuoteLineFields } from "@/lib/quotes/repository";
+import type { MarketQuoteHeaderFields, QuoteLineFields } from "@/lib/quotes/repository";
 
-// The Quote entry/edit form for a Researcher (#87). A Market Quote is a dealer
-// DOCUMENT (source/date/currency) that has many Quote Lines. In CREATE mode this
-// form captures the document header AND the first line, then creates a one-line
-// Market Quote (the common by-row case, ADR-0026); in EDIT mode it edits an
-// existing Draft line's per-item fields (the header is fixed once created).
+// The Quote entry/edit form for a Researcher (#87, #97). A Market Quote is a dealer
+// DOCUMENT (source/date/currency) that has many Quote Lines. Modes:
+//   create     — capture the document header AND a first line, creating a one-line
+//                Market Quote (the common by-row case, ADR-0026);
+//   edit       — edit an existing Draft line's per-item fields;
+//   addLine    — add another Draft line to an EXISTING document (#97/Q5);
+//   editHeader — edit an existing Draft document's header (#97/Q6), allowed only
+//                while the document is unconverted (gated in the repository).
 // Uncontrolled — read on submit — with empty fields sent as undefined so an edit
 // only touches what was filled. Client Price is not a line field.
 
 type Mode =
   | { type: "create"; studyId: string; country: string; itemId: string }
-  | { type: "edit"; lineId: string };
+  | { type: "edit"; lineId: string }
+  | { type: "addLine"; marketQuoteId: string; itemId: string }
+  | { type: "editHeader"; marketQuoteId: string };
 
 // Document-header text fields (create only) and the line fields. Kept as plain
 // [name, label] pairs to render a compact grid (ADR-0022: plain components).
@@ -59,6 +65,18 @@ function lineFieldsFromForm(fd: FormData): QuoteLineFields {
   };
 }
 
+function headerFieldsFromForm(fd: FormData): MarketQuoteHeaderFields {
+  return {
+    sourceName: str(fd, "sourceName") ?? null,
+    sourceLocation: str(fd, "sourceLocation") ?? null,
+    sourceUrl: str(fd, "sourceUrl") ?? null,
+    currency: str(fd, "currency") ?? null,
+    dateQuoteReceived: fd.get("dateQuoteReceived")
+      ? new Date(String(fd.get("dateQuoteReceived")))
+      : null,
+  };
+}
+
 const input = { padding: "0.3rem 0.4rem", width: "100%", boxSizing: "border-box" } as const;
 
 export function QuoteEditor({
@@ -77,32 +95,39 @@ export function QuoteEditor({
   function handle(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const fd = new FormData(event.currentTarget);
-    const lineFields = lineFieldsFromForm(fd);
     setMessage(null);
     startTransition(async () => {
       if (mode.type === "create") {
         // Create the one-line document: header first (allocates the Market Quote
         // Number), then its single line (allocates the Quote Line Number).
-        const doc = await createMarketQuoteAction(mode.studyId, mode.country, {
-          sourceName: str(fd, "sourceName") ?? null,
-          sourceLocation: str(fd, "sourceLocation") ?? null,
-          sourceUrl: str(fd, "sourceUrl") ?? null,
-          currency: str(fd, "currency") ?? null,
-          dateQuoteReceived: fd.get("dateQuoteReceived")
-            ? new Date(String(fd.get("dateQuoteReceived")))
-            : null,
-        });
+        const doc = await createMarketQuoteAction(
+          mode.studyId,
+          mode.country,
+          headerFieldsFromForm(fd),
+        );
         if (!doc.ok) {
           setMessage(doc.message ?? "Couldn't create the Market Quote.");
           return;
         }
-        const line = await addQuoteLineAction(doc.id, mode.itemId, lineFields);
+        const line = await addQuoteLineAction(doc.id, mode.itemId, lineFieldsFromForm(fd));
         if (!line.ok) {
           setMessage(line.message ?? "Couldn't add the Quote Line.");
           return;
         }
+      } else if (mode.type === "addLine") {
+        const line = await addQuoteLineAction(mode.marketQuoteId, mode.itemId, lineFieldsFromForm(fd));
+        if (!line.ok) {
+          setMessage(line.message ?? "Couldn't add the Quote Line.");
+          return;
+        }
+      } else if (mode.type === "editHeader") {
+        const result = await updateMarketQuoteAction(mode.marketQuoteId, headerFieldsFromForm(fd));
+        if (!result.ok) {
+          setMessage(result.message ?? "Couldn't save the document details.");
+          return;
+        }
       } else {
-        const result = await updateDraftLineAction(mode.lineId, lineFields);
+        const result = await updateDraftLineAction(mode.lineId, lineFieldsFromForm(fd));
         if (!result.ok) {
           setMessage(result.message ?? "Couldn't save the Quote Line.");
           return;
@@ -113,9 +138,21 @@ export function QuoteEditor({
     });
   }
 
+  const showHeader = mode.type === "create" || mode.type === "editHeader";
+  const showLine = mode.type === "create" || mode.type === "edit" || mode.type === "addLine";
+  const submitLabel = pending
+    ? "Saving…"
+    : mode.type === "create"
+      ? "Add quote"
+      : mode.type === "addLine"
+        ? "Add line"
+        : mode.type === "editHeader"
+          ? "Save details"
+          : "Save";
+
   return (
     <form onSubmit={handle} style={{ display: "grid", gap: "0.4rem", margin: "0.5rem 0", padding: "0.6rem", border: "1px solid #ddd" }}>
-      {mode.type === "create" && (
+      {showHeader && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
           {HEADER_FIELDS.map(([name, label]) => (
             <label key={name} style={{ fontSize: "0.85rem" }}>
@@ -129,33 +166,37 @@ export function QuoteEditor({
           </label>
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
-        {LINE_TEXT_FIELDS.map(([name, label]) => (
-          <label key={name} style={{ fontSize: "0.85rem" }}>
-            {label}
-            <input name={name} defaultValue={initial?.[name] ?? ""} style={input} />
+      {showLine && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
+            {LINE_TEXT_FIELDS.map(([name, label]) => (
+              <label key={name} style={{ fontSize: "0.85rem" }}>
+                {label}
+                <input name={name} defaultValue={initial?.[name] ?? ""} style={input} />
+              </label>
+            ))}
+            <label style={{ fontSize: "0.85rem" }}>
+              Price * (local)
+              <input name="price" type="number" step="0.0001" defaultValue={initial?.price ?? ""} style={input} />
+            </label>
+            <label style={{ fontSize: "0.85rem" }}>
+              Quantity *
+              <input name="quantityQuoted" type="number" defaultValue={initial?.quantityQuoted ?? ""} style={input} />
+            </label>
+          </div>
+          <label style={{ fontSize: "0.85rem" }}>
+            Notes
+            <textarea name="notes" rows={2} defaultValue={initial?.notes ?? ""} style={input} />
           </label>
-        ))}
-        <label style={{ fontSize: "0.85rem" }}>
-          Price * (local)
-          <input name="price" type="number" step="0.0001" defaultValue={initial?.price ?? ""} style={input} />
-        </label>
-        <label style={{ fontSize: "0.85rem" }}>
-          Quantity *
-          <input name="quantityQuoted" type="number" defaultValue={initial?.quantityQuoted ?? ""} style={input} />
-        </label>
-      </div>
-      <label style={{ fontSize: "0.85rem" }}>
-        Notes
-        <textarea name="notes" rows={2} defaultValue={initial?.notes ?? ""} style={input} />
-      </label>
-      <label style={{ fontSize: "0.85rem" }}>
-        Justification (if asked to confirm your price)
-        <textarea name="justification" rows={2} defaultValue={initial?.justification ?? ""} style={input} />
-      </label>
+          <label style={{ fontSize: "0.85rem" }}>
+            Justification (if asked to confirm your price)
+            <textarea name="justification" rows={2} defaultValue={initial?.justification ?? ""} style={input} />
+          </label>
+        </>
+      )}
       <div style={{ display: "flex", gap: "0.4rem" }}>
         <button type="submit" disabled={pending} style={{ padding: "0.3rem 0.8rem" }}>
-          {pending ? "Saving…" : mode.type === "create" ? "Add quote" : "Save"}
+          {submitLabel}
         </button>
         <button type="button" onClick={onDone} style={{ padding: "0.3rem 0.8rem" }}>
           Cancel

@@ -20,7 +20,11 @@ import {
   listAssignmentsForResearcher,
   listAssignmentsForStudy,
 } from "@/lib/assignments/repository";
-import { listLinesForItem, type QuoteLineView } from "@/lib/quotes/repository";
+import {
+  listLinesForItem,
+  listDraftMarketQuotesForResearcher,
+  type QuoteLineView,
+} from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
 import { canReleaseCountry } from "@/domains/authz/release";
 import { listCountryReleaseStatus } from "@/lib/release/repository";
@@ -28,7 +32,9 @@ import { ClientPriceList } from "./ClientPriceList";
 import { BenchmarkComparison } from "./BenchmarkComparison";
 import { CountryAssignRow } from "./CountryAssignRow";
 import { ResearcherItem } from "./ResearcherItem";
+import { DraftMarketQuotes, type DraftDocGroup } from "./DraftMarketQuotes";
 import {
+  addLineCandidates,
   resolveResearcherEntries,
   type GuidanceFields,
   type ItemMode,
@@ -84,6 +90,9 @@ export default async function StudyDetailPage({
   // per-item mode (mine / claimable / claimed / locked). Client Price never loaded.
   const mayResearch = canSelfAssignBenchmarkItem(principal);
   const research = mayResearch ? await buildResearcherView(principal, study.id) : [];
+  // Document-grouped Draft submit surface (#97): the researcher's own Draft Market
+  // Quotes, each with the items a new line may be added for.
+  const draftDocs = mayResearch ? await buildDraftDocGroups(principal, study.id) : [];
 
   // Analyst release gate (#13): each Country's eligibility + current release state.
   const mayRelease = canReleaseCountry(principal);
@@ -147,6 +156,8 @@ export default async function StudyDetailPage({
           )}
         </section>
       )}
+
+      {mayResearch && <DraftMarketQuotes groups={draftDocs} />}
 
       {mayResearch && (
         <section style={{ marginTop: "2rem" }}>
@@ -282,4 +293,27 @@ async function buildResearcherView(
     byCountry.set(e.item.country, list);
   }
   return [...byCountry.entries()].map(([country, list]) => ({ country, items: list }));
+}
+
+/** The researcher's own Draft Market Quotes for the document-grouped submit panel
+ *  (#97), each annotated with the items a new line may be added for — the items
+ *  they lead in the document's Country that the document does not already cover
+ *  (the pure `addLineCandidates`). */
+async function buildDraftDocGroups(
+  principal: Parameters<typeof listDraftMarketQuotesForResearcher>[0] & { userId: string },
+  studyId: string,
+): Promise<DraftDocGroup[]> {
+  const [groups, items] = await Promise.all([
+    listDraftMarketQuotesForResearcher(principal, studyId),
+    listBenchmarkItemsForResearcher(principal, studyId),
+  ]);
+  return groups.map((g) => ({
+    ...g,
+    addCandidates: addLineCandidates(
+      items,
+      g.country,
+      new Set(g.itemIdsOnDocument),
+      principal.userId,
+    ),
+  }));
 }

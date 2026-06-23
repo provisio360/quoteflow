@@ -5,8 +5,10 @@ import {
   createMarketQuote,
   addQuoteLine,
   updateDraftLine,
+  updateMarketQuote,
   deleteDraftLine,
   listLinesForItem,
+  listDraftMarketQuotesForResearcher,
   submitMarketQuote,
   approveLine,
   rejectLine,
@@ -551,5 +553,89 @@ describe("Price Flag + Justification gate (#90 / ADR-0014)", () => {
     const lineId = await submittedConverted(researcherA, tight.id, 150);
     const blocked = await approveLine(analyst, lineId);
     expect(blocked).toEqual({ ok: false, reason: "needs-justification" });
+  });
+});
+
+describe("listDraftMarketQuotesForResearcher (#97 — document-grouped Draft view)", () => {
+  it("groups my-authored documents that have a Draft line, carrying doc facts and item labels", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+
+    const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
+    const mine = groups.find((g) => g.marketQuoteId === d.id);
+    expect(mine).toBeDefined();
+    expect(mine!.country).toBe("Germany");
+    expect(mine!.sourceName).toBe("Acme Equipment");
+    expect(mine!.currency).toBe("EUR");
+    expect(mine!.conversionStatus).toBeNull(); // never submitted
+    // Both Draft lines, each with its Benchmark Item label for the panel row.
+    expect(mine!.lines.map((l) => l.itemLabel).sort()).toEqual(["G1 Item G1", "G2 Item G2"]);
+  });
+
+  it("shows only the Draft lines of a partially-submitted document", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+    await submitMarketQuote(researcherA, d.id); // both → Submitted, doc → pending
+    // Analyst rejects l1; author revises it back to Draft. l2 stays Submitted.
+    await rejectLine(analyst, l1.id, "Please re-check.");
+    await reviseLine(researcherA, l1.id);
+
+    const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
+    const mine = groups.find((g) => g.marketQuoteId === d.id);
+    expect(mine).toBeDefined();
+    expect(mine!.lines.map((l) => l.lineId)).toEqual([l1.id]); // only the revised Draft
+  });
+
+  it("excludes another researcher's documents", async () => {
+    const peer = await createMarketQuote(researcherB, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherB, peer.id, itemG1, completeLine);
+
+    const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
+    expect(groups.some((g) => g.marketQuoteId === peer.id)).toBe(false);
+  });
+
+  it("excludes a document with no Draft lines", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await submitMarketQuote(researcherA, d.id); // its only line → Submitted
+
+    const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
+    expect(groups.some((g) => g.marketQuoteId === d.id)).toBe(false);
+  });
+});
+
+describe("updateMarketQuote (#97 — edit document header)", () => {
+  it("lets the author edit the header while the document is unconverted", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", {});
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await updateMarketQuote(researcherA, d.id, {
+      sourceName: "New Dealer",
+      currency: "USD",
+      dateQuoteReceived: new Date("2026-06-02"),
+    });
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { sourceName: true, currency: true },
+    });
+    expect(doc?.sourceName).toBe("New Dealer");
+    expect(doc?.currency).toBe("USD");
+  });
+
+  it("refuses a header edit by a non-author", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await expect(
+      updateMarketQuote(researcherB, d.id, { sourceName: "Hijack" }),
+    ).rejects.toThrow(QuoteAccessError);
+  });
+
+  it("refuses a header edit once the document has been submitted (rate is pinned)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await submitMarketQuote(researcherA, d.id); // conversionStatus → pending
+    await expect(
+      updateMarketQuote(researcherA, d.id, { dateQuoteReceived: new Date("2026-07-01") }),
+    ).rejects.toThrow(QuoteAccessError);
   });
 });
