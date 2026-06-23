@@ -5,7 +5,7 @@ import type { Principal } from "@/domains/authz/principal";
 import { tenantVisibility } from "@/domains/authz/visibility";
 import { visibilityWhere } from "@/lib/studies/where";
 import { buildClientExport, type ClientExportItem } from "@/domains/export/client-export";
-import { buildInternalExport, type InternalExportQuote } from "@/domains/export/internal-export";
+import { buildInternalExport, type InternalExportLine } from "@/domains/export/internal-export";
 import { renderWorkbook } from "./render";
 
 // Tenant-aware data-access adapter for the exports (issue #15). It owns what the
@@ -50,14 +50,16 @@ function mayRunClientExport(principal: Principal): boolean {
   );
 }
 
-// The shared line columns both exports read, with the parent Market Quote joined
-// for source/currency (ADR-0026). The pure builders still take `quoteNumber`,
-// `dealerName/Location`, and the free-text `leadTime/warranty/discount`, so the
-// adapter maps the Quote Line's number, its document's source, and the structured
-// fields into those shapes — keeping the export domain cores untouched this slice.
+// The full line + parent-document field set both exports read, reshaped to the
+// real artifact columns (ADR-0029, #93). The parent Market Quote is joined for the
+// document facts (number, source, currency, date, rate); the structured line
+// fields (lead time, two warranties, discount flags, landed cost, two notes) map
+// straight onto the artifact's split value/unit columns.
 const LINE_EXPORT_SELECT = {
   quoteLineNumber: true,
   competitorBrand: true,
+  competitorPartNumber: true,
+  competitorPartDescription: true,
   price: true,
   quantityQuoted: true,
   convertedUsdPrice: true,
@@ -67,16 +69,49 @@ const LINE_EXPORT_SELECT = {
   leadTimeUnit: true,
   warranty1Value: true,
   warranty1Unit: true,
+  warranty2Value: true,
+  warranty2Unit: true,
+  discountAvailable: true,
+  discountApplied: true,
   discountValue: true,
   discountType: true,
+  landedCostIncluded: true,
+  landedCostNote: true,
   notes: true,
-  marketQuote: { select: { sourceName: true, sourceLocation: true, currency: true } },
+  notesSecondary: true,
+  confidenceCode: true,
+  paperQuote: true,
+  marketQuote: {
+    select: {
+      marketQuoteNumber: true,
+      sourceName: true,
+      sourceLocation: true,
+      sourceUrl: true,
+      currency: true,
+      dateQuoteReceived: true,
+      exchangeRate: true,
+    },
+  },
+} as const;
+
+// The Benchmark Item context the artifact rows carry (the client-item columns),
+// shared by both exports; the Internal Export additionally reads the Client Price.
+const ITEM_EXPORT_SELECT = {
+  country: true,
+  clientCategory: true,
+  clientSourceUnit: true,
+  sourceUnitIdentifier: true,
+  clientItemOffering: true,
+  itemDescription: true,
+  itemSecondaryDescription: true,
+  quantity: true,
+  clientItemNumber: true,
+  clientSecondaryItemNumber: true,
+  configurationComment: true,
 } as const;
 
 const CLIENT_ITEM_SELECT = {
-  country: true,
-  clientItemNumber: true,
-  itemDescription: true,
+  ...ITEM_EXPORT_SELECT,
   quoteLines: {
     where: { state: "Approved" as const },
     orderBy: { quoteLineNumber: "asc" as const },
@@ -101,11 +136,12 @@ export async function exportClientWorkbook(
     throw new ExportAccessError("Only a Client User, Engagement Manager, Analyst, or Admin may run the client export");
   }
 
-  const items = await withTenant(principal, async (tx) => {
+  const result = await withTenant(principal, async (tx) => {
     const study = await scopedStudy(tx, principal, studyId);
-    return study === null ? [] : await loadReleasedItems(tx, studyId);
+    if (study === null) return { name: "", items: [] as ClientExportItem[] };
+    return { name: study.name, items: await loadReleasedItems(tx, studyId) };
   });
-  return renderWorkbook(buildClientExport(items));
+  return renderWorkbook(buildClientExport(result.name, result.items));
 }
 
 /** Load every Benchmark Item in a study's CURRENTLY-released countries with its
@@ -127,32 +163,55 @@ async function loadReleasedItems(
   });
 
   return rows.map((row) => ({
-    country: row.country,
+    market: row.country,
+    clientCategory: row.clientCategory,
+    clientSourceUnit: row.clientSourceUnit,
+    clientSourceUnitIdentifier: row.sourceUnitIdentifier,
+    clientItemOffering: row.clientItemOffering,
+    clientItemDescription: row.itemDescription,
+    clientItemSecondaryDescription: row.itemSecondaryDescription,
+    clientItemQuantity: row.quantity,
     clientItemNumber: row.clientItemNumber,
-    itemDescription: row.itemDescription,
+    clientSecondaryItemNumber: row.clientSecondaryItemNumber,
+    clientItemConfigurationComment: row.configurationComment,
     quotes: row.quoteLines.map((q) => ({
-      quoteNumber: q.quoteLineNumber,
+      rowId: q.quoteLineNumber,
+      marketQuoteNumber: q.marketQuote.marketQuoteNumber,
+      sourceName: q.marketQuote.sourceName,
+      sourceLocation: q.marketQuote.sourceLocation,
+      sourceUrl: q.marketQuote.sourceUrl,
       competitorBrand: q.competitorBrand,
-      dealerName: q.marketQuote.sourceName,
-      dealerLocation: q.marketQuote.sourceLocation,
-      price: toNumber(q.price),
-      currency: q.marketQuote.currency,
-      quantityQuoted: q.quantityQuoted,
-      convertedUsdPrice: toNumber(q.convertedUsdPrice),
-      usdPricePerUnit: toNumber(q.convertedUsdPricePerUnit),
+      competitorItemDescription: q.competitorPartDescription,
+      competitorItemQuantity: q.quantityQuoted,
+      competitorItemNumber: q.competitorPartNumber,
+      dateQuoteReceived: fmtDate(q.marketQuote.dateQuoteReceived),
+      currencyTypeQuoted: q.marketQuote.currency,
+      quotedPrice: toNumber(q.price),
+      currencyExchangeRate: toNumber(q.marketQuote.exchangeRate),
+      convertedPrice: toNumber(q.convertedUsdPrice),
+      convertedPricePerUnit: toNumber(q.convertedUsdPricePerUnit),
       stockStatus: q.stockStatus,
-      leadTime: fmtMeasure(q.leadTimeValue, q.leadTimeUnit),
-      warranty: fmtMeasure(q.warranty1Value, q.warranty1Unit),
-      discount: fmtMeasure(q.discountValue, q.discountType),
-      notes: q.notes,
+      shippingLeadTimeValue: toNumber(q.leadTimeValue),
+      shippingLeadTimeUnit: q.leadTimeUnit,
+      landedCostIncluded: q.landedCostIncluded,
+      landedCostNote: q.landedCostNote,
+      warranty1Value: toNumber(q.warranty1Value),
+      warranty1Unit: q.warranty1Unit,
+      warranty2Value: toNumber(q.warranty2Value),
+      warranty2Unit: q.warranty2Unit,
+      discountAvailable: q.discountAvailable,
+      discountApplied: q.discountApplied,
+      discountValue: toNumber(q.discountValue),
+      discountType: q.discountType,
+      otherNotes1: q.notes,
+      otherNotes2: q.notesSecondary,
+      confidenceCode: q.confidenceCode,
     })),
   }));
 }
 
 const INTERNAL_ITEM_SELECT = {
-  country: true,
-  clientItemNumber: true,
-  itemDescription: true,
+  ...ITEM_EXPORT_SELECT,
   clientPrice: true,
   quoteLines: {
     where: { NOT: { state: "Draft" as const } },
@@ -183,34 +242,60 @@ export async function exportInternalWorkbook(
   const study = await withTenant(principal, (tx) =>
     tx.study.findUnique({
       where: { id: studyId },
-      select: { clientId: true, qcThreshold: true, benchmarkItems: { orderBy: [{ country: "asc" }, { clientItemNumber: "asc" }], select: INTERNAL_ITEM_SELECT } },
+      select: { name: true, clientId: true, qcThreshold: true, benchmarkItems: { orderBy: [{ country: "asc" }, { clientItemNumber: "asc" }], select: INTERNAL_ITEM_SELECT } },
     }),
   );
   if (study === null) throw new ExportAccessError("Study not found");
 
-  const quotes: InternalExportQuote[] = [];
+  const lines: InternalExportLine[] = [];
   for (const item of study.benchmarkItems) {
     for (const q of item.quoteLines) {
-      quotes.push({
-        country: item.country,
+      lines.push({
+        rowId: q.quoteLineNumber,
+        market: item.country,
+        marketQuoteNumber: q.marketQuote.marketQuoteNumber,
+        clientCategory: item.clientCategory,
+        clientSourceUnit: item.clientSourceUnit,
+        clientSourceUnitIdentifier: item.sourceUnitIdentifier,
+        clientItemOffering: item.clientItemOffering,
+        clientItemDescription: item.itemDescription,
+        clientItemSecondaryDescription: item.itemSecondaryDescription,
+        clientItemQuantity: item.quantity,
         clientItemNumber: item.clientItemNumber,
-        itemDescription: item.itemDescription,
-        clientPrice: toNumber(item.clientPrice),
-        state: q.state,
-        quoteNumber: q.quoteLineNumber,
+        clientSecondaryItemNumber: item.clientSecondaryItemNumber,
+        clientItemConfigurationComment: item.configurationComment,
+        sourceName: q.marketQuote.sourceName,
+        sourceLocation: q.marketQuote.sourceLocation,
+        sourceUrl: q.marketQuote.sourceUrl,
         competitorBrand: q.competitorBrand,
-        dealerName: q.marketQuote.sourceName,
-        dealerLocation: q.marketQuote.sourceLocation,
-        price: toNumber(q.price),
-        currency: q.marketQuote.currency,
-        quantityQuoted: q.quantityQuoted,
-        convertedUsdPrice: toNumber(q.convertedUsdPrice),
-        usdPricePerUnit: toNumber(q.convertedUsdPricePerUnit),
+        competitorItemDescription: q.competitorPartDescription,
+        competitorItemQuantity: q.quantityQuoted,
+        competitorItemNumber: q.competitorPartNumber,
+        dateQuoteReceived: fmtDate(q.marketQuote.dateQuoteReceived),
+        currencyTypeQuoted: q.marketQuote.currency,
+        quotedPriceTotal: toNumber(q.price),
+        currencyExchangeRate: toNumber(q.marketQuote.exchangeRate),
+        convertedPrice: toNumber(q.convertedUsdPrice),
+        convertedPricePerUnit: toNumber(q.convertedUsdPricePerUnit),
+        clientItemPriceUsd: toNumber(item.clientPrice),
         stockStatus: q.stockStatus,
-        leadTime: fmtMeasure(q.leadTimeValue, q.leadTimeUnit),
-        warranty: fmtMeasure(q.warranty1Value, q.warranty1Unit),
-        discount: fmtMeasure(q.discountValue, q.discountType),
-        notes: q.notes,
+        shippingLeadTimeValue: toNumber(q.leadTimeValue),
+        shippingLeadTimeUnit: q.leadTimeUnit,
+        landedCostIncluded: q.landedCostIncluded,
+        landedCostNote: q.landedCostNote,
+        warranty1Value: toNumber(q.warranty1Value),
+        warranty1Unit: q.warranty1Unit,
+        warranty2Value: toNumber(q.warranty2Value),
+        warranty2Unit: q.warranty2Unit,
+        discountAvailable: q.discountAvailable,
+        discountApplied: q.discountApplied,
+        discountValue: toNumber(q.discountValue),
+        discountType: q.discountType,
+        otherNotes1: q.notes,
+        otherNotes2: q.notesSecondary,
+        confidenceCode: q.confidenceCode,
+        paperQuote: q.paperQuote,
+        state: q.state,
         justification: q.justification,
         rejectionReason: q.rejectionReason,
       });
@@ -218,7 +303,7 @@ export async function exportInternalWorkbook(
   }
 
   const buffer = await renderWorkbook(
-    buildInternalExport(quotes, study.qcThreshold.toNumber()),
+    buildInternalExport(study.name, lines, study.qcThreshold.toNumber()),
   );
 
   // Audit AFTER successful generation (ADR-0018): a failed export logs nothing.
@@ -234,7 +319,7 @@ export async function exportInternalWorkbook(
 async function scopedStudy(tx: TenantClient, principal: Principal, studyId: string) {
   return tx.study.findFirst({
     where: { AND: [visibilityWhere(tenantVisibility(principal)), { id: studyId }] },
-    select: { id: true },
+    select: { id: true, name: true },
   });
 }
 
@@ -243,11 +328,10 @@ function toNumber(value: Prisma.Decimal | null): number | null {
   return value === null ? null : value.toNumber();
 }
 
-/** Render a structured value+unit pair as the single free-text cell the export
- *  builders still take (e.g. lead time, warranty, discount). Null when no value —
- *  a migrated row's legacy free-text lives in its secondary note instead. */
-function fmtMeasure(value: Prisma.Decimal | null, unit: string | null): string | null {
-  if (value === null) return null;
-  const n = value.toNumber();
-  return unit === null ? `${n}` : `${n} ${unit}`;
+/** A pinned Date Quote Received → the artifact's bare `YYYY-MM-DD` string. The
+ *  date is stored at UTC midnight (CONTEXT.md: Exchange Rate), so the UTC slice is
+ *  the calendar day the dealer quoted; formatting here keeps the pure builders
+ *  free of timezone concerns (ADR-0029). */
+function fmtDate(value: Date | null): string | null {
+  return value === null ? null : value.toISOString().slice(0, 10);
 }

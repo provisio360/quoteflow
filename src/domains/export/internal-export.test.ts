@@ -1,82 +1,256 @@
 import { describe, it, expect } from "vitest";
-import { buildInternalExport, type InternalExportQuote } from "./internal-export";
+import { buildInternalExport, type InternalExportLine } from "./internal-export";
 
-// The Internal Export (issue #15, CONTEXT.md: Internal Export): the fuller
-// workbook an Analyst/EM downloads of a whole study — every non-Draft Quote
-// across all countries, WITH the Client Price, QC Flag direction, and
-// Justification (none of which a Client User ever sees). Pure — the Analyst+EM
-// gate, the all-non-Draft read, the ExportAudit write, and exceljs rendering
-// live in the adapter (src/lib/export); this builds the workbook shape.
+// The Internal Export (issue #93, CONTEXT.md: Internal Export, ADR-0029): the
+// analyst_tracker workbook an Analyst/EM downloads of a whole study — every
+// non-Draft Quote Line across all countries, in ONE sheet named after the study
+// with Market as a column, matching the real artifact column-for-column. It adds
+// the analyst-only Client Item Price (USD/unit), the Quoted Price Difference, and
+// the Paper Quote flag, plus two trailing columns beyond the artifact (Price Flag
+// direction + Justification). Pure — the Analyst+EM gate, the all-non-Draft read,
+// the ExportAudit write, and exceljs rendering live in the adapter.
 
-function quote(over: Partial<InternalExportQuote> = {}): InternalExportQuote {
+function line(over: Partial<InternalExportLine> = {}): InternalExportLine {
   return {
-    country: "Germany",
+    rowId: 1,
+    market: "Brazil",
+    marketQuoteNumber: 1,
+    clientCategory: null,
+    clientSourceUnit: null,
+    clientSourceUnitIdentifier: null,
+    clientItemOffering: null,
+    clientItemDescription: "Pump",
+    clientItemSecondaryDescription: null,
+    clientItemQuantity: 4,
     clientItemNumber: "PN-G1",
-    itemDescription: "Pump",
-    clientPrice: 1000,
-    state: "Approved",
-    quoteNumber: 1,
+    clientSecondaryItemNumber: null,
+    clientItemConfigurationComment: null,
+    sourceName: "Acme",
+    sourceLocation: "Sao Paulo",
+    sourceUrl: null,
     competitorBrand: "Caterpillar",
-    dealerName: "Acme",
-    dealerLocation: "Berlin",
-    price: 1100,
-    currency: "EUR",
-    quantityQuoted: 1,
-    convertedUsdPrice: 1200,
-    usdPricePerUnit: 1200,
-    stockStatus: null,
-    leadTime: null,
-    warranty: null,
-    discount: null,
-    notes: null,
-    justification: "genuinely a premium part",
+    competitorItemDescription: null,
+    competitorItemQuantity: 4,
+    competitorItemNumber: null,
+    dateQuoteReceived: "2026-06-15",
+    currencyTypeQuoted: "BRL",
+    quotedPriceTotal: 1100,
+    currencyExchangeRate: 0.19727,
+    convertedPrice: 1200,
+    convertedPricePerUnit: 1200,
+    clientItemPriceUsd: 1000,
+    stockStatus: "In stock",
+    shippingLeadTimeValue: null,
+    shippingLeadTimeUnit: null,
+    landedCostIncluded: null,
+    landedCostNote: null,
+    warranty1Value: null,
+    warranty1Unit: null,
+    warranty2Value: null,
+    warranty2Unit: null,
+    discountAvailable: null,
+    discountApplied: null,
+    discountValue: null,
+    discountType: null,
+    otherNotes1: null,
+    otherNotes2: null,
+    confidenceCode: null,
+    paperQuote: false,
+    state: "Approved",
+    justification: null,
     rejectionReason: null,
     ...over,
   };
 }
 
-describe("buildInternalExport — Quotes sheet", () => {
-  it("includes Client Price and Justification columns and one row per non-Draft quote", () => {
+// The analyst_tracker column headers, in the exact order the real artifact carries
+// them, with the two analyst-only QC columns appended after Paper Quote (#93).
+const ANALYST_TRACKER_HEADERS = [
+  "Row Id",
+  "Market",
+  "Market Quote Number",
+  "Client Category",
+  "Client Source Unit",
+  "Client Source Unit Identifier",
+  "Client Item Offering",
+  "Client Item Description",
+  "Client Item Secondary Description",
+  "Client Item Quantity",
+  "Client Item Number",
+  "Client Secondary Item Number",
+  "Client Item Configuration Comment",
+  "Source Name",
+  "Source Location",
+  "Source URL",
+  "Competitor Brand",
+  "Competitor Category",
+  "Competitor Source Unit",
+  "Competitor Source Unit Identifier",
+  "Competitor Item Offering",
+  "Competitor Item Description",
+  "Competitor Item Secondary Description",
+  "Competitor Item Quantity",
+  "Competitor Item Number",
+  "Date Quote Received",
+  "Currency Type Quoted",
+  "Quoted Price Total",
+  "Converted Currency",
+  "Currency Exchange Rate",
+  "Converted Price",
+  "Converted Price Per Unit",
+  "Client Item Price (USD/unit)",
+  "Quoted Price Difference to Client Price",
+  "Item is In-stock or Out-of-stock",
+  "Shipping Lead Time Value",
+  "Shipping Lead Time Unit",
+  "Landed Cost Value",
+  "Landed Cost Note",
+  "Item Warranty Value 1",
+  "Item Warranty Unit 1",
+  "Item Warranty Value 2",
+  "Item Warranty Unit 2",
+  "Discount Available",
+  "Discount Applied to Quoted Price",
+  "Discount Value",
+  "Discount Type",
+  "Other Notes 1",
+  "Other Notes 2",
+  "Confidence Code",
+  "Paper Quote",
+  "Price Flag",
+  "Justification",
+  "State",
+  "Rejection Reason",
+];
+
+describe("buildInternalExport — analyst_tracker shape", () => {
+  it("emits one detail sheet named after the study, with the full artifact column set in order", () => {
+    const wb = buildInternalExport("Boznia", [line()], 0.25);
+
+    expect(wb.sheets).toHaveLength(1);
+    const sheet = wb.sheets[0];
+    expect(sheet.name).toBe("Boznia");
+    expect(sheet.columns.map((c) => c.header)).toEqual(ANALYST_TRACKER_HEADERS);
+  });
+
+  it("keeps Row Id (the Quote Line Number) distinct from the Market Quote Number", () => {
+    const wb = buildInternalExport("Boznia", [line({ rowId: 87, marketQuoteNumber: 3 })], 0.25);
+    const [row] = wb.sheets[0].rows;
+    expect(row.rowId).toBe(87);
+    expect(row.marketQuoteNumber).toBe(3);
+  });
+
+  it("reports the Client Price, the relative-difference fraction, and Paper Quote as Yes/No", () => {
     const wb = buildInternalExport(
+      "Boznia",
+      [line({ clientItemPriceUsd: 64384, convertedPricePerUnit: 61270, paperQuote: true })],
+      0.25,
+    );
+    const [row] = wb.sheets[0].rows;
+    expect(row.clientItemPriceUsd).toBe(64384);
+    // |61270-64384| / ((61270+64384)/2) = 3114 / 62827 ≈ 0.04956 (the artifact value).
+    expect(row.quotedPriceDifference).toBeCloseTo(0.04956, 4);
+    expect(row.paperQuote).toBe("Yes");
+  });
+
+  it("leaves the difference blank when the line is not comparable (no Client Price or no USD)", () => {
+    const wb = buildInternalExport(
+      "Boznia",
       [
-        quote({ state: "Submitted", quoteNumber: 1, justification: "premium" }),
-        quote({ state: "Rejected", quoteNumber: 2, rejectionReason: "wrong part", justification: null }),
+        line({ rowId: 1, clientItemPriceUsd: null, convertedPricePerUnit: 1200 }),
+        line({ rowId: 2, clientItemPriceUsd: 1000, convertedPricePerUnit: null }),
       ],
       0.25,
     );
+    expect(wb.sheets[0].rows.map((r) => r.quotedPriceDifference)).toEqual([null, null]);
+  });
 
-    const sheet = wb.sheets.find((s) => s.name === "Quotes")!;
-    const keys = sheet.columns.map((c) => c.key);
-    expect(keys).toContain("clientPrice");
-    expect(keys).toContain("justification");
-    expect(keys).toContain("state");
-
-    expect(sheet.rows.map((r) => ({ state: r.state, clientPrice: r.clientPrice, justification: r.justification, rejectionReason: r.rejectionReason }))).toEqual([
-      { state: "Submitted", clientPrice: 1000, justification: "premium", rejectionReason: null },
-      { state: "Rejected", clientPrice: 1000, justification: null, rejectionReason: "wrong part" },
+  it("appends Price Flag (direction only when breached) and Justification beyond the artifact", () => {
+    const wb = buildInternalExport(
+      "Boznia",
+      [
+        line({ rowId: 1, convertedPricePerUnit: 2000, clientItemPriceUsd: 1000, justification: "premium part" }), // +100% > 25%, dearer
+        line({ rowId: 2, convertedPricePerUnit: 500, clientItemPriceUsd: 1000, justification: null }), // -67% > 25%, cheaper
+        line({ rowId: 3, convertedPricePerUnit: 1050, clientItemPriceUsd: 1000, justification: null }), // within threshold
+        line({ rowId: 4, convertedPricePerUnit: 1200, clientItemPriceUsd: null, justification: null }), // not comparable
+      ],
+      0.25,
+    );
+    expect(wb.sheets[0].rows.map((r) => ({ flag: r.priceFlag, just: r.justification }))).toEqual([
+      { flag: "higher", just: "premium part" },
+      { flag: "lower", just: null },
+      { flag: null, just: null },
+      { flag: null, just: null },
     ]);
   });
 
-  it("reports the QC Flag direction, marking out-of-threshold quotes as flagged", () => {
+  it("renders dependent discount/landed-cost fields as N/A when their parent flag is off", () => {
     const wb = buildInternalExport(
+      "Boznia",
       [
-        quote({ usdPricePerUnit: 2000, clientPrice: 1000 }), // +100% vs 25% threshold
-        quote({ usdPricePerUnit: 1050, clientPrice: 1000 }), // within threshold, dearer
+        line({
+          discountAvailable: false,
+          discountApplied: null,
+          discountValue: null,
+          discountType: null,
+          landedCostIncluded: false,
+          landedCostNote: null,
+        }),
       ],
       0.25,
     );
-    const flags = wb.sheets[0].rows.map((r) => r.qcFlag);
-    expect(flags).toEqual(["above (flagged)", "above"]);
+    const [row] = wb.sheets[0].rows;
+    expect(row.discountAvailable).toBe("No");
+    expect(row.discountApplied).toBe("N/A");
+    expect(row.discountValue).toBe("N/A");
+    expect(row.discountType).toBe("N/A");
+    expect(row.landedCostValue).toBe("No");
+    expect(row.landedCostNote).toBe("N/A");
   });
 
-  it("marks a quote with no Client Price or no USD figure as 'n/a' (not comparable)", () => {
+  it("renders an applied discount's value/type, not N/A", () => {
     const wb = buildInternalExport(
+      "Boznia",
+      [line({ discountAvailable: true, discountApplied: true, discountValue: 10, discountType: "percent" })],
+      0.25,
+    );
+    const [row] = wb.sheets[0].rows;
+    expect(row.discountApplied).toBe("Yes");
+    expect(row.discountValue).toBe(10);
+    expect(row.discountType).toBe("percent");
+  });
+
+  it("emits the 5 unbacked competitor-descriptive columns as blank (fixed superset, never dropped)", () => {
+    const wb = buildInternalExport("Boznia", [line()], 0.25);
+    const [row] = wb.sheets[0].rows;
+    for (const key of [
+      "competitorCategory",
+      "competitorSourceUnit",
+      "competitorSourceUnitIdentifier",
+      "competitorItemOffering",
+      "competitorItemSecondaryDescription",
+    ]) {
+      expect(row[key]).toBeNull();
+    }
+  });
+
+  it("sets Converted Currency to the constant USD", () => {
+    const wb = buildInternalExport("Boznia", [line()], 0.25);
+    expect(wb.sheets[0].rows[0].convertedCurrency).toBe("USD");
+  });
+
+  it("appends the analyst-only State and Rejection Reason columns (beyond the artifact)", () => {
+    const wb = buildInternalExport(
+      "Boznia",
       [
-        quote({ clientPrice: null, usdPricePerUnit: 1200 }),
-        quote({ clientPrice: 1000, usdPricePerUnit: null }),
+        line({ rowId: 1, state: "Rejected", rejectionReason: "wrong part" }),
+        line({ rowId: 2, state: "Approved", rejectionReason: null }),
       ],
       0.25,
     );
-    expect(wb.sheets[0].rows.map((r) => r.qcFlag)).toEqual(["n/a", "n/a"]);
+    expect(wb.sheets[0].rows.map((r) => ({ state: r.state, reason: r.rejectionReason }))).toEqual([
+      { state: "Rejected", reason: "wrong part" },
+      { state: "Approved", reason: null },
+    ]);
   });
 });

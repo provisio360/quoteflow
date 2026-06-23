@@ -186,27 +186,33 @@ afterAll(async () => {
 });
 
 describe("exportClientWorkbook — released + approved, never Client Price", () => {
-  it("exports only released countries' approved quotes, with no Client Price column", async () => {
+  it("exports only released countries' approved lines into a study-named sheet, with a Summary and no Client Price", async () => {
     const buffer = await exportClientWorkbook(clientUserA, studyA);
 
-    const quotes = await readSheet(buffer, "Quotes");
-    // Only Germany is released; its single approved quote. France (unreleased)
-    // and its Draft/Submitted/Rejected never appear.
-    expect(quotes).toHaveLength(1);
-    expect(quotes[0]["Country"]).toBe("Germany");
-    expect(quotes[0]["Competitor"]).toBe("Caterpillar");
+    const detail = await readSheet(buffer, "Study A");
+    // Only Germany is released; its single approved line. France (unreleased)
+    // and its Draft/Submitted/Rejected never appear. Market is now a column.
+    expect(detail).toHaveLength(1);
+    expect(detail[0]["Market"]).toBe("Germany");
+    expect(detail[0]["Competitor Brand"]).toBe("Caterpillar");
+    expect(detail[0]["Converted Currency"]).toBe("USD");
 
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+    // One study-named detail sheet + a global Summary.
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Study A", "Summary"]);
+    // Neither the Client Price nor any analyst-only column may appear.
     for (const ws of wb.worksheets) {
       const headers = (ws.getRow(1).values as unknown[]).map(String);
-      expect(headers).not.toContain("Client Price");
+      expect(headers).not.toContain("Client Item Price (USD/unit)");
+      expect(headers).not.toContain("Quoted Price Difference to Client Price");
+      expect(headers).not.toContain("Paper Quote");
     }
   });
 
   it("never leaks another tenant's study to a client user (tenant isolation)", async () => {
     const buffer = await exportClientWorkbook(clientUserA, studyB);
-    expect(await readSheet(buffer, "Quotes")).toHaveLength(0);
+    expect(await readSheet(buffer, "Study B")).toHaveLength(0);
   });
 
   it("refuses a Researcher — the anti-anchoring side door (#64, ADR-0003)", async () => {
@@ -214,27 +220,28 @@ describe("exportClientWorkbook — released + approved, never Client Price", () 
   });
 
   it("admits internal EM, Analyst, and Admin", async () => {
-    expect(await readSheet(await exportClientWorkbook(em, studyA), "Quotes")).toHaveLength(1);
-    expect(await readSheet(await exportClientWorkbook(analyst, studyA), "Quotes")).toHaveLength(1);
-    expect(await readSheet(await exportClientWorkbook(admin, studyA), "Quotes")).toHaveLength(1);
+    expect(await readSheet(await exportClientWorkbook(em, studyA), "Study A")).toHaveLength(1);
+    expect(await readSheet(await exportClientWorkbook(analyst, studyA), "Study A")).toHaveLength(1);
+    expect(await readSheet(await exportClientWorkbook(admin, studyA), "Study A")).toHaveLength(1);
   });
 });
 
 describe("exportInternalWorkbook — Analyst/EM only, all non-Draft, audited", () => {
-  it("includes every non-Draft quote across all countries but excludes Drafts", async () => {
+  it("includes every non-Draft line across all countries but excludes Drafts, with Client Price", async () => {
     const buffer = await exportInternalWorkbook(analyst, studyA);
-    const quotes = await readSheet(buffer, "Quotes");
+    const lines = await readSheet(buffer, "Study A");
 
-    // Approved (Germany) + Submitted + Rejected (France) = 3; the Draft is excluded.
-    const states = quotes.map((q) => q.State).sort();
-    expect(states).toEqual(["Approved", "Rejected", "Submitted"]);
-    // Client Price is present for internal staff.
-    expect(quotes.find((q) => q.Country === "Germany")?.["Client Price"]).toBe(1000);
+    // Approved (Germany) + Submitted + Rejected (France) = 3; the Draft is excluded
+    // (4 lines were seeded). The appended State column proves which survived.
+    expect(lines.map((l) => l.State).sort()).toEqual(["Approved", "Rejected", "Submitted"]);
+    expect(new Set(lines.map((l) => l.Market))).toEqual(new Set(["Germany", "France"]));
+    // Client Item Price (USD/unit) is present for internal staff.
+    expect(lines.find((l) => l.Market === "Germany")?.["Client Item Price (USD/unit)"]).toBe(1000);
   });
 
   it("allows an Engagement Manager", async () => {
     const buffer = await exportInternalWorkbook(em, studyA);
-    expect((await readSheet(buffer, "Quotes")).length).toBeGreaterThan(0);
+    expect((await readSheet(buffer, "Study A")).length).toBeGreaterThan(0);
   });
 
   it("refuses a Researcher, an Admin, and a Client User", async () => {
