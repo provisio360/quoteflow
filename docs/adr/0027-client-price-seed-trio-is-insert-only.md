@@ -38,6 +38,10 @@ literally true: a re-import never touches Client Price, in any of its columns.
 - The import's update path strips **four** fields, not one: `clientPrice` and the
   three raw seed columns. A future engineer will see this skip and may "fix" it
   back to overwriting — **do not.** The skip is the point, exactly as in ADR-0015.
+  (Narrowly amended by **ADR-0030**: when the existing row is *truly unpriced* —
+  null `clientPrice` *and* null trio — the re-import seeds all four together, which
+  keeps the trio↔derived coherence this ADR protects. It never overwrites a set or
+  cleared value.)
 - The raw trio means "what the brief *first* seeded this item from," never "what
   the latest brief says." It is provenance, not a live mirror.
 - A non-USD `Client Item Price Currency` is an import validation error (v1), so a

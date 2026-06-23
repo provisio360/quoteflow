@@ -81,19 +81,45 @@ export async function importBenchmarkItems(
         data: inserts.map((item) => ({ ...toRow(studyId, item), clientId: study.clientId })),
       });
     }
+
+    // For the update set, read each existing row's Client Price group so we can
+    // tell a TRULY-unpriced item (never seeded: clientPrice null AND seed trio
+    // null) apart from one an analyst has set or CLEARED (clientPrice null but
+    // the trio still present — `setClientPrice` clears only the derived value).
+    // ADR-0030: a re-import may seed the former but must never touch the latter.
+    const priceStateByKey = new Map<string, { clientPrice: unknown; clientItemPrice: unknown }>();
+    if (updates.length > 0) {
+      const existingPrices = await tx.benchmarkItem.findMany({
+        where: { studyId, OR: updates.map((i) => ({ country: i.country, clientItemNumberKey: i.clientItemNumberKey })) },
+        select: { country: true, clientItemNumberKey: true, clientPrice: true, clientItemPrice: true },
+      });
+      for (const r of existingPrices) priceStateByKey.set(benchmarkItemKey(r), { clientPrice: r.clientPrice, clientItemPrice: r.clientItemPrice });
+    }
+
+    // Keys seeded to a real (non-null) Client Price on update — audited below as
+    // a null -> value Client Price change (ADR-0030), like `setClientPrice`.
+    const seededAfterByKey = new Map<string, number>();
+
     for (const item of updates) {
-      // Re-import overwrites the brief fields but NEVER the Client Price group:
-      // the derived value AND its raw seed trio are insert-only, analyst-owned
-      // after first seeding (ADR-0015, ADR-0027). Strip all four so a re-brief
-      // can't stomp a curated benchmark or leave an incoherent seed. (Do not
-      // "fix" this back to writing them — the omission is the point.)
+      const key = benchmarkItemKey(item);
+      const existing = priceStateByKey.get(key);
+      const trulyUnpriced = existing != null && existing.clientPrice === null && existing.clientItemPrice === null;
+
+      // Re-import overwrites the brief fields. The Client Price group is normally
+      // STRIPPED — derived value and raw seed trio are insert-only, analyst-owned
+      // after first seeding (ADR-0015, ADR-0027): a re-brief must not stomp a
+      // curated benchmark or leave an incoherent seed. The one exception (ADR-0030):
+      // a TRULY-unpriced item is seeded from the brief, writing the whole group
+      // together so the trio still derives to clientPrice. (Do not widen this to
+      // overwrite a value that is set or cleared — that is the forbidden fix.)
+      const full = toRow(studyId, item);
       const {
         clientPrice: _cp,
         clientItemPrice: _cip,
         clientItemPriceCurrency: _cipc,
         clientItemPriceQuantity: _cipq,
         ...briefFields
-      } = toRow(studyId, item);
+      } = full;
       await tx.benchmarkItem.update({
         where: {
           studyId_country_clientItemNumberKey: {
@@ -102,15 +128,17 @@ export async function importBenchmarkItems(
             clientItemNumberKey: item.clientItemNumberKey,
           },
         },
-        data: briefFields,
+        data: trulyUnpriced ? full : briefFields,
       });
+      if (trulyUnpriced && item.clientPrice !== null) seededAfterByKey.set(key, item.clientPrice);
     }
 
     // One audit event per item actually written (ADR-0019: per affected row). A
     // no-op re-import (no inserts and no updates) touches nothing and logs
     // nothing. createMany returns no ids, so resolve the affected rows' ids by
-    // their upsert keys in one query. Import never changes Client Price, so no
-    // before/after.
+    // their upsert keys in one query. Import normally leaves Client Price alone,
+    // but ADR-0030 lets it SEED a truly-unpriced item — that null -> value
+    // transition is audited as a Client Price change too, like `setClientPrice`.
     const affected = [...inserts, ...updates];
     if (affected.length > 0) {
       const rows = await tx.benchmarkItem.findMany({
@@ -121,14 +149,18 @@ export async function importBenchmarkItems(
             clientItemNumberKey: item.clientItemNumberKey,
           })),
         },
-        select: { id: true },
+        select: { id: true, country: true, clientItemNumberKey: true },
       });
-      await recordAuditEvents(
-        tx,
-        rows.map((r) =>
-          auditImport({ actorId: principal.userId, studyId, itemId: r.id }),
-        ),
-      );
+      const events = rows.map((r) => auditImport({ actorId: principal.userId, studyId, itemId: r.id }));
+      for (const r of rows) {
+        const after = seededAfterByKey.get(benchmarkItemKey(r));
+        if (after !== undefined) {
+          events.push(
+            auditClientPriceChange({ actorId: principal.userId, studyId, itemId: r.id, before: null, after }),
+          );
+        }
+      }
+      await recordAuditEvents(tx, events);
     }
 
     return { inserted: inserts.length, updated: updates.length };

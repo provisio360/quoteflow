@@ -43,6 +43,10 @@ as the rest of the brief — it is an **internal QC benchmark** the analyst cura
 
 ## Consequences
 
+- **Narrowly amended by ADR-0030:** a re-import may *seed* a Client Price onto a
+  **truly-unpriced** item (null `clientPrice` *and* null seed trio), but still
+  never **overwrites** a value an analyst has set or cleared. The skip below is
+  the default; seeding a never-priced row is the only exception.
 - The import's update path must **omit** `clientPrice` from the written row. A
   future engineer will see this skip and may "fix" it back to overwriting —
   **do not.** The skip is the point, exactly as the column being hidden from

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
-import { importBenchmarkItems, BenchmarkItemAccessError } from "./repository";
+import { importBenchmarkItems, setClientPrice, BenchmarkItemAccessError } from "./repository";
 import { createStudy } from "@/lib/studies/repository";
 import type { ClientPrincipal, InternalPrincipal } from "@/domains/authz/principal";
 
@@ -30,8 +30,10 @@ const row = (over: Partial<Record<string, string>> = {}) => {
 
 let tenant: string;
 let emUserId: string;
+let analystUserId: string;
 let studyId: string;
 let em: InternalPrincipal;
+let analyst: InternalPrincipal;
 let clientUser: ClientPrincipal;
 
 beforeAll(async () => {
@@ -45,6 +47,14 @@ beforeAll(async () => {
     },
   });
   em = { kind: "internal", userId: emUserId, role: "EngagementManager" };
+  analystUserId = randomUUID();
+  await prisma.user.create({
+    data: {
+      id: analystUserId, name: "Analyst", email: `analyst-${analystUserId}@example.test`,
+      emailVerified: true, kind: "internal", role: "Analyst", status: "active",
+    },
+  });
+  analyst = { kind: "internal", userId: analystUserId, role: "Analyst" };
   clientUser = { kind: "client", userId: randomUUID(), tenantId: tenant };
   studyId = (await createStudy(em, { name: "Import study", clientId: tenant, qcThreshold: 0.25 })).id;
 });
@@ -55,7 +65,7 @@ afterAll(async () => {
   await prisma.auditEvent.deleteMany({ where: { studyId } });
   await prisma.benchmarkItem.deleteMany({ where: { studyId } });
   await prisma.study.deleteMany({ where: { clientId: tenant } });
-  await prisma.user.deleteMany({ where: { id: emUserId } });
+  await prisma.user.deleteMany({ where: { id: { in: [emUserId, analystUserId] } } });
   await prisma.client.deleteMany({ where: { id: tenant } });
   await prisma.$disconnect();
 });
@@ -160,6 +170,106 @@ describe("importBenchmarkItems — extended #86 columns persist", () => {
     expect(Number(item?.clientPrice)).toBe(50); // derived value frozen
     expect(Number(item?.clientItemPrice)).toBe(250); // seed trio frozen too
     expect(Number(item?.clientItemPriceQuantity)).toBe(5);
+  });
+});
+
+describe("importBenchmarkItems — seeds Client Price onto a truly-unpriced item (ADR-0030)", () => {
+  it("re-import seeds Client Price when the existing item is unpriced (null clientPrice AND null trio)", async () => {
+    // First import creates the item with a BLANK price trio -> unpriced.
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({
+        "Client Item Number": "SEED-1",
+        "Client Item Price": "",
+        "Client Item Price Currency": "",
+        "Client Item Price Quantity": "",
+      }),
+    ]);
+    const created = await prisma.benchmarkItem.findFirst({ where: { studyId, clientItemNumberKey: "seed-1" } });
+    expect(created?.clientPrice).toBeNull();
+    expect(created?.clientItemPrice).toBeNull();
+
+    // Re-import the SAME item, now carrying a price -> the update path seeds it.
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({
+        "Client Item Number": "SEED-1",
+        "Client Item Price": "300",
+        "Client Item Price Currency": "USD",
+        "Client Item Price Quantity": "3",
+      }),
+    ]);
+    const seeded = await prisma.benchmarkItem.findFirst({ where: { studyId, clientItemNumberKey: "seed-1" } });
+    expect(Number(seeded?.clientPrice)).toBe(100); // derived USD/unit = 300 / 3, seeded on update
+    expect(Number(seeded?.clientItemPrice)).toBe(300); // raw seed trio written too
+    expect(Number(seeded?.clientItemPriceQuantity)).toBe(3);
+  });
+
+  it("does NOT resurrect a price the analyst CLEARED (null clientPrice but trio still present)", async () => {
+    // Insert priced, then the analyst clears it: clientPrice -> null, but the
+    // seed trio remains (setClientPrice clears only the derived value). That is
+    // "cleared", NOT "never priced" — a re-import must leave it alone.
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Item Number": "CLR-1", "Client Item Price": "400", "Client Item Price Quantity": "2" }),
+    ]);
+    const priced = await prisma.benchmarkItem.findFirst({ where: { studyId, clientItemNumberKey: "clr-1" } });
+    await setClientPrice(analyst, priced!.id, null);
+    const cleared = await prisma.benchmarkItem.findFirst({ where: { studyId, clientItemNumberKey: "clr-1" } });
+    expect(cleared?.clientPrice).toBeNull();
+    expect(Number(cleared?.clientItemPrice)).toBe(400); // trio survives the clear
+
+    // Re-import carrying a price -> must NOT seed; the cleared state is preserved.
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Item Number": "CLR-1", "Client Item Price": "999", "Client Item Price Quantity": "3" }),
+    ]);
+    const after = await prisma.benchmarkItem.findFirst({ where: { studyId, clientItemNumberKey: "clr-1" } });
+    expect(after?.clientPrice).toBeNull(); // cleared value preserved (ADR-0030)
+    expect(Number(after?.clientItemPrice)).toBe(400); // original trio frozen, not overwritten by 999
+  });
+
+  it("audits a seed-on-update as a Client Price change (null -> value), alongside the import event", async () => {
+    const priceEvents = () =>
+      prisma.auditEvent.findMany({ where: { studyId, action: "clientPriceChange" } });
+
+    // Create unpriced, then re-import with a price so it is seeded on update.
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Item Number": "AUD-1", "Client Item Price": "", "Client Item Price Currency": "", "Client Item Price Quantity": "" }),
+    ]);
+    const before = (await priceEvents()).length;
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Item Number": "AUD-1", "Client Item Price": "500", "Client Item Price Currency": "USD", "Client Item Price Quantity": "5" }),
+    ]);
+
+    const item = await prisma.benchmarkItem.findFirst({ where: { studyId, clientItemNumberKey: "aud-1" } });
+    const events = await priceEvents();
+    expect(events.length - before).toBe(1);
+    const seedEvent = events.find((e) => e.subjectId === item!.id);
+    expect(seedEvent?.beforeValue).toBeNull();
+    expect(Number(seedEvent?.afterValue)).toBe(100); // 500 / 5
+  });
+
+  it("logs NO Client Price change when the brief is also unpriced for the row (null -> null)", async () => {
+    const priceEvents = () => prisma.auditEvent.count({ where: { studyId, action: "clientPriceChange" } });
+
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Item Number": "NOOP-1", "Client Item Price": "", "Client Item Price Currency": "", "Client Item Price Quantity": "" }),
+    ]);
+    const before = await priceEvents();
+    // Re-import the same item still unpriced -> null stays null, nothing to audit.
+    await importBenchmarkItems(em, studyId, [
+      HEADERS,
+      row({ "Client Item Number": "NOOP-1", "Item Description": "Renamed", "Client Item Price": "", "Client Item Price Currency": "", "Client Item Price Quantity": "" }),
+    ]);
+
+    expect(await priceEvents()).toBe(before);
+    const item = await prisma.benchmarkItem.findFirst({ where: { studyId, clientItemNumberKey: "noop-1" } });
+    expect(item?.itemDescription).toBe("Renamed"); // brief field still overwrote
+    expect(item?.clientPrice).toBeNull();
   });
 });
 
