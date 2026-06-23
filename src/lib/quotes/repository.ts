@@ -12,7 +12,12 @@ import {
 } from "@/domains/quotes/lifecycle";
 import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
 import { resolveQcThreshold } from "@/domains/benchmark-items/qc-threshold";
-import { convertManual, parseManualRate, nextConversionStatus } from "@/domains/quotes/conversion";
+import {
+  convertManual,
+  parseManualRate,
+  nextConversionStatus,
+  type ConversionStatus,
+} from "@/domains/quotes/conversion";
 import { recordAuditEvents } from "@/lib/audit/repository";
 import { auditQuoteLifecycle, auditDocumentSubmit, auditManualRateOverride } from "@/domains/audit/events";
 import { recordNotifications } from "@/lib/notifications/dispatch";
@@ -324,6 +329,38 @@ export async function updateDraftLine(
 }
 
 /**
+ * Edit a Draft Market Quote's document header (source/date/currency). Owner-only
+ * and unconverted-only (#97): the author may change the shared facts ONLY while
+ * the document has never been submitted (`conversionStatus === null`). Once
+ * submitted the Exchange Rate is pinned to the Date Quote Received (ADR-0004), so
+ * the header — the date especially — is frozen; a converted document is refused.
+ */
+export async function updateMarketQuote(
+  principal: Principal,
+  marketQuoteId: string,
+  header: MarketQuoteHeaderFields,
+): Promise<void> {
+  await withTenant(principal, async (tx) => {
+    const doc = await tx.marketQuote.findUnique({
+      where: { id: marketQuoteId },
+      select: { createdById: true, conversionStatus: true },
+    });
+    if (doc === null) {
+      throw new QuoteAccessError(`Market Quote not found: ${marketQuoteId}`);
+    }
+    if (doc.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the document's author may edit its header");
+    }
+    if (doc.conversionStatus !== null) {
+      throw new QuoteAccessError(
+        "A submitted Market Quote's header is locked — its exchange rate is pinned to the date",
+      );
+    }
+    await tx.marketQuote.update({ where: { id: marketQuoteId }, data: toData(header) });
+  });
+}
+
+/**
  * Hard-delete a Draft Quote Line (discard). Owner-only and Draft-only. The
  * sequence's `quoteLineSeq` is NOT rewound, so the discarded number becomes a
  * permanent gap and is never reused (ADR-0026).
@@ -361,6 +398,114 @@ export async function listLinesForItem(
     ...r,
     authorName: createdBy.name,
     price: r.price === null ? null : r.price.toString(),
+  }));
+}
+
+/** One Draft line in a document group, shaped for the researcher's submit panel. */
+export interface DraftMarketQuoteGroupLine {
+  readonly lineId: string;
+  readonly quoteLineNumber: number;
+  readonly benchmarkItemId: string;
+  /** "<Client Item Number> <item description>" — the row's human handle. */
+  readonly itemLabel: string;
+  readonly competitorBrand: string | null;
+  readonly price: string | null;
+  readonly quantityQuoted: number | null;
+}
+
+/** A researcher's own Draft Market Quote as the document-grouped view renders it
+ *  (#97): the document facts plus ONLY its Draft lines (the set its Submit moves). */
+export interface DraftMarketQuoteGroup {
+  readonly marketQuoteId: string;
+  readonly marketQuoteNumber: number;
+  readonly country: string;
+  readonly sourceName: string | null;
+  readonly sourceLocation: string | null;
+  readonly sourceUrl: string | null;
+  readonly currency: string | null;
+  readonly dateQuoteReceived: Date | null;
+  /** Null ⇔ never submitted — the header is editable only then (`updateMarketQuote`). */
+  readonly conversionStatus: ConversionStatus | null;
+  readonly lines: readonly DraftMarketQuoteGroupLine[];
+  /** Every Benchmark Item already on the document (ANY state) — the items a new
+   *  line may NOT be added for (one line per item per document, in any state). */
+  readonly itemIdsOnDocument: readonly string[];
+}
+
+/**
+ * List a Researcher's own Draft Market Quotes in a study, grouped by document for
+ * the document-grouped submit view (#97). Scope: documents the caller AUTHORED
+ * (`createdById`) that still hold at least one Draft line — a fresh all-Draft
+ * document OR one with a single line revised back to Draft after a rejection. Each
+ * group carries only its Draft lines (the exact set the bulk Submit acts on);
+ * Submitted/Approved/Rejected siblings stay in the per-item view. Ordered by
+ * Market Quote Number, lines by Quote Line Number.
+ */
+export async function listDraftMarketQuotesForResearcher(
+  principal: Principal,
+  studyId: string,
+): Promise<DraftMarketQuoteGroup[]> {
+  if (!isInternal(principal)) {
+    throw new QuoteAccessError("Internal staff only");
+  }
+  const rows = await withTenant(principal, (tx) =>
+    tx.marketQuote.findMany({
+      where: {
+        studyId,
+        createdById: principal.userId,
+        quoteLines: { some: { state: "Draft" } },
+      },
+      select: {
+        id: true,
+        marketQuoteNumber: true,
+        country: true,
+        sourceName: true,
+        sourceLocation: true,
+        sourceUrl: true,
+        currency: true,
+        dateQuoteReceived: true,
+        conversionStatus: true,
+        quoteLines: {
+          orderBy: { quoteLineNumber: "asc" },
+          select: {
+            id: true,
+            state: true,
+            quoteLineNumber: true,
+            benchmarkItemId: true,
+            competitorBrand: true,
+            price: true,
+            quantityQuoted: true,
+            benchmarkItem: { select: { clientItemNumber: true, itemDescription: true } },
+          },
+        },
+      },
+      orderBy: { marketQuoteNumber: "asc" },
+    }),
+  );
+  return rows.map((r) => ({
+    marketQuoteId: r.id,
+    marketQuoteNumber: r.marketQuoteNumber,
+    country: r.country,
+    sourceName: r.sourceName,
+    sourceLocation: r.sourceLocation,
+    sourceUrl: r.sourceUrl,
+    currency: r.currency,
+    dateQuoteReceived: r.dateQuoteReceived,
+    conversionStatus: r.conversionStatus as ConversionStatus | null,
+    // Only the Draft lines are shown (the set the bulk Submit moves); every item on
+    // the document — any state — is barred from add-line (one line per item per doc).
+    lines: r.quoteLines
+      .filter((l) => l.state === "Draft")
+      .map((l) => ({
+        lineId: l.id,
+        quoteLineNumber: l.quoteLineNumber,
+        benchmarkItemId: l.benchmarkItemId,
+        itemLabel: `${l.benchmarkItem.clientItemNumber} ${l.benchmarkItem.itemDescription}`,
+        competitorBrand: l.competitorBrand,
+        price: l.price === null ? null : l.price.toString(),
+        quantityQuoted: l.quantityQuoted,
+      })),
+    itemIdsOnDocument: r.quoteLines.map((l) => l.benchmarkItemId),
   }));
 }
 

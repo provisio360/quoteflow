@@ -6,6 +6,7 @@ import {
   createMarketQuote,
   addQuoteLine,
   updateDraftLine,
+  updateMarketQuote,
   deleteDraftLine,
   submitMarketQuote,
   approveLine,
@@ -79,6 +80,22 @@ export async function updateDraftLineAction(
   const principal = await requirePrincipal();
   try {
     await updateDraftLine(principal, lineId, fields);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
+    throw error;
+  }
+}
+
+/** Author action: edit a Draft Market Quote's header (source/date/currency). The
+ *  repository gates it owner-only + unconverted-only (#97). */
+export async function updateMarketQuoteAction(
+  marketQuoteId: string,
+  header: MarketQuoteHeaderFields,
+): Promise<{ readonly ok: boolean; readonly message?: string }> {
+  const principal = await requirePrincipal();
+  try {
+    await updateMarketQuote(principal, marketQuoteId, header);
     return { ok: true };
   } catch (error) {
     if (error instanceof QuoteAccessError) return { ok: false, message: error.message };

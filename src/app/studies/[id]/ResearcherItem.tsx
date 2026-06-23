@@ -3,13 +3,9 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { selfAssignBenchmarkItemAction } from "@/lib/benchmark-items/actions";
-import {
-  deleteDraftLineAction,
-  reviseLineAction,
-  submitMarketQuoteAction,
-} from "@/lib/quotes/actions";
+import { reviseLineAction } from "@/lib/quotes/actions";
 import type { QuoteLineView } from "@/lib/quotes/repository";
-import type { TransitionResult, SubmitDocumentResult } from "@/domains/quotes/lifecycle";
+import type { TransitionResult } from "@/domains/quotes/lifecycle";
 import { QuoteEditor } from "./QuoteEditor";
 import {
   quoteAffordances,
@@ -19,30 +15,14 @@ import {
 
 type Item = GuidanceFields;
 
-type ActionResult =
-  | { ok: boolean; message?: string }
-  | TransitionResult
-  | SubmitDocumentResult;
+type ActionResult = { ok: boolean; message?: string } | TransitionResult;
 
 function failureMessage(r: ActionResult): string {
   if (r.ok) return "";
   if ("reason" in r) {
     switch (r.reason) {
-      case "lines-incomplete": {
-        // Bulk submit is all-or-nothing: report which lines still lack what (#88).
-        const detail = r.perLine
-          .map((l) => `line ${l.lineId} (${l.missing.join(", ")})`)
-          .join("; ");
-        return `Fill required fields before submitting the market quote: ${detail}.`;
-      }
-      case "no-draft-lines":
-        return "This market quote has no draft lines to submit.";
       case "illegal-transition":
         return "This quote can't change state right now (already actioned).";
-      case "conversion-pending":
-        return "Waiting on currency conversion.";
-      case "needs-justification":
-        return "Add a justification first.";
       case "missing-reason":
         return "A reason is required.";
       default:
@@ -64,6 +44,10 @@ function Guidance({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+// The per-item work surface (#7/#8/#66). Draft mutation and the bulk Submit moved
+// to the document-grouped panel (#97/Q8): here the item view is a read-only
+// reference — guidance, the item's quote lines listed plainly, plus the
+// Rejected-line Revise loop and "+ Add quote" (which starts a NEW Market Quote).
 export function ResearcherItem({
   item,
   mode,
@@ -80,7 +64,6 @@ export function ResearcherItem({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   function run(action: () => Promise<ActionResult>) {
@@ -133,28 +116,8 @@ export function ResearcherItem({
                   <li key={q.id} style={{ padding: "0.25rem 0" }}>
                     #{q.quoteLineNumber} · <strong>{q.state}</strong> · {q.competitorBrand ?? "—"}{" "}
                     {q.price ?? "—"} — {q.authorName}
-                    {(can.canEdit || can.canSubmit || can.canDelete) && (
-                      <span style={{ marginLeft: "0.4rem" }}>
-                        {can.canEdit && (
-                          <button type="button" style={btn} onClick={() => setEditingId(editingId === q.id ? null : q.id)}>
-                            {editingId === q.id ? "Close" : "Edit"}
-                          </button>
-                        )}
-                        {can.canSubmit && (
-                          // Interim: submit fires at the document grain (#88); the
-                          // proper per-document Submit control is #97. Submitting
-                          // here moves every Draft line in this line's Market Quote.
-                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => submitMarketQuoteAction(q.marketQuoteId))} title="Submits all draft lines in this market quote">
-                            Submit market quote
-                          </button>
-                        )}
-                        {can.canDelete && (
-                          <button type="button" style={btn} disabled={pending} onClick={() => run(() => deleteDraftLineAction(q.id))}>
-                            Delete
-                          </button>
-                        )}
-                      </span>
-                    )}
+                    {/* Draft edit/delete/submit live in the document panel now (#97);
+                        the only item-view action left is the Rejected revise loop. */}
                     {can.canRevise && (
                       <span style={{ marginLeft: "0.4rem" }}>
                         <button type="button" style={btn} disabled={pending} onClick={() => run(() => reviseLineAction(q.id))}>
@@ -164,13 +127,6 @@ export function ResearcherItem({
                     )}
                     {can.showRejectionReason && q.rejectionReason && (
                       <div style={{ color: "#b00", fontSize: "0.85rem" }}>Returned: {q.rejectionReason}</div>
-                    )}
-                    {can.canEdit && editingId === q.id && (
-                      <QuoteEditor
-                        mode={{ type: "edit", lineId: q.id }}
-                        initial={initialFromLine(q)}
-                        onDone={() => setEditingId(null)}
-                      />
                     )}
                   </li>
                 );
@@ -199,20 +155,4 @@ export function ResearcherItem({
       )}
     </li>
   );
-}
-
-/** Prefill the line editor from an existing Draft line (Decimal already marshalled
- *  to a string on QuoteLineView; quantity formatted for the input). The dealer/
- *  date/currency live on the parent document, not the line, so they are not here. */
-function initialFromLine(q: QuoteLineView): Record<string, string> {
-  return {
-    competitorBrand: q.competitorBrand ?? "",
-    competitorPartNumber: q.competitorPartNumber ?? "",
-    competitorPartDescription: q.competitorPartDescription ?? "",
-    stockStatus: q.stockStatus ?? "",
-    notes: q.notes ?? "",
-    justification: q.justification ?? "",
-    price: q.price ?? "",
-    quantityQuoted: q.quantityQuoted === null ? "" : String(q.quantityQuoted),
-  };
 }
