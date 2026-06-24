@@ -6,16 +6,23 @@ import { renderNotificationEmail } from "./render";
 // release only the country + study name.
 
 describe("renderNotificationEmail — quoteRejected", () => {
-  it("subjects on the rejection and includes the reason", () => {
+  it("subjects on the rejection and includes the reason, study, country, quote refs and a link", () => {
     const email = renderNotificationEmail({
       kind: "quoteRejected",
       reason: "Price higher than expected",
-      country: null,
+      country: "Brazil",
       studyName: "Q3 Excavators",
+      marketQuoteNumber: 3,
+      quoteLineNumber: 87,
+      linkUrl: "https://app.test/studies/study-1#line-87",
     });
     expect(email.subject).toBe("Your quote was rejected");
     expect(email.body).toContain("Price higher than expected");
     expect(email.body).toContain("Q3 Excavators");
+    expect(email.body).toContain("Brazil");
+    expect(email.body).toContain("quote 3"); // Market Quote Number, in context
+    expect(email.body).toContain("line 87"); // Quote Line Number
+    expect(email.body).toContain("https://app.test/studies/study-1#line-87");
   });
 });
 
@@ -26,6 +33,9 @@ describe("renderNotificationEmail — countryReleased", () => {
       reason: null,
       country: "Germany",
       studyName: "Q3 Excavators",
+      marketQuoteNumber: null,
+      quoteLineNumber: null,
+      linkUrl: null,
     });
     expect(email.subject).toBe("Results released: Germany");
     expect(email.body).toContain("Germany");
