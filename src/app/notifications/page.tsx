@@ -61,8 +61,18 @@ function NotificationRow({ notification: n }: { notification: NotificationView }
       />
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 600 }}>{title(n)}</div>
-        {n.kind === "quoteRejected" && n.reason && (
-          <div style={{ color: "#555" }}>Reason: {n.reason}</div>
+        {n.kind === "quoteRejected" && (
+          <>
+            <div style={{ color: "#555" }}>
+              {n.studyName} · {n.country} · market quote {n.marketQuoteNumber}, line {n.quoteLineNumber}
+            </div>
+            {n.reason && <div style={{ color: "#555" }}>Reason: {n.reason}</div>}
+            <div style={{ color: "#555" }}>
+              <Link href={`/studies/${n.studyId}#line-${n.quoteLineNumber}`}>
+                Revise and resubmit →
+              </Link>
+            </div>
+          </>
         )}
         {n.kind === "countryReleased" && (
           <div style={{ color: "#555" }}>

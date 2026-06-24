@@ -113,7 +113,9 @@ export function ResearcherItem({
               {quotes.map((q) => {
                 const can = quoteAffordances(q, myUserId);
                 return (
-                  <li key={q.id} style={{ padding: "0.25rem 0" }}>
+                  // `line-{n}` is the deep-link target a rejection notification
+                  // links to (ADR-0031), so the author lands on the line to revise.
+                  <li key={q.id} id={`line-${q.quoteLineNumber}`} style={{ padding: "0.25rem 0" }}>
                     #{q.quoteLineNumber} · <strong>{q.state}</strong> · {q.competitorBrand ?? "—"}{" "}
                     {q.price ?? "—"} — {q.authorName}
                     {/* Draft edit/delete/submit live in the document panel now (#97);

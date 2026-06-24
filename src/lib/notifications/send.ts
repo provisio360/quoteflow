@@ -23,6 +23,8 @@ export async function sendNotificationEmail(notificationId: string): Promise<voi
     select: {
       emailedAt: true,
       kind: true,
+      subjectType: true,
+      subjectId: true,
       reason: true,
       country: true,
       studyId: true,
@@ -37,11 +39,31 @@ export async function sendNotificationEmail(notificationId: string): Promise<voi
     select: { name: true },
   });
 
+  // A rejection's quote context is derived live from the subject line (ADR-0031):
+  // its country, market quote / line numbers, and a deep-link straight to it. Null
+  // for a release (and for legacy "Quote" subjects, which have no Quote Line).
+  const line =
+    note.subjectType === "QuoteLine"
+      ? await prisma.quoteLine.findUnique({
+          where: { id: note.subjectId },
+          select: {
+            country: true,
+            quoteLineNumber: true,
+            marketQuote: { select: { marketQuoteNumber: true } },
+          },
+        })
+      : null;
+
+  const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+
   const email = renderNotificationEmail({
     kind: note.kind,
     reason: note.reason,
-    country: note.country,
+    country: line?.country ?? note.country,
     studyName: study?.name ?? "",
+    marketQuoteNumber: line?.marketQuote.marketQuoteNumber ?? null,
+    quoteLineNumber: line?.quoteLineNumber ?? null,
+    linkUrl: line ? `${appUrl}/studies/${note.studyId}#line-${line.quoteLineNumber}` : null,
   });
   await sendEmail({ to: note.recipient.email, subject: email.subject, body: email.body });
 

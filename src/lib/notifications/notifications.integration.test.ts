@@ -6,6 +6,7 @@ import {
   addQuoteLine,
   submitMarketQuote,
   rejectLine,
+  reviseLine,
   approveLine,
   type MarketQuoteHeaderFields,
 } from "@/lib/quotes/repository";
@@ -309,6 +310,57 @@ describe("the in-app inbox", () => {
   });
 });
 
+describe("rejection inbox context and dismissal (ADR-0031)", () => {
+  /** Revise a Rejected line and resubmit it, then reject it again with a new
+   *  reason. Returns nothing — the line id is unchanged. */
+  async function reRejectLine(lineId: string, reason: string): Promise<void> {
+    const { marketQuoteId } = await prisma.quoteLine.findUniqueOrThrow({
+      where: { id: lineId },
+      select: { marketQuoteId: true },
+    });
+    await reviseLine(author, lineId); // Rejected → Draft
+    await submitMarketQuote(author, marketQuoteId); // Draft → Submitted
+    await rejectLine(analyst, lineId, reason); // Submitted → Rejected (fresh notification)
+  }
+
+  it("carries the study, country and quote refs derived live from the rejected line", async () => {
+    const q = await submittedQuote();
+    await rejectLine(analyst, q, "Reason");
+
+    const note = (await listNotifications(author)).find((n) => n.subjectId === q);
+    expect(note).toMatchObject({
+      kind: "quoteRejected",
+      studyName: "Notif study",
+      country: "Germany",
+    });
+    expect(note?.marketQuoteNumber).toEqual(expect.any(Number));
+    expect(note?.quoteLineNumber).toEqual(expect.any(Number));
+  });
+
+  it("no longer shows (or counts) a rejection once the author revises the line", async () => {
+    const q = await submittedQuote();
+    await rejectLine(analyst, q, "Reason");
+    expect((await listNotifications(author)).some((n) => n.subjectId === q)).toBe(true);
+    expect(await unreadCount(author)).toBe(1);
+
+    await reviseLine(author, q); // Rejected → Draft: issue resolved
+
+    expect((await listNotifications(author)).some((n) => n.subjectId === q)).toBe(false);
+    expect(await unreadCount(author)).toBe(0);
+  });
+
+  it("shows only the latest rejection when a line is rejected, revised and rejected again", async () => {
+    const q = await submittedQuote();
+    await rejectLine(analyst, q, "First reason");
+    await reRejectLine(q, "Second reason");
+
+    const forLine = (await listNotifications(author)).filter((n) => n.subjectId === q);
+    expect(forLine).toHaveLength(1);
+    expect(forLine[0].reason).toBe("Second reason");
+    expect(await unreadCount(author)).toBe(1);
+  });
+});
+
 describe("the email worker step (sendNotificationEmail)", () => {
   it("delivers a notification to its recipient and stamps emailedAt", async () => {
     vi.mocked(sendEmail).mockClear();
@@ -326,6 +378,25 @@ describe("the email worker step (sendNotificationEmail)", () => {
 
     const refreshed = await prisma.notification.findUniqueOrThrow({ where: { id: note.id } });
     expect(refreshed.emailedAt).not.toBeNull();
+  });
+
+  it("enriches a rejection email with the study, country, quote refs and a deep-link", async () => {
+    vi.mocked(sendEmail).mockClear();
+    const q = await submittedQuote();
+    await rejectLine(analyst, q, "Reason Z");
+    const note = await prisma.notification.findFirstOrThrow({ where: { subjectId: q } });
+    const line = await prisma.quoteLine.findUniqueOrThrow({
+      where: { id: q },
+      select: { quoteLineNumber: true },
+    });
+
+    await sendNotificationEmail(note.id);
+
+    const email = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(email.body).toContain("Notif study"); // the project (Pricing Study)
+    expect(email.body).toContain("Germany"); // the country
+    expect(email.body).toContain("Reason Z");
+    expect(email.body).toContain(`/studies/${studyId}#line-${line.quoteLineNumber}`); // deep-link
   });
 
   it("is a no-op for an already-emailed notification (at-least-once dedupe)", async () => {
