@@ -10,7 +10,7 @@
 // tenant gate, the released/approved read, and exceljs rendering live in the adapter.
 
 import type { Cell, Column, SheetData, WorkbookData } from "./workbook";
-import { yesNo, naWhenOff } from "./cells";
+import { yesNo, naWhenOff, composeSourceLocation } from "./cells";
 import { buildItemDashboards } from "@/domains/analytics/dashboard";
 
 /** One released + approved Quote Line as the client detail reads it: the line and
@@ -21,6 +21,7 @@ export interface ClientExportLine {
   readonly marketQuoteNumber: number;
   readonly sourceName: string | null;
   readonly sourceLocality: string | null;
+  readonly sourceCountry: string | null;
   readonly sourceUrl: string | null;
   readonly competitorBrand: string | null;
   readonly competitorItemDescription: string | null;
@@ -83,7 +84,7 @@ const DETAIL_COLUMNS: readonly Column[] = [
   { header: "Client Secondary Item Number", key: "clientSecondaryItemNumber" },
   { header: "Client Item Configuration Comment", key: "clientItemConfigurationComment" },
   { header: "Source Name", key: "sourceName" },
-  { header: "Source Location", key: "sourceLocality" },
+  { header: "Source Location", key: "sourceLocation" },
   { header: "Source URL", key: "sourceUrl" },
   { header: "Competitor Brand", key: "competitorBrand" },
   { header: "Competitor Category", key: "competitorCategory" },
@@ -158,7 +159,7 @@ function detailSheet(studyName: string, items: readonly ClientExportItem[]): She
         clientSecondaryItemNumber: item.clientSecondaryItemNumber,
         clientItemConfigurationComment: item.clientItemConfigurationComment,
         sourceName: l.sourceName,
-        sourceLocality: l.sourceLocality,
+        sourceLocation: composeSourceLocation(l.sourceLocality, l.sourceCountry),
         sourceUrl: l.sourceUrl,
         competitorBrand: l.competitorBrand,
         competitorCategory: null,
