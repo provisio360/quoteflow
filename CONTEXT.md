@@ -137,8 +137,12 @@ An [[Analyst]]'s **per-line** verdict (never a wholesale verdict on a [[Market Q
 The rival company and brand whose equivalent part is being priced against the client's Benchmark Item.
 
 **Distributor/Dealer**:
-The source a researcher contacts for a [[Market Quote]] — the company that sells the competitor's part and would ship it to the customer. Carries a name, physical location, and URL, all held on the Market Quote (one source per document).
+The source a researcher contacts for a [[Market Quote]] — the company that sells the competitor's part and would ship it to the customer. Carries a name, physical location, and URL, all held on the Market Quote (one source per document). Its physical location is split into a validated **[[Dealer Country]]** and a free-text **dealer locality** (city/state/province/region), superseding the old single free-text "Dealer location".
 _Avoid_: Vendor, supplier, source
+
+**Dealer Country**:
+The validated country a [[Distributor/Dealer]] is physically located in, held on the [[Market Quote]] as a canonical ISO 3166-1 short name (the same vocabulary the market [[Country]] validates against). **Distinct from [[Country]]** — that is the *market* being priced (the unit of client release); Dealer Country is merely *where the source sits* and a dealer may be in a different country than the market it quotes for. Its sole behavioural role: it supplies the **default selection** for the document's local [[currency|Exchange Rate]] (the country's local currency), which the researcher may override to another single currency — the document still holds exactly **one** currency (ADR-0004 unchanged). Purely descriptive provenance otherwise: it never scopes numbering, release, or tenant isolation.
+_Avoid_: Country (the market), source location, region
 
 **Export**:
 A downloadable spreadsheet of a [[Pricing Study]]'s data (Excel only in v1 — no PDF). Comes in two flavours distinguished by who runs it and what it may contain: the [[Client Export]] and the [[Internal Export]]. Both respect [[Client]] tenant isolation absolutely. There is no aggregate-vs-detail divide in the *format* — both are workbooks; the divide is in the **population and columns** each flavour is allowed.
