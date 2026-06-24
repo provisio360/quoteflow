@@ -18,7 +18,7 @@ function line(over: Partial<ClientExportLine> = {}): ClientExportLine {
     rowId: 1,
     marketQuoteNumber: 1,
     sourceName: "Acme",
-    sourceLocation: "Sao Paulo",
+    sourceLocality: "Sao Paulo",
     sourceUrl: null,
     competitorBrand: "Caterpillar",
     competitorItemDescription: null,

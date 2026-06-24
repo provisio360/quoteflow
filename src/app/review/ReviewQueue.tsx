@@ -88,7 +88,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
       <td style={cell}>
         #{item.quoteLineNumber} · {item.competitorBrand ?? "—"}
         <br />
-        {item.sourceName ?? "—"}, {item.sourceLocation ?? "—"}
+        {item.sourceName ?? "—"}, {item.sourceLocality ?? "—"}
         <br />
         <span style={{ color: "#777" }}>by {item.authorName}</span>
       </td>

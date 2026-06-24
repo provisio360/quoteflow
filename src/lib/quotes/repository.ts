@@ -11,6 +11,8 @@ import {
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
 import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
+import { isValidCurrency } from "@/domains/quotes/currencies";
+import { canonicalCountry } from "@/domains/benchmark-items/countries";
 import { resolveQcThreshold } from "@/domains/benchmark-items/qc-threshold";
 import {
   convertManual,
@@ -47,13 +49,50 @@ export class QuoteAccessError extends Error {
   }
 }
 
+/** Raised when a write carries a malformed value the user must correct — distinct
+ *  from an access failure. Forward-only (ADR-0032): only the value BEING WRITTEN is
+ *  checked; a key absent from the edit is never revalidated, so legacy free-text
+ *  currency / a null Dealer Country survive untouched until next edited. */
+export class QuoteValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "QuoteValidationError";
+  }
+}
+
+/** Forward-only write validation of the document header (ADR-0032). A supplied,
+ *  non-empty `currency` must be a valid ISO 4217 code; a supplied, non-empty
+ *  `sourceCountry` must be a canonical ISO 3166-1 name. `undefined` (field not in
+ *  the edit) and null/blank are tolerated — required-ness is the submit gate's job. */
+function validateHeaderWrite(header: MarketQuoteHeaderFields): void {
+  if (
+    header.currency !== undefined &&
+    header.currency !== null &&
+    header.currency.trim() !== "" &&
+    !isValidCurrency(header.currency)
+  ) {
+    throw new QuoteValidationError(`Invalid currency code: "${header.currency}"`);
+  }
+  if (
+    header.sourceCountry !== undefined &&
+    header.sourceCountry !== null &&
+    header.sourceCountry.trim() !== "" &&
+    canonicalCountry(header.sourceCountry) === null
+  ) {
+    throw new QuoteValidationError(`Invalid Dealer Country: "${header.sourceCountry}"`);
+  }
+}
+
 /** The document-header fields a Researcher sets when creating a Market Quote. The
  *  owning (studyId, country) are positional, not here. All optional — a Draft
  *  document saves partial data; source/date/currency become required only when its
  *  lines are submitted (validated per line by the lifecycle core). */
 export interface MarketQuoteHeaderFields {
   readonly sourceName?: string | null;
-  readonly sourceLocation?: string | null;
+  /** The dealer's validated country (ADR-0032): a canonical ISO 3166-1 short name.
+   *  Forward-only — rejected on write if supplied non-empty and not in the list. */
+  readonly sourceCountry?: string | null;
+  readonly sourceLocality?: string | null;
   readonly sourceUrl?: string | null;
   readonly currency?: string | null;
   readonly dateQuoteReceived?: Date | null;
@@ -196,6 +235,7 @@ export async function createMarketQuote(
   if (!canCreateQuote(principal)) {
     throw new QuoteAccessError("Only Researchers may create a Market Quote");
   }
+  validateHeaderWrite(header);
 
   return withTenant(principal, async (tx) => {
     const study = await tx.study.findUnique({
@@ -340,6 +380,7 @@ export async function updateMarketQuote(
   marketQuoteId: string,
   header: MarketQuoteHeaderFields,
 ): Promise<void> {
+  validateHeaderWrite(header);
   await withTenant(principal, async (tx) => {
     const doc = await tx.marketQuote.findUnique({
       where: { id: marketQuoteId },
@@ -420,7 +461,8 @@ export interface DraftMarketQuoteGroup {
   readonly marketQuoteNumber: number;
   readonly country: string;
   readonly sourceName: string | null;
-  readonly sourceLocation: string | null;
+  readonly sourceCountry: string | null;
+  readonly sourceLocality: string | null;
   readonly sourceUrl: string | null;
   readonly currency: string | null;
   readonly dateQuoteReceived: Date | null;
@@ -460,7 +502,8 @@ export async function listDraftMarketQuotesForResearcher(
         marketQuoteNumber: true,
         country: true,
         sourceName: true,
-        sourceLocation: true,
+        sourceCountry: true,
+        sourceLocality: true,
         sourceUrl: true,
         currency: true,
         dateQuoteReceived: true,
@@ -487,7 +530,8 @@ export async function listDraftMarketQuotesForResearcher(
     marketQuoteNumber: r.marketQuoteNumber,
     country: r.country,
     sourceName: r.sourceName,
-    sourceLocation: r.sourceLocation,
+    sourceCountry: r.sourceCountry,
+    sourceLocality: r.sourceLocality,
     sourceUrl: r.sourceUrl,
     currency: r.currency,
     dateQuoteReceived: r.dateQuoteReceived,
@@ -538,7 +582,8 @@ export async function submitMarketQuote(
         createdById: true,
         studyId: true,
         sourceName: true,
-        sourceLocation: true,
+        sourceCountry: true,
+        sourceLocality: true,
         currency: true,
         dateQuoteReceived: true,
         conversionStatus: true,
@@ -557,7 +602,8 @@ export async function submitMarketQuote(
 
     const header: DocumentHeader = {
       sourceName: doc.sourceName,
-      sourceLocation: doc.sourceLocation,
+      sourceCountry: doc.sourceCountry,
+      sourceLocality: doc.sourceLocality,
       currency: doc.currency,
       dateQuoteReceived: doc.dateQuoteReceived,
     };
@@ -645,7 +691,8 @@ export interface ReviewQueueItem {
   readonly quoteLineNumber: number;
   readonly competitorBrand: string | null;
   readonly sourceName: string | null;
-  readonly sourceLocation: string | null;
+  readonly sourceCountry: string | null;
+  readonly sourceLocality: string | null;
   readonly price: string | null;
   readonly currency: string | null;
   readonly quantityQuoted: number | null;
@@ -733,7 +780,8 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
         marketQuote: {
           select: {
             sourceName: true,
-            sourceLocation: true,
+            sourceCountry: true,
+            sourceLocality: true,
             currency: true,
             conversionStatus: true,
           },
@@ -768,7 +816,8 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
       quoteLineNumber: r.quoteLineNumber,
       competitorBrand: r.competitorBrand,
       sourceName: r.marketQuote.sourceName,
-      sourceLocation: r.marketQuote.sourceLocation,
+      sourceCountry: r.marketQuote.sourceCountry,
+      sourceLocality: r.marketQuote.sourceLocality,
       price: r.price === null ? null : r.price.toString(),
       currency: r.marketQuote.currency,
       quantityQuoted: r.quantityQuoted,

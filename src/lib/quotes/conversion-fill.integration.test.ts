@@ -36,7 +36,8 @@ let researcher: InternalPrincipal;
 // A complete document header except dateQuoteReceived, which each test sets.
 const header: Omit<MarketQuoteHeaderFields, "dateQuoteReceived"> = {
   sourceName: "Acme Equipment",
-  sourceLocation: "Munich",
+  sourceCountry: "Germany",
+  sourceLocality: "Munich",
   currency: "EUR",
 };
 const line = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1 };

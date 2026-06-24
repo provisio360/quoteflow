@@ -30,7 +30,8 @@ export type DraftDocGroup = DraftMarketQuoteGroup & {
 /** A line's required-to-submit field renders by a friendly name, not its key. */
 const FIELD_LABEL: Record<string, string> = {
   sourceName: "dealer / source name",
-  sourceLocation: "dealer location",
+  sourceCountry: "dealer country",
+  sourceLocality: "dealer locality",
   currency: "currency",
   dateQuoteReceived: "date received",
   competitorBrand: "competitor brand",
@@ -54,7 +55,8 @@ function initialFromLine(l: DraftMarketQuoteGroupLine): Record<string, string> {
 function initialFromHeader(g: DraftDocGroup): Record<string, string> {
   return {
     sourceName: g.sourceName ?? "",
-    sourceLocation: g.sourceLocation ?? "",
+    sourceLocality: g.sourceLocality ?? "",
+    sourceCountry: g.sourceCountry ?? "",
     sourceUrl: g.sourceUrl ?? "",
     currency: g.currency ?? "",
     dateQuoteReceived: g.dateQuoteReceived

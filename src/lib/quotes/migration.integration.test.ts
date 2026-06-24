@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { cpSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -31,10 +31,18 @@ beforeAll(async () => {
   admin = new PrismaClient();
   await admin.$executeRawUnsafe(`CREATE DATABASE "${dbName}"`);
 
-  // Temp copy of prisma/ with the split migration removed → deploy "pre-split".
+  // Temp copy of prisma/ deployed up to (but not including) the split → "pre-split".
+  // Remove the split AND every later migration (e.g. #108 dealer-location, which
+  // ALTERs market_quote): those depend on tables the split creates, so deploying
+  // them against a pre-split DB would fail. Migration dirs are timestamp-prefixed,
+  // so a lexical compare drops everything from the split onward.
   const tmp = join(tmpdir(), `qf-prisma-${Date.now()}`);
   cpSync(join(process.cwd(), "prisma"), tmp, { recursive: true });
-  rmSync(join(tmp, "migrations", SPLIT), { recursive: true, force: true });
+  for (const name of readdirSync(join(tmp, "migrations"))) {
+    if (name >= SPLIT && name !== "migration_lock.toml") {
+      rmSync(join(tmp, "migrations", name), { recursive: true, force: true });
+    }
+  }
   execSync(`npx prisma migrate deploy --schema "${join(tmp, "schema.prisma")}"`, {
     env: { ...process.env, DATABASE_URL: migrUrl, DIRECT_URL: migrUrl },
     stdio: "ignore",
