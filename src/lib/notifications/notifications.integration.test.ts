@@ -45,7 +45,8 @@ let itemId: string;
 
 const header: MarketQuoteHeaderFields = {
   sourceName: "Acme Equipment",
-  sourceLocation: "Munich",
+  sourceCountry: "Germany",
+  sourceLocality: "Munich",
   currency: "EUR",
   dateQuoteReceived: new Date("2026-06-01"),
 };

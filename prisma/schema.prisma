@@ -381,7 +381,8 @@ enum ConfidenceCode {
 }
 
 /// One dealer's quotation document (ADR-0026): the facts shared by all its lines —
-/// source name/location/url, the Date Quote Received, the local currency, and the
+/// source name, Dealer Country + locality, url, the Date Quote Received, the local
+/// currency (ADR-0032), and the
 /// single pinned conversion (`exchangeRate`/`rateDate`/`conversionStatus`, null
 /// until the document is submitted; pinned per document in a later slice). It has
 /// NO lifecycle state of its own. `marketQuoteNumber` is the per-(study, country)
@@ -400,7 +401,8 @@ model MarketQuote {
   createdById String
 
   sourceName        String?
-  sourceLocation    String?
+  sourceLocality    String?
+  sourceCountry     String?
   sourceUrl         String?
   currency          String?
   dateQuoteReceived DateTime?

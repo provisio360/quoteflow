@@ -31,7 +31,7 @@ type Mode =
 // [name, label] pairs to render a compact grid (ADR-0022: plain components).
 const HEADER_FIELDS: [string, string][] = [
   ["sourceName", "Dealer / source name *"],
-  ["sourceLocation", "Dealer location *"],
+  ["sourceLocality", "Dealer locality *"],
   ["sourceUrl", "Dealer URL"],
   ["currency", "Currency * (e.g. EUR)"],
 ];
@@ -68,7 +68,8 @@ function lineFieldsFromForm(fd: FormData): QuoteLineFields {
 function headerFieldsFromForm(fd: FormData): MarketQuoteHeaderFields {
   return {
     sourceName: str(fd, "sourceName") ?? null,
-    sourceLocation: str(fd, "sourceLocation") ?? null,
+    sourceLocality: str(fd, "sourceLocality") ?? null,
+    sourceCountry: str(fd, "sourceCountry") ?? null,
     sourceUrl: str(fd, "sourceUrl") ?? null,
     currency: str(fd, "currency") ?? null,
     dateQuoteReceived: fd.get("dateQuoteReceived")

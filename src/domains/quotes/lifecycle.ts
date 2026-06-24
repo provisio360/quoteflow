@@ -51,7 +51,8 @@ export type QuoteEvent =
 /** The Market Quote's shared facts every line inherits at submit. */
 export interface DocumentHeader {
   readonly sourceName: string | null;
-  readonly sourceLocation: string | null;
+  readonly sourceCountry: string | null;
+  readonly sourceLocality: string | null;
   readonly currency: string | null;
   readonly dateQuoteReceived: Date | null;
 }
@@ -69,7 +70,8 @@ export interface SubmittableLine {
 /** Document-level required-to-submit fields (validated once for the whole doc). */
 export const DOC_REQUIRED_TO_SUBMIT = [
   "sourceName",
-  "sourceLocation",
+  "sourceCountry",
+  "sourceLocality",
   "currency",
   "dateQuoteReceived",
 ] as const;

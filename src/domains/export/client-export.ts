@@ -20,7 +20,7 @@ export interface ClientExportLine {
   readonly rowId: number;
   readonly marketQuoteNumber: number;
   readonly sourceName: string | null;
-  readonly sourceLocation: string | null;
+  readonly sourceLocality: string | null;
   readonly sourceUrl: string | null;
   readonly competitorBrand: string | null;
   readonly competitorItemDescription: string | null;
@@ -83,7 +83,7 @@ const DETAIL_COLUMNS: readonly Column[] = [
   { header: "Client Secondary Item Number", key: "clientSecondaryItemNumber" },
   { header: "Client Item Configuration Comment", key: "clientItemConfigurationComment" },
   { header: "Source Name", key: "sourceName" },
-  { header: "Source Location", key: "sourceLocation" },
+  { header: "Source Location", key: "sourceLocality" },
   { header: "Source URL", key: "sourceUrl" },
   { header: "Competitor Brand", key: "competitorBrand" },
   { header: "Competitor Category", key: "competitorCategory" },
@@ -158,7 +158,7 @@ function detailSheet(studyName: string, items: readonly ClientExportItem[]): She
         clientSecondaryItemNumber: item.clientSecondaryItemNumber,
         clientItemConfigurationComment: item.clientItemConfigurationComment,
         sourceName: l.sourceName,
-        sourceLocation: l.sourceLocation,
+        sourceLocality: l.sourceLocality,
         sourceUrl: l.sourceUrl,
         competitorBrand: l.competitorBrand,
         competitorCategory: null,

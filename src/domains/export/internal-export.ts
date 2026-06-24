@@ -33,7 +33,7 @@ export interface InternalExportLine {
   readonly clientSecondaryItemNumber: string | null;
   readonly clientItemConfigurationComment: string | null;
   readonly sourceName: string | null;
-  readonly sourceLocation: string | null;
+  readonly sourceLocality: string | null;
   readonly sourceUrl: string | null;
   readonly competitorBrand: string | null;
   readonly competitorItemDescription: string | null;
@@ -90,7 +90,7 @@ const COLUMNS: readonly Column[] = [
   { header: "Client Secondary Item Number", key: "clientSecondaryItemNumber" },
   { header: "Client Item Configuration Comment", key: "clientItemConfigurationComment" },
   { header: "Source Name", key: "sourceName" },
-  { header: "Source Location", key: "sourceLocation" },
+  { header: "Source Location", key: "sourceLocality" },
   { header: "Source URL", key: "sourceUrl" },
   { header: "Competitor Brand", key: "competitorBrand" },
   { header: "Competitor Category", key: "competitorCategory" },
@@ -165,7 +165,7 @@ export function buildInternalExport(
       clientSecondaryItemNumber: l.clientSecondaryItemNumber,
       clientItemConfigurationComment: l.clientItemConfigurationComment,
       sourceName: l.sourceName,
-      sourceLocation: l.sourceLocation,
+      sourceLocality: l.sourceLocality,
       sourceUrl: l.sourceUrl,
       competitorBrand: l.competitorBrand,
       competitorCategory: null,

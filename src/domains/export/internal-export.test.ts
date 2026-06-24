@@ -26,7 +26,7 @@ function line(over: Partial<InternalExportLine> = {}): InternalExportLine {
     clientSecondaryItemNumber: null,
     clientItemConfigurationComment: null,
     sourceName: "Acme",
-    sourceLocation: "Sao Paulo",
+    sourceLocality: "Sao Paulo",
     sourceUrl: null,
     competitorBrand: "Caterpillar",
     competitorItemDescription: null,

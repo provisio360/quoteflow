@@ -16,6 +16,7 @@ import {
   setMarketQuoteManualRate,
   listReviewQueue,
   QuoteAccessError,
+  QuoteValidationError,
   type MarketQuoteHeaderFields,
   type QuoteLineFields,
 } from "./repository";
@@ -46,7 +47,8 @@ let analyst: InternalPrincipal;
 
 const completeHeader: MarketQuoteHeaderFields = {
   sourceName: "Acme Equipment",
-  sourceLocation: "Munich",
+  sourceCountry: "Germany",
+  sourceLocality: "Munich",
   currency: "EUR",
   dateQuoteReceived: new Date("2026-06-01"),
 };
@@ -637,5 +639,99 @@ describe("updateMarketQuote (#97 — edit document header)", () => {
     await expect(
       updateMarketQuote(researcherA, d.id, { dateQuoteReceived: new Date("2026-07-01") }),
     ).rejects.toThrow(QuoteAccessError);
+  });
+});
+
+describe("dealer location split + forward-only validation (#108 / ADR-0032)", () => {
+  it("round-trips Dealer Country and locality through create and read", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
+    const mine = groups.find((g) => g.marketQuoteId === d.id);
+    expect(mine!.sourceCountry).toBe("Germany");
+    expect(mine!.sourceLocality).toBe("Munich");
+  });
+
+  it("blocks bulk submit, reporting a missing Dealer Country", async () => {
+    const { sourceCountry: _omit, ...noCountry } = completeHeader;
+    const d = await createMarketQuote(researcherA, studyId, "Germany", noCountry);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    const result = await submitMarketQuote(researcherA, d.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.reason === "lines-incomplete") {
+      expect(result.perLine[0].missing).toContain("sourceCountry");
+    } else {
+      throw new Error("expected lines-incomplete");
+    }
+  });
+
+  it("blocks bulk submit, reporting a missing dealer locality", async () => {
+    const { sourceLocality: _omit, ...noLocality } = completeHeader;
+    const d = await createMarketQuote(researcherA, studyId, "Germany", noLocality);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    const result = await submitMarketQuote(researcherA, d.id);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.reason === "lines-incomplete") {
+      expect(result.perLine[0].missing).toContain("sourceLocality");
+    } else {
+      throw new Error("expected lines-incomplete");
+    }
+  });
+
+  it("rejects creating with an invalid currency code", async () => {
+    await expect(
+      createMarketQuote(researcherA, studyId, "Germany", { ...completeHeader, currency: "Euros" }),
+    ).rejects.toThrow(QuoteValidationError);
+  });
+
+  it("rejects creating with an invalid Dealer Country", async () => {
+    await expect(
+      createMarketQuote(researcherA, studyId, "Germany", {
+        ...completeHeader,
+        sourceCountry: "Westeros",
+      }),
+    ).rejects.toThrow(QuoteValidationError);
+  });
+
+  it("rejects editing to an invalid currency code", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await expect(
+      updateMarketQuote(researcherA, d.id, { currency: "notacode" }),
+    ).rejects.toThrow(QuoteValidationError);
+  });
+
+  it("tolerates a legacy free-text currency on read and on an unrelated edit (forward-only)", async () => {
+    // A pre-split row seeded directly with a free-text currency and no Dealer
+    // Country — never rejected, never revalidated until currency itself is edited.
+    const legacy = await prisma.marketQuote.create({
+      data: {
+        studyId,
+        clientId: tenantId,
+        country: "Germany",
+        marketQuoteNumber: 9000,
+        createdById: researcherA.userId,
+        sourceName: "Legacy Dealer",
+        sourceLocality: "Old Town",
+        currency: "Euros", // free-text, not ISO 4217
+      },
+      select: { id: true },
+    });
+    await addQuoteLine(researcherA, legacy.id, itemG1, completeLine);
+
+    // Loads via the read path with its free-text currency intact.
+    const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
+    const mine = groups.find((g) => g.marketQuoteId === legacy.id);
+    expect(mine!.currency).toBe("Euros");
+
+    // An edit that does not carry currency is accepted (no revalidation).
+    await updateMarketQuote(researcherA, legacy.id, { sourceName: "Renamed" });
+    const after = await prisma.marketQuote.findUnique({
+      where: { id: legacy.id },
+      select: { sourceName: true, currency: true },
+    });
+    expect(after).toEqual({ sourceName: "Renamed", currency: "Euros" });
   });
 });

@@ -55,7 +55,7 @@ export interface ReleasedQuoteView {
   readonly itemDescription: string;
   readonly competitorBrand: string | null;
   readonly sourceName: string | null;
-  readonly sourceLocation: string | null;
+  readonly sourceLocality: string | null;
   readonly sourceUrl: string | null;
   readonly price: string | null;
   readonly currency: string | null;
@@ -269,7 +269,7 @@ export async function listReleasedQuotesForStudy(
         marketQuote: {
           select: {
             sourceName: true,
-            sourceLocation: true,
+            sourceLocality: true,
             sourceUrl: true,
             currency: true,
             dateQuoteReceived: true,
@@ -289,7 +289,7 @@ export async function listReleasedQuotesForStudy(
     itemDescription: r.benchmarkItem.itemDescription,
     competitorBrand: r.competitorBrand,
     sourceName: r.marketQuote.sourceName,
-    sourceLocation: r.marketQuote.sourceLocation,
+    sourceLocality: r.marketQuote.sourceLocality,
     sourceUrl: r.marketQuote.sourceUrl,
     price: decimalString(r.price),
     currency: r.marketQuote.currency,

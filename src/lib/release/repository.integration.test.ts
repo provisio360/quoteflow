@@ -100,7 +100,8 @@ async function seedItem(
         marketQuoteNumber: i + 1,
         createdById: researcher.userId,
         sourceName: "Acme",
-        sourceLocation: "Town",
+        sourceCountry: "Germany",
+        sourceLocality: "Town",
         currency: "EUR",
         ...(approved
           ? {

@@ -99,7 +99,8 @@ describe("transition: revise (Rejected → Draft)", () => {
 // inherits at submit (CONTEXT.md: Market Quote).
 const completeHeader: DocumentHeader = {
   sourceName: "Acme Equipment",
-  sourceLocation: "Munich, Germany",
+  sourceLocality: "Munich",
+  sourceCountry: "Germany",
   currency: "EUR",
   dateQuoteReceived: new Date("2026-06-01"),
 };
@@ -147,6 +148,33 @@ describe("submitDocument (bulk submit guard)", () => {
         { lineId: "l1", missing: ["currency"] },
         { lineId: "l2", missing: ["currency"] },
       ],
+    });
+  });
+
+  it("reports a missing Dealer Country against every Draft line", () => {
+    const result = submitDocument({
+      header: { ...completeHeader, sourceCountry: null },
+      lines: [draftLine("l1"), draftLine("l2")],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [
+        { lineId: "l1", missing: ["sourceCountry"] },
+        { lineId: "l2", missing: ["sourceCountry"] },
+      ],
+    });
+  });
+
+  it("reports a missing dealer locality against every Draft line", () => {
+    const result = submitDocument({
+      header: { ...completeHeader, sourceLocality: "  " },
+      lines: [draftLine("l1")],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["sourceLocality"] }],
     });
   });
 
