@@ -9,6 +9,11 @@ import {
   updateMarketQuoteAction,
 } from "@/lib/quotes/actions";
 import type { MarketQuoteHeaderFields, QuoteLineFields } from "@/lib/quotes/repository";
+import { ISO_3166_COUNTRY_NAMES } from "@/domains/benchmark-items/countries";
+import {
+  currencyOptions,
+  defaultCurrencyOnCountryChange,
+} from "@/domains/quotes/quote-currency-picker";
 
 // The Quote entry/edit form for a Researcher (#87, #97). A Market Quote is a dealer
 // DOCUMENT (source/date/currency) that has many Quote Lines. Modes:
@@ -29,11 +34,12 @@ type Mode =
 
 // Document-header text fields (create only) and the line fields. Kept as plain
 // [name, label] pairs to render a compact grid (ADR-0022: plain components).
+// Free-text header fields. Dealer Country and Currency are validated pickers
+// rendered separately (controlled, country drives the currency default — ADR-0032).
 const HEADER_FIELDS: [string, string][] = [
   ["sourceName", "Dealer / source name *"],
   ["sourceLocality", "Dealer locality *"],
   ["sourceUrl", "Dealer URL"],
-  ["currency", "Currency * (e.g. EUR)"],
 ];
 
 const LINE_TEXT_FIELDS: [keyof QuoteLineFields, string][] = [
@@ -92,6 +98,18 @@ export function QuoteEditor({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+
+  // Dealer Country + Currency are the only controlled fields: changing the
+  // country re-applies that country's default currency (ADR-0032). Currency
+  // options carry any legacy free-text value so an edit round-trips it.
+  const [country, setCountry] = useState(initial?.sourceCountry ?? "");
+  const [currency, setCurrency] = useState(initial?.currency ?? "");
+
+  function onCountryChange(next: string) {
+    setCountry(next);
+    const applied = defaultCurrencyOnCountryChange(next);
+    if (applied !== null) setCurrency(applied);
+  }
 
   function handle(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -161,6 +179,38 @@ export function QuoteEditor({
               <input name={name} defaultValue={initial?.[name] ?? ""} style={input} />
             </label>
           ))}
+          <label style={{ fontSize: "0.85rem" }}>
+            Dealer country *
+            <select
+              name="sourceCountry"
+              value={country}
+              onChange={(e) => onCountryChange(e.target.value)}
+              style={input}
+            >
+              <option value="">— select country —</option>
+              {ISO_3166_COUNTRY_NAMES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ fontSize: "0.85rem" }}>
+            Currency *
+            <select
+              name="currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              style={input}
+            >
+              <option value="">— select currency —</option>
+              {currencyOptions(initial?.currency).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <label style={{ fontSize: "0.85rem" }}>
             Date received *
             <input name="dateQuoteReceived" type="date" defaultValue={initial?.dateQuoteReceived ?? ""} style={input} />
