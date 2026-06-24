@@ -19,6 +19,7 @@ function line(over: Partial<ClientExportLine> = {}): ClientExportLine {
     marketQuoteNumber: 1,
     sourceName: "Acme",
     sourceLocality: "Sao Paulo",
+    sourceCountry: "Brazil",
     sourceUrl: null,
     competitorBrand: "Caterpillar",
     competitorItemDescription: null,
@@ -148,6 +149,25 @@ describe("buildClientExport — client_final_report detail sheet", () => {
     expect(row.competitorBrand).toBe("Caterpillar");
     expect(row.quotedPrice).toBe(1100);
     expect(row.convertedCurrency).toBe("USD");
+  });
+
+  it("composes the single 'Source Location' cell from locality + Dealer Country (ADR-0032)", () => {
+    const wb = buildClientExport("Boznia", [
+      item({
+        quotes: [
+          line({ sourceLocality: "Sao Paulo", sourceCountry: "Brazil" }),
+          line({ sourceLocality: "Lyon", sourceCountry: null }),
+          line({ sourceLocality: null, sourceCountry: "France" }),
+          line({ sourceLocality: null, sourceCountry: null }),
+        ],
+      }),
+    ]);
+    expect(wb.sheets[0].rows.map((r) => r.sourceLocation)).toEqual([
+      "Sao Paulo, Brazil",
+      "Lyon",
+      "France",
+      null,
+    ]);
   });
 });
 

@@ -10,7 +10,7 @@
 // adapter (src/lib/export). Client-facing reads never produce this shape.
 
 import type { Cell, Column, WorkbookData } from "./workbook";
-import { yesNo, naWhenOff } from "./cells";
+import { yesNo, naWhenOff, composeSourceLocation } from "./cells";
 import { evaluatePriceFlag } from "@/domains/quotes/price-flag";
 
 /** One non-Draft Quote Line as the analyst_tracker reads it: line fields joined to
@@ -34,6 +34,7 @@ export interface InternalExportLine {
   readonly clientItemConfigurationComment: string | null;
   readonly sourceName: string | null;
   readonly sourceLocality: string | null;
+  readonly sourceCountry: string | null;
   readonly sourceUrl: string | null;
   readonly competitorBrand: string | null;
   readonly competitorItemDescription: string | null;
@@ -90,7 +91,7 @@ const COLUMNS: readonly Column[] = [
   { header: "Client Secondary Item Number", key: "clientSecondaryItemNumber" },
   { header: "Client Item Configuration Comment", key: "clientItemConfigurationComment" },
   { header: "Source Name", key: "sourceName" },
-  { header: "Source Location", key: "sourceLocality" },
+  { header: "Source Location", key: "sourceLocation" },
   { header: "Source URL", key: "sourceUrl" },
   { header: "Competitor Brand", key: "competitorBrand" },
   { header: "Competitor Category", key: "competitorCategory" },
@@ -165,7 +166,7 @@ export function buildInternalExport(
       clientSecondaryItemNumber: l.clientSecondaryItemNumber,
       clientItemConfigurationComment: l.clientItemConfigurationComment,
       sourceName: l.sourceName,
-      sourceLocality: l.sourceLocality,
+      sourceLocation: composeSourceLocation(l.sourceLocality, l.sourceCountry),
       sourceUrl: l.sourceUrl,
       competitorBrand: l.competitorBrand,
       competitorCategory: null,

@@ -18,3 +18,18 @@ export function yesNo(flag: boolean | null | undefined): Cell {
 export function naWhenOff(parentOn: boolean | null | undefined, value: Cell): Cell {
   return parentOn === true ? value : "N/A";
 }
+
+/** The single legacy "Source Location" cell, composed from the split dealer
+ *  locality + Dealer Country (ADR-0032): `"locality, Country"` when both present,
+ *  the lone part when only one is, blank (null) when neither — legacy rows with
+ *  neither. Each part is trimmed and blank-after-trim counts as absent, so a stray
+ *  `""`/whitespace never produces a dangling comma. */
+export function composeSourceLocation(
+  locality: string | null | undefined,
+  country: string | null | undefined,
+): Cell {
+  const parts = [locality, country]
+    .map((p) => p?.trim())
+    .filter((p): p is string => !!p);
+  return parts.length > 0 ? parts.join(", ") : null;
+}

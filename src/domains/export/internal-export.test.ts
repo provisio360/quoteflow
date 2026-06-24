@@ -27,6 +27,7 @@ function line(over: Partial<InternalExportLine> = {}): InternalExportLine {
     clientItemConfigurationComment: null,
     sourceName: "Acme",
     sourceLocality: "Sao Paulo",
+    sourceCountry: "Brazil",
     sourceUrl: null,
     competitorBrand: "Caterpillar",
     competitorItemDescription: null,
@@ -138,6 +139,25 @@ describe("buildInternalExport — analyst_tracker shape", () => {
     const [row] = wb.sheets[0].rows;
     expect(row.rowId).toBe(87);
     expect(row.marketQuoteNumber).toBe(3);
+  });
+
+  it("composes the single 'Source Location' cell from locality + Dealer Country (ADR-0032)", () => {
+    const wb = buildInternalExport(
+      "Boznia",
+      [
+        line({ sourceLocality: "Sao Paulo", sourceCountry: "Brazil" }),
+        line({ sourceLocality: "Lyon", sourceCountry: null }),
+        line({ sourceLocality: null, sourceCountry: "France" }),
+        line({ sourceLocality: null, sourceCountry: null }),
+      ],
+      0.25,
+    );
+    expect(wb.sheets[0].rows.map((r) => r.sourceLocation)).toEqual([
+      "Sao Paulo, Brazil",
+      "Lyon",
+      "France",
+      null,
+    ]);
   });
 
   it("reports the Client Price, the relative-difference fraction, and Paper Quote as Yes/No", () => {
