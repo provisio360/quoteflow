@@ -15,6 +15,7 @@ import {
   defaultCurrencyOnCountryChange,
 } from "@/domains/quotes/quote-currency-picker";
 import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
+import { stockStatusOptions } from "@/domains/quotes/stock-status";
 
 // The Quote entry/edit form for a Researcher (#87, #97). A Market Quote is a dealer
 // DOCUMENT (source/date/currency) that has many Quote Lines. Modes:
@@ -47,7 +48,6 @@ const LINE_TEXT_FIELDS: [keyof QuoteLineFields, string][] = [
   ["competitorBrand", "Competitor brand *"],
   ["competitorPartNumber", "Competitor part number"],
   ["competitorPartDescription", "Competitor part description"],
-  ["stockStatus", "Stock status"],
 ];
 
 function str(fd: FormData, k: string): string | undefined {
@@ -229,6 +229,17 @@ export function QuoteEditor({
                 <input name={name} defaultValue={initial?.[name] ?? ""} style={input} />
               </label>
             ))}
+            <label style={{ fontSize: "0.85rem" }}>
+              Stock status
+              <select name="stockStatus" defaultValue={initial?.stockStatus ?? ""} style={input}>
+                <option value="">— select —</option>
+                {stockStatusOptions(initial?.stockStatus).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label style={{ fontSize: "0.85rem" }}>
               Price * (local)
               <input
