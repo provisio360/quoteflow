@@ -14,6 +14,7 @@ import {
   currencyOptions,
   defaultCurrencyOnCountryChange,
 } from "@/domains/quotes/quote-currency-picker";
+import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
 
 // The Quote entry/edit form for a Researcher (#87, #97). A Market Quote is a dealer
 // DOCUMENT (source/date/currency) that has many Quote Lines. Modes:
@@ -66,7 +67,9 @@ function lineFieldsFromForm(fd: FormData): QuoteLineFields {
     stockStatus: str(fd, "stockStatus"),
     notes: str(fd, "notes"),
     justification: str(fd, "justification"),
-    price: str(fd, "price"),
+    // The input groups at rest (ADR-0033 amendment); strip the thousands commas
+    // before the bare number reaches storage/conversion.
+    price: ((p) => (p === undefined ? undefined : parseMoneyInput(p)))(str(fd, "price")),
     quantityQuoted: num("quantityQuoted"),
   };
 }
@@ -230,21 +233,21 @@ export function QuoteEditor({
               Price * (local)
               <input
                 name="price"
-                type="number"
-                step="0.0001"
-                defaultValue={initial?.price ?? ""}
-                // Right-aligned; on blur, round to the document currency's ISO 4217
-                // minor units (ADR-0033). A bare number, not a currency string —
-                // it posts via a number input and is parsed server-side.
+                type="text"
+                inputMode="decimal"
+                defaultValue={formatMoneyInput(initial?.price, currency)}
+                // Grouped at rest with the document currency's minor units (ADR-0033
+                // amendment): a `text` input — a number input can't hold a comma.
+                // Strip commas on focus for clean editing, re-group on blur. A bare
+                // number (no symbol) posts; commas are stripped again server-side.
+                onFocus={(e) => {
+                  e.target.value = parseMoneyInput(e.target.value);
+                }}
                 onBlur={(e) => {
-                  const v = e.target.value.trim();
+                  const v = parseMoneyInput(e.target.value.trim());
                   if (v === "" || !currency) return;
-                  const n = Number(v);
-                  if (Number.isNaN(n)) return;
-                  const dp =
-                    new Intl.NumberFormat("en-US", { style: "currency", currency })
-                      .resolvedOptions().maximumFractionDigits ?? 2;
-                  e.target.value = n.toFixed(dp);
+                  if (Number.isNaN(Number(v))) return;
+                  e.target.value = formatMoneyInput(v, currency);
                 }}
                 style={{ ...input, textAlign: "right" }}
               />

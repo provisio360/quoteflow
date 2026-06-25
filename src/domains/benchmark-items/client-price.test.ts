@@ -10,6 +10,10 @@ describe("parseClientPrice", () => {
     expect(parseClientPrice("1250.50")).toEqual({ ok: true, value: 1250.5 });
   });
 
+  it("accepts a grouped value the input now posts with thousands commas", () => {
+    expect(parseClientPrice("28,911.32")).toEqual({ ok: true, value: 28911.32 });
+  });
+
   it("treats a blank value as a clear (null), so the item becomes unpriced", () => {
     expect(parseClientPrice("")).toEqual({ ok: true, value: null });
   });
