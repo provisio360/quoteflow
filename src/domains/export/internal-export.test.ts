@@ -228,6 +228,18 @@ describe("buildInternalExport — analyst_tracker shape", () => {
     expect(row.landedCostNote).toBe("N/A");
   });
 
+  it("keeps the discount type when available but not applied; value stays N/A", () => {
+    const wb = buildInternalExport(
+      "Boznia",
+      [line({ discountAvailable: true, discountApplied: false, discountValue: null, discountType: "loyalty" })],
+      0.25,
+    );
+    const [row] = wb.sheets[0].rows;
+    expect(row.discountApplied).toBe("No");
+    expect(row.discountType).toBe("loyalty");
+    expect(row.discountValue).toBe("N/A");
+  });
+
   it("renders an applied discount's value/type, not N/A", () => {
     const wb = buildInternalExport(
       "Boznia",

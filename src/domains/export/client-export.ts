@@ -189,7 +189,9 @@ function detailSheet(studyName: string, items: readonly ClientExportItem[]): She
         discountAvailable: yesNo(l.discountAvailable),
         discountApplied: naWhenOff(l.discountAvailable, yesNo(l.discountApplied)),
         discountValue: discountOn ? l.discountValue : "N/A",
-        discountType: discountOn ? l.discountType : "N/A",
+        // Type describes the kind of discount on offer, so it rides on
+        // availability, not application — captured even when not applied.
+        discountType: naWhenOff(l.discountAvailable, l.discountType),
         otherNotes1: l.otherNotes1,
         otherNotes2: l.otherNotes2,
         confidenceCode: l.confidenceCode,

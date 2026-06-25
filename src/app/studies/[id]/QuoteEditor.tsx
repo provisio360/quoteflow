@@ -303,37 +303,39 @@ export function QuoteEditor({
             </select>
           </label>
           {discountAvailable === "true" && (
-            <label style={{ fontSize: "0.85rem" }}>
-              Discount applied to the quote?
-              <select
-                name="discountApplied"
-                value={discountApplied}
-                onChange={(e) => setDiscountApplied(e.target.value)}
-                style={input}
-              >
-                <option value="">— select —</option>
-                <option value="true">Yes</option>
-                <option value="false">No</option>
-              </select>
-            </label>
-          )}
-          {discountAvailable === "true" && discountApplied === "true" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
-              <label style={{ fontSize: "0.85rem" }}>
-                Discount %
-                <input
-                  name="discountValue"
-                  type="number"
-                  inputMode="decimal"
-                  defaultValue={initial?.discountValue ?? ""}
-                  style={{ ...input, textAlign: "right" }}
-                />
-              </label>
+            <>
+              {/* Type describes the kind of discount on offer — captured whenever a
+                  discount is available, even if it was not applied to this quote. */}
               <label style={{ fontSize: "0.85rem" }}>
                 Discount type
                 <input name="discountType" defaultValue={initial?.discountType ?? ""} style={input} />
               </label>
-            </div>
+              <label style={{ fontSize: "0.85rem" }}>
+                Discount applied to the quote?
+                <select
+                  name="discountApplied"
+                  value={discountApplied}
+                  onChange={(e) => setDiscountApplied(e.target.value)}
+                  style={input}
+                >
+                  <option value="">— select —</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+            </>
+          )}
+          {discountAvailable === "true" && discountApplied === "true" && (
+            <label style={{ fontSize: "0.85rem" }}>
+              Discount %
+              <input
+                name="discountValue"
+                type="number"
+                inputMode="decimal"
+                defaultValue={initial?.discountValue ?? ""}
+                style={{ ...input, textAlign: "right" }}
+              />
+            </label>
           )}
           <label style={{ fontSize: "0.85rem" }}>
             Notes

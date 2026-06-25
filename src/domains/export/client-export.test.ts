@@ -151,6 +151,19 @@ describe("buildClientExport — client_final_report detail sheet", () => {
     expect(row.convertedCurrency).toBe("USD");
   });
 
+  it("keeps the discount type when available but not applied; value stays N/A", () => {
+    const wb = buildClientExport("Boznia", [
+      item({
+        market: "Brazil",
+        quotes: [line({ discountAvailable: true, discountApplied: false, discountValue: null, discountType: "loyalty" })],
+      }),
+    ]);
+    const [row] = wb.sheets[0].rows;
+    expect(row.discountApplied).toBe("No");
+    expect(row.discountType).toBe("loyalty");
+    expect(row.discountValue).toBe("N/A");
+  });
+
   it("composes the single 'Source Location' cell from locality + Dealer Country (ADR-0032)", () => {
     const wb = buildClientExport("Boznia", [
       item({
