@@ -7,13 +7,15 @@
 // present value must be a number > 0, mirroring the brief import's rule so the
 // two entry paths can never disagree.
 
+import { parseMoneyInput } from "../quotes/format-money";
+
 export type ClientPriceParse =
   | { readonly ok: true; readonly value: number | null }
   | { readonly ok: false; readonly message: string };
 
 /** Validate raw form input into a Client Price: a positive number, or null to clear. */
 export function parseClientPrice(raw: string): ClientPriceParse {
-  const trimmed = raw.trim();
+  const trimmed = parseMoneyInput(raw.trim());
   if (trimmed === "") return { ok: true, value: null };
 
   const value = Number(trimmed);

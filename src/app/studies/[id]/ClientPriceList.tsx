@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { setClientPriceAction } from "@/lib/benchmark-items/actions";
 import type { SetClientPriceFormResult } from "@/lib/benchmark-items/actions";
 import type { AnalystItemView } from "@/lib/benchmark-items/repository";
+import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
 
 // The analyst QC list (issue #12). Rendered ONLY for Analysts (the page gates on
 // role) because it exposes Client Price, which is hidden from researchers and
@@ -63,17 +64,19 @@ function ClientPriceRow({ studyId, item }: { studyId: string; item: AnalystItemV
             type="text"
             inputMode="decimal"
             name="clientPrice"
-            defaultValue={item.clientPrice == null ? "" : Number(item.clientPrice).toFixed(2)}
+            defaultValue={formatMoneyInput(item.clientPrice, "USD")}
             placeholder="unpriced"
-            // Right-aligned; normalise to 2dp on blur (ADR-0033). A bare number,
-            // not a currency string — the value is parsed server-side. Blank stays
-            // blank (clears the Client Price), non-numeric input is left untouched
-            // for the server to reject.
+            // Grouped at rest with USD minor units (ADR-0033 amendment): a bare
+            // number, no symbol. Strip commas on focus for clean editing, re-group
+            // on blur. Blank stays blank (clears the Client Price); commas are
+            // stripped again server-side, non-numeric input left for it to reject.
+            onFocus={(e) => {
+              e.target.value = parseMoneyInput(e.target.value);
+            }}
             onBlur={(e) => {
-              const v = e.target.value.trim();
+              const v = parseMoneyInput(e.target.value.trim());
               if (v === "") return;
-              const n = Number(v);
-              if (!Number.isNaN(n)) e.target.value = n.toFixed(2);
+              if (!Number.isNaN(Number(v))) e.target.value = formatMoneyInput(v, "USD");
             }}
             style={{ width: "8rem", padding: "0.25rem", textAlign: "right" }}
           />
