@@ -111,6 +111,10 @@ const draftLine = (lineId: string, over: Partial<SubmittableLine> = {}): Submitt
   competitorBrand: "Bosch",
   price: 1250.5,
   quantityQuoted: 2,
+  warranty1Value: null,
+  warranty1Unit: null,
+  warranty2Value: null,
+  warranty2Unit: null,
   ...over,
 });
 
@@ -197,5 +201,90 @@ describe("submitDocument (bulk submit guard)", () => {
       lines: [draftLine("a", { state: "Submitted" })],
     });
     expect(result).toEqual({ ok: false, reason: "no-draft-lines" });
+  });
+});
+
+describe("submitDocument: warranty pair-completeness (ADR-0034)", () => {
+  it("submits a line with no warranty at all — warranty never gates on presence", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1")],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("submits a line whose warranty pair is fully filled (3 year)", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { warranty1Value: 3, warranty1Unit: "year" })],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("blocks a warranty value with no unit, reporting the missing unit half", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { warranty1Value: 3, warranty1Unit: null })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["warranty1Unit"] }],
+    });
+  });
+
+  it("blocks a warranty unit with no value, reporting the missing value half", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { warranty1Value: null, warranty1Unit: "year" })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["warranty1Value"] }],
+    });
+  });
+
+  it("treats a blank/whitespace unit as absent", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { warranty1Value: 3, warranty1Unit: "  " })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["warranty1Unit"] }],
+    });
+  });
+
+  it("checks the second warranty pair independently of the first", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [
+        draftLine("l1", {
+          warranty1Value: 3,
+          warranty1Unit: "year",
+          warranty2Value: 4000,
+          warranty2Unit: null,
+        }),
+      ],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["warranty2Unit"] }],
+    });
+  });
+
+  it("reports a half warranty pair alongside other missing required fields", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { price: null, warranty1Value: null, warranty1Unit: "year" })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["price", "warranty1Value"] }],
+    });
   });
 });
