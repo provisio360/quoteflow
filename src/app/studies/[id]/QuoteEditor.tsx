@@ -8,7 +8,7 @@ import {
   updateDraftLineAction,
   updateMarketQuoteAction,
 } from "@/lib/quotes/actions";
-import type { MarketQuoteHeaderFields, QuoteLineFields } from "@/lib/quotes/repository";
+import type { QuoteLineFields } from "@/lib/quotes/repository";
 import { ISO_3166_COUNTRY_NAMES } from "@/domains/benchmark-items/countries";
 import {
   currencyOptions,
@@ -17,6 +17,10 @@ import {
 import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
 import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
+import {
+  headerFieldsFromForm,
+  lineFieldsFromForm,
+} from "@/domains/quotes/quote-line-form";
 
 // The Quote entry/edit form for a Researcher (#87, #97). A Market Quote is a dealer
 // DOCUMENT (source/date/currency) that has many Quote Lines. Modes:
@@ -51,53 +55,6 @@ const LINE_TEXT_FIELDS: [keyof QuoteLineFields, string][] = [
   ["competitorPartDescription", "Competitor part description"],
 ];
 
-function str(fd: FormData, k: string): string | undefined {
-  const v = String(fd.get(k) ?? "").trim();
-  return v === "" ? undefined : v;
-}
-
-function lineFieldsFromForm(fd: FormData): QuoteLineFields {
-  const num = (k: string) => {
-    const v = String(fd.get(k) ?? "").trim();
-    return v === "" ? undefined : Number(v);
-  };
-  // A warranty value groups at rest like price (ADR-0034) but unit-agnostically;
-  // strip the commas before the bare number is stored.
-  const warrantyValue = (k: string) => {
-    const v = parseMoneyInput(String(fd.get(k) ?? "").trim());
-    return v === "" ? undefined : Number(v);
-  };
-  return {
-    competitorBrand: str(fd, "competitorBrand"),
-    competitorPartNumber: str(fd, "competitorPartNumber"),
-    competitorPartDescription: str(fd, "competitorPartDescription"),
-    stockStatus: str(fd, "stockStatus"),
-    warranty1Value: warrantyValue("warranty1Value"),
-    warranty1Unit: str(fd, "warranty1Unit"),
-    warranty2Value: warrantyValue("warranty2Value"),
-    warranty2Unit: str(fd, "warranty2Unit"),
-    notes: str(fd, "notes"),
-    justification: str(fd, "justification"),
-    // The input groups at rest (ADR-0033 amendment); strip the thousands commas
-    // before the bare number reaches storage/conversion.
-    price: ((p) => (p === undefined ? undefined : parseMoneyInput(p)))(str(fd, "price")),
-    quantityQuoted: num("quantityQuoted"),
-  };
-}
-
-function headerFieldsFromForm(fd: FormData): MarketQuoteHeaderFields {
-  return {
-    sourceName: str(fd, "sourceName") ?? null,
-    sourceLocality: str(fd, "sourceLocality") ?? null,
-    sourceCountry: str(fd, "sourceCountry") ?? null,
-    sourceUrl: str(fd, "sourceUrl") ?? null,
-    currency: str(fd, "currency") ?? null,
-    dateQuoteReceived: fd.get("dateQuoteReceived")
-      ? new Date(String(fd.get("dateQuoteReceived")))
-      : null,
-  };
-}
-
 const input = { padding: "0.3rem 0.4rem", width: "100%", boxSizing: "border-box" } as const;
 
 export function QuoteEditor({
@@ -118,6 +75,14 @@ export function QuoteEditor({
   // options carry any legacy free-text value so an edit round-trips it.
   const [country, setCountry] = useState(initial?.sourceCountry ?? "");
   const [currency, setCurrency] = useState(initial?.currency ?? "");
+
+  // Discount is a chain of dropdowns: "Discount available?" gates "Discount
+  // applied to the quote?", which in turn gates the % and type. Controlled so the
+  // nested fields only render (and only post) once their parent is "Yes". The %
+  // is recorded as a percentage; it is NOT applied to the price (the price is
+  // already the dealer's discount-inclusive final, per CONTEXT/ADR-0026).
+  const [discountAvailable, setDiscountAvailable] = useState(initial?.discountAvailable ?? "");
+  const [discountApplied, setDiscountApplied] = useState(initial?.discountApplied ?? "");
 
   function onCountryChange(next: string) {
     setCountry(next);
@@ -319,6 +284,59 @@ export function QuoteEditor({
               </div>
             );
           })}
+          {/* Discount chain (advisory metadata). "Available?" gates "Applied to the
+              quote?", which gates the % + type. Each is a tri-state dropdown; the
+              nested fields only render — and so only post — when the parent is Yes,
+              so a No/blank answer never carries a stale child value. The % is
+              recorded as typed (15 = 15%) and is NOT applied to the price. */}
+          <label style={{ fontSize: "0.85rem" }}>
+            Discount available?
+            <select
+              name="discountAvailable"
+              value={discountAvailable}
+              onChange={(e) => setDiscountAvailable(e.target.value)}
+              style={input}
+            >
+              <option value="">— select —</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </label>
+          {discountAvailable === "true" && (
+            <>
+              {/* Type describes the kind of discount on offer — captured whenever a
+                  discount is available, even if it was not applied to this quote. */}
+              <label style={{ fontSize: "0.85rem" }}>
+                Discount type
+                <input name="discountType" defaultValue={initial?.discountType ?? ""} style={input} />
+              </label>
+              <label style={{ fontSize: "0.85rem" }}>
+                Discount applied to the quote?
+                <select
+                  name="discountApplied"
+                  value={discountApplied}
+                  onChange={(e) => setDiscountApplied(e.target.value)}
+                  style={input}
+                >
+                  <option value="">— select —</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+            </>
+          )}
+          {discountAvailable === "true" && discountApplied === "true" && (
+            <label style={{ fontSize: "0.85rem" }}>
+              Discount %
+              <input
+                name="discountValue"
+                type="number"
+                inputMode="decimal"
+                defaultValue={initial?.discountValue ?? ""}
+                style={{ ...input, textAlign: "right" }}
+              />
+            </label>
+          )}
           <label style={{ fontSize: "0.85rem" }}>
             Notes
             <textarea name="notes" rows={2} defaultValue={initial?.notes ?? ""} style={input} />
