@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { approveLineAction, rejectLineAction, setMarketQuoteManualRateAction } from "@/lib/quotes/actions";
 import type { ReviewQueueItem } from "@/lib/quotes/repository";
-import { formatMoney } from "@/domains/quotes/format-money";
+import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
 
 // The analyst-facing queue rows (issue #11). A client component because each row
 // drives server actions (approve / reject / return-for-justification) and reflects
@@ -94,7 +94,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
         <span style={{ color: "#777" }}>by {item.authorName}</span>
       </td>
       <td style={cell}>
-        {item.price ?? "—"} {item.currency ?? ""}
+        {item.currency ? formatMoney(item.price, item.currency) : NO_AMOUNT}
         <br />
         <span style={{ color: "#777" }}>×{item.quantityQuoted ?? "—"}</span>
       </td>
@@ -128,9 +128,9 @@ function Row({ item }: { item: ReviewQueueItem }) {
           </div>
         ) : (
           <>
-            ${item.convertedUsdPricePerUnit ?? "—"}
+            {formatMoney(item.convertedUsdPricePerUnit, "USD")}
             <br />
-            <span style={{ color: "#777" }}>total ${item.convertedUsdPrice ?? "—"}</span>
+            <span style={{ color: "#777" }}>total {formatMoney(item.convertedUsdPrice, "USD")}</span>
             {item.conversionStatus === "manual" && (
               <>
                 <br />
@@ -149,7 +149,10 @@ function Row({ item }: { item: ReviewQueueItem }) {
             {item.flag.percentDiff.toFixed(1)}%)
           </span>
         ) : (
-          <span style={{ color: "#0a0" }}>in range</span>
+          <span style={{ color: "#0a0" }}>
+            in range ({item.flag.percentDiff.toFixed(1)}%
+            {item.flag.direction === "above" ? " higher" : item.flag.direction === "below" ? " lower" : ""})
+          </span>
         )}
         {hasJustification && (
           <div style={{ marginTop: "0.3rem", color: "#555" }}>
