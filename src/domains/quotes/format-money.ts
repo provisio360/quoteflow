@@ -4,8 +4,22 @@
 // excluded — they mirror the legacy artifact's whole-number `#,##0` shape
 // (ADR-0029). No framework, DB, or network imports.
 
+import { isValidCurrency } from "./currencies";
+
 /** Em-dash shown for a null/absent monetary amount (ADR-0033). */
 export const NO_AMOUNT = "—";
+
+/**
+ * A draft document may not have a currency set yet (the header picker offers a
+ * blank option), so every formatter here can be reached with an empty/absent
+ * code. `Intl.NumberFormat({ style: "currency" })` throws a RangeError on a
+ * blank or non-ISO-4217 code, so callers screen the code first and fall back to
+ * a symbol-less decimal. We reuse the canonical ISO 4217 check so the formatter
+ * accepts exactly the codes the picker and repository validate against.
+ */
+function isCurrencyCode(currency: string | null | undefined): currency is string {
+  return typeof currency === "string" && isValidCurrency(currency);
+}
 
 /**
  * Group an editable money input at rest (ADR-0033 amendment): thousands separators
@@ -20,6 +34,12 @@ export function formatMoneyInput(
   currency: string,
 ): string {
   if (amount === null || amount === undefined || amount === "") return "";
+  const value = typeof amount === "string" ? Number(amount) : amount;
+  // No currency yet → group as a plain decimal; minor units are unknowable
+  // without a code, so let Intl pick (mirrors the read-only bare-number fallback).
+  if (!isCurrencyCode(currency)) {
+    return new Intl.NumberFormat("en-US", { style: "decimal" }).format(value);
+  }
   const dp =
     new Intl.NumberFormat("en-US", { style: "currency", currency }).resolvedOptions()
       .maximumFractionDigits ?? 2;
@@ -27,7 +47,7 @@ export function formatMoneyInput(
     style: "decimal",
     minimumFractionDigits: dp,
     maximumFractionDigits: dp,
-  }).format(typeof amount === "string" ? Number(amount) : amount);
+  }).format(value);
 }
 
 /**
@@ -46,7 +66,10 @@ export function formatMoney(
   currency: string,
 ): string {
   if (amount === null || amount === undefined || amount === "") return NO_AMOUNT;
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
-    typeof amount === "string" ? Number(amount) : amount,
-  );
+  const value = typeof amount === "string" ? Number(amount) : amount;
+  // No currency yet → show the bare grouped number rather than throwing.
+  if (!isCurrencyCode(currency)) {
+    return new Intl.NumberFormat("en-US", { style: "decimal" }).format(value);
+  }
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(value);
 }
