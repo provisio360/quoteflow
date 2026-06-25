@@ -44,11 +44,17 @@ const btn = { padding: "0.2rem 0.55rem", marginRight: "0.3rem" } as const;
 
 /** Marshal a line into the editor's initial values (the slim subset the panel
  *  carries; untouched fields stay undefined so an edit only writes what changed). */
-function initialFromLine(l: DraftMarketQuoteGroupLine): Record<string, string> {
+function initialFromLine(
+  l: DraftMarketQuoteGroupLine,
+  currency: string | null,
+): Record<string, string> {
   return {
     competitorBrand: l.competitorBrand ?? "",
     price: l.price ?? "",
     quantityQuoted: l.quantityQuoted === null ? "" : String(l.quantityQuoted),
+    // Currency lives on the document, not the line — pass it through so the
+    // price input groups with the right minor units (ADR-0033).
+    currency: currency ?? "",
   };
 }
 
@@ -162,7 +168,7 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
               {editingLineId === l.lineId && (
                 <QuoteEditor
                   mode={{ type: "edit", lineId: l.lineId }}
-                  initial={initialFromLine(l)}
+                  initial={initialFromLine(l, group.currency)}
                   onDone={() => setEditingLineId(null)}
                 />
               )}

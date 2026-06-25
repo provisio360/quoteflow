@@ -21,6 +21,16 @@ describe("formatMoney", () => {
   });
 });
 
+describe("formatMoney with no currency set", () => {
+  it("falls back to a bare grouped number rather than throwing (draft doc)", () => {
+    expect(formatMoney(1234.5, "")).toBe("1,234.5");
+  });
+
+  it("falls back for a non-ISO code too", () => {
+    expect(formatMoney(1234.5, "ZZZ")).toBe("1,234.5");
+  });
+});
+
 describe("parseMoneyInput", () => {
   it("strips thousands commas so a grouped input parses to its number", () => {
     expect(parseMoneyInput("28,911.32")).toBe("28911.32");
@@ -46,5 +56,10 @@ describe("formatMoneyInput", () => {
 
   it("renders a null amount as blank (not the read-only em-dash)", () => {
     expect(formatMoneyInput(null, "USD")).toBe("");
+  });
+
+  it("groups a bare number when no currency is set yet (line editor, draft doc)", () => {
+    // Regression: an empty currency threw a RangeError in Intl.NumberFormat.
+    expect(formatMoneyInput(28911.32, "")).toBe("28,911.32");
   });
 });
