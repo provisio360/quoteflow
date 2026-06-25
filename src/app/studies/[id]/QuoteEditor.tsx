@@ -228,7 +228,26 @@ export function QuoteEditor({
             ))}
             <label style={{ fontSize: "0.85rem" }}>
               Price * (local)
-              <input name="price" type="number" step="0.0001" defaultValue={initial?.price ?? ""} style={input} />
+              <input
+                name="price"
+                type="number"
+                step="0.0001"
+                defaultValue={initial?.price ?? ""}
+                // Right-aligned; on blur, round to the document currency's ISO 4217
+                // minor units (ADR-0033). A bare number, not a currency string —
+                // it posts via a number input and is parsed server-side.
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v === "" || !currency) return;
+                  const n = Number(v);
+                  if (Number.isNaN(n)) return;
+                  const dp =
+                    new Intl.NumberFormat("en-US", { style: "currency", currency })
+                      .resolvedOptions().maximumFractionDigits ?? 2;
+                  e.target.value = n.toFixed(dp);
+                }}
+                style={{ ...input, textAlign: "right" }}
+              />
             </label>
             <label style={{ fontSize: "0.85rem" }}>
               Quantity *

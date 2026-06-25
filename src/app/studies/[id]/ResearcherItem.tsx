@@ -6,6 +6,7 @@ import { selfAssignBenchmarkItemAction } from "@/lib/benchmark-items/actions";
 import { reviseLineAction } from "@/lib/quotes/actions";
 import type { QuoteLineView } from "@/lib/quotes/repository";
 import type { TransitionResult } from "@/domains/quotes/lifecycle";
+import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
 import { QuoteEditor } from "./QuoteEditor";
 import {
   quoteAffordances,
@@ -117,7 +118,7 @@ export function ResearcherItem({
                   // links to (ADR-0031), so the author lands on the line to revise.
                   <li key={q.id} id={`line-${q.quoteLineNumber}`} style={{ padding: "0.25rem 0" }}>
                     #{q.quoteLineNumber} · <strong>{q.state}</strong> · {q.competitorBrand ?? "—"}{" "}
-                    {q.price ?? "—"} — {q.authorName}
+                    {q.currency ? formatMoney(q.price, q.currency) : q.price ?? NO_AMOUNT} — {q.authorName}
                     {/* Draft edit/delete/submit live in the document panel now (#97);
                         the only item-view action left is the Rejected revise loop. */}
                     {can.canRevise && (

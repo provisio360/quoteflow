@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { approveLineAction, rejectLineAction, setMarketQuoteManualRateAction } from "@/lib/quotes/actions";
 import type { ReviewQueueItem } from "@/lib/quotes/repository";
+import { formatMoney } from "@/domains/quotes/format-money";
 
 // The analyst-facing queue rows (issue #11). A client component because each row
 // drives server actions (approve / reject / return-for-justification) and reflects
@@ -143,7 +144,7 @@ function Row({ item }: { item: ReviewQueueItem }) {
         {!item.flag.comparable ? (
           <span style={{ color: "#777" }}>—</span>
         ) : item.flag.flagged ? (
-          <span style={{ color: "#b00" }} title={`Client Price $${item.clientPrice}, threshold ${(Number(item.qcThreshold) * 100).toFixed(1)}%`}>
+          <span style={{ color: "#b00" }} title={`Client Price ${formatMoney(item.clientPrice, "USD")}, threshold ${(Number(item.qcThreshold) * 100).toFixed(1)}%`}>
             ⚠ {item.flag.direction === "above" ? "higher" : item.flag.direction === "below" ? "lower" : "off"} (
             {item.flag.percentDiff.toFixed(1)}%)
           </span>

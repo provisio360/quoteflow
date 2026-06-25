@@ -250,6 +250,15 @@ describe("Draft privacy on the line (ADR-0011)", () => {
   });
 });
 
+describe("Quote Line view carries the parent document currency (ADR-0033)", () => {
+  it("exposes the Market Quote's currency on each line so local price can be minor-unit formatted", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const line = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const lines = await listLinesForItem(researcherA, itemG1);
+    expect(lines.find((l) => l.id === line.id)?.currency).toBe("EUR");
+  });
+});
+
 describe("Draft-edit (owner-only, Draft-only)", () => {
   it("lets the author edit their own Draft line", async () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
