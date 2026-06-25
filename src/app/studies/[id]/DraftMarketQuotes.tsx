@@ -42,6 +42,9 @@ const FIELD_LABEL: Record<string, string> = {
   warranty1Unit: "warranty 1 unit",
   warranty2Value: "warranty 2 value",
   warranty2Unit: "warranty 2 unit",
+  leadTimeValue: "shipping lead time value",
+  leadTimeUnit: "shipping lead time unit",
+  landedCostIncluded: "landed cost included?",
 };
 
 const btn = { padding: "0.2rem 0.55rem", marginRight: "0.3rem" } as const;
@@ -66,6 +69,12 @@ function initialFromLine(
     discountApplied: l.discountApplied === null ? "" : String(l.discountApplied),
     discountValue: l.discountValue ?? "",
     discountType: l.discountType ?? "",
+    leadTimeValue: l.leadTimeValue ?? "",
+    leadTimeUnit: l.leadTimeUnit ?? "",
+    // Landed cost round-trips as the dropdown's tri-state string; the Note rides
+    // along only when Included = Yes (ADR-0035).
+    landedCostIncluded: l.landedCostIncluded === null ? "" : String(l.landedCostIncluded),
+    landedCostNote: l.landedCostNote ?? "",
     // Currency lives on the document, not the line — pass it through so the
     // price input groups with the right minor units (ADR-0033).
     currency: currency ?? "",
@@ -183,6 +192,8 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
                 <QuoteEditor
                   mode={{ type: "edit", lineId: l.lineId }}
                   initial={initialFromLine(l, group.currency)}
+                  marketCountry={group.country}
+                  dealerCountry={group.sourceCountry ?? undefined}
                   onDone={() => setEditingLineId(null)}
                 />
               )}
@@ -215,6 +226,8 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
         ) : (
           <QuoteEditor
             mode={{ type: "addLine", marketQuoteId: group.marketQuoteId, itemId: addItemId }}
+            marketCountry={group.country}
+            dealerCountry={group.sourceCountry ?? undefined}
             onDone={() => setAddItemId(null)}
           />
         )}

@@ -115,6 +115,9 @@ const draftLine = (lineId: string, over: Partial<SubmittableLine> = {}): Submitt
   warranty1Unit: null,
   warranty2Value: null,
   warranty2Unit: null,
+  leadTimeValue: null,
+  leadTimeUnit: null,
+  landedCostIncluded: null,
   ...over,
 });
 
@@ -286,5 +289,92 @@ describe("submitDocument: warranty pair-completeness (ADR-0034)", () => {
       reason: "lines-incomplete",
       perLine: [{ lineId: "l1", missing: ["price", "warranty1Value"] }],
     });
+  });
+});
+
+describe("submitDocument: shipping lead time pair-completeness (ADR-0035)", () => {
+  it("submits a line with no lead time at all — it never gates on presence", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1")],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("submits a line whose lead time pair is fully filled (3 weeks)", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { leadTimeValue: 3, leadTimeUnit: "weeks" })],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("blocks a lead time value with no unit, reporting the missing unit half", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { leadTimeValue: 3, leadTimeUnit: null })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["leadTimeUnit"] }],
+    });
+  });
+
+  it("blocks a lead time unit with no value, reporting the missing value half", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { leadTimeValue: null, leadTimeUnit: "weeks" })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["leadTimeValue"] }],
+    });
+  });
+});
+
+describe("submitDocument: landed cost cross-border requirement (ADR-0035)", () => {
+  // completeHeader's Dealer Country is Germany; the market Country drives whether
+  // landed cost is asked. A cross-border document (dealer != market) must answer
+  // Included? on every line; a domestic one (dealer == market) never asks.
+  it("blocks a cross-border line whose Included? is unanswered", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      marketCountry: "France",
+      lines: [draftLine("l1", { landedCostIncluded: null })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["landedCostIncluded"] }],
+    });
+  });
+
+  it("submits a cross-border line answered Yes", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      marketCountry: "France",
+      lines: [draftLine("l1", { landedCostIncluded: true })],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("submits a cross-border line answered No", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      marketCountry: "France",
+      lines: [draftLine("l1", { landedCostIncluded: false })],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("never asks on a domestic document (Dealer Country == market Country)", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      marketCountry: "Germany",
+      lines: [draftLine("l1", { landedCostIncluded: null })],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
   });
 });

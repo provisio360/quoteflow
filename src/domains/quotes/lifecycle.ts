@@ -20,6 +20,7 @@
 // and hands the booleans in.
 
 import type { ConversionStatus } from "./conversion";
+import { landedCostApplies } from "./landed-cost";
 
 /** Every state a Quote can occupy (CONTEXT.md: Quote Lifecycle). */
 export type QuoteState = "Draft" | "Submitted" | "Approved" | "Rejected";
@@ -58,10 +59,12 @@ export interface DocumentHeader {
 }
 
 /** A line the bulk submit considers: its state plus its own required-to-submit
- *  facts, plus the warranty pairs. Warranty is the ONE piece of optional context
- *  that can gate submit — not on presence (a line with no warranty submits fine)
- *  but on pair-coherence: a value with no unit, or a unit with no value, blocks
- *  submit (ADR-0034). Everything else optional is omitted; it never gates. */
+ *  facts, plus the value+unit pairs and the landed-cost flag. Most optional context
+ *  never gates, but three things conditionally do: a warranty pair (ADR-0034) and the
+ *  shipping lead time pair (ADR-0035) gate on coherence — a value with no unit, or a
+ *  unit with no value, blocks submit; and Landed Cost's Included? flag is required
+ *  when the document is cross-border (Dealer Country differs from market Country,
+ *  ADR-0035). Presence is never forced — a line with none of these submits fine. */
 export interface SubmittableLine {
   readonly lineId: string;
   readonly state: QuoteState;
@@ -72,16 +75,23 @@ export interface SubmittableLine {
   readonly warranty1Unit: string | null;
   readonly warranty2Value: number | null;
   readonly warranty2Unit: string | null;
+  // Shipping Lead Time is a value + unit pair, gated on coherence like warranty
+  // (ADR-0035). Landed Cost's Included? flag is conditionally required (cross-border).
+  readonly leadTimeValue: number | null;
+  readonly leadTimeUnit: string | null;
+  readonly landedCostIncluded: boolean | null;
 }
 
-/** The two warranty pairs, each [value field, unit field]. A pair is incoherent
+/** The value+unit pairs gated on coherence, each [value field, unit field]: the two
+ *  warranties (ADR-0034) and the shipping lead time (ADR-0035). A pair is incoherent
  *  when exactly one half is set; the absent half is reported as missing. */
-const WARRANTY_PAIRS = [
+const VALUE_UNIT_PAIRS = [
   ["warranty1Value", "warranty1Unit"],
   ["warranty2Value", "warranty2Unit"],
+  ["leadTimeValue", "leadTimeUnit"],
 ] as const;
 
-export type WarrantyPairField = (typeof WARRANTY_PAIRS)[number][number];
+export type PairField = (typeof VALUE_UNIT_PAIRS)[number][number];
 
 /** Document-level required-to-submit fields (validated once for the whole doc). */
 export const DOC_REQUIRED_TO_SUBMIT = [
@@ -100,10 +110,14 @@ export type LineRequiredField = (typeof LINE_REQUIRED_TO_SUBMIT)[number];
 export type BulkRequiredField = DocRequiredField | LineRequiredField;
 
 /** One incomplete line and what it still lacks: required doc/line fields plus, for
- *  a half-filled warranty pair, the absent half's field (ADR-0034). */
+ *  a half-filled value+unit pair, the absent half's field (ADR-0034/0035). */
+/** The conditionally-required Landed Cost Included? flag (ADR-0035), reported like a
+ *  missing field when a cross-border document leaves it unanswered. */
+export type LandedCostField = "landedCostIncluded";
+
 export interface IncompleteLine {
   readonly lineId: string;
-  readonly missing: readonly (BulkRequiredField | WarrantyPairField)[];
+  readonly missing: readonly (BulkRequiredField | PairField | LandedCostField)[];
 }
 
 export type SubmitDocumentResult =
@@ -117,12 +131,12 @@ function missingValue(value: string | number | Date | null): boolean {
   return false;
 }
 
-/** The absent half of any half-filled warranty pair on a line. A pair is coherent
+/** The absent half of any half-filled value+unit pair on a line. A pair is coherent
  *  when both halves are present or both absent; when exactly one is set, the other
- *  is reported missing (ADR-0034). A whole-empty pair contributes nothing. */
-function incompleteWarrantyHalves(line: SubmittableLine): WarrantyPairField[] {
-  const out: WarrantyPairField[] = [];
-  for (const [valueField, unitField] of WARRANTY_PAIRS) {
+ *  is reported missing (ADR-0034/0035). A whole-empty pair contributes nothing. */
+function incompletePairHalves(line: SubmittableLine): PairField[] {
+  const out: PairField[] = [];
+  for (const [valueField, unitField] of VALUE_UNIT_PAIRS) {
     const hasValue = !missingValue(line[valueField]);
     const hasUnit = !missingValue(line[unitField]);
     if (hasValue && !hasUnit) out.push(unitField);
@@ -141,6 +155,9 @@ function incompleteWarrantyHalves(line: SubmittableLine): WarrantyPairField[] {
  */
 export function submitDocument(input: {
   readonly header: DocumentHeader;
+  // The market Country the document prices. Optional: when given and it differs from
+  // the Dealer Country, Landed Cost becomes required on every line (ADR-0035).
+  readonly marketCountry?: string | null;
   readonly lines: readonly SubmittableLine[];
 }): SubmitDocumentResult {
   const drafts = input.lines.filter((line) => line.state === "Draft");
@@ -149,10 +166,17 @@ export function submitDocument(input: {
   // The shared document fields are missing for every line at once.
   const docMissing = DOC_REQUIRED_TO_SUBMIT.filter((field) => missingValue(input.header[field]));
 
+  // Landed Cost is a cross-border conditional (ADR-0035): only when the part crosses
+  // a border (Dealer Country differs from market Country) must every line answer
+  // Included? (Yes/No) — a document-level condition enforced per line.
+  const landedCostRequired = landedCostApplies(input.header.sourceCountry, input.marketCountry);
+
   const perLine: IncompleteLine[] = [];
   for (const line of drafts) {
     const lineMissing = LINE_REQUIRED_TO_SUBMIT.filter((field) => missingValue(line[field]));
-    const missing = [...docMissing, ...lineMissing, ...incompleteWarrantyHalves(line)];
+    const landedCostMissing: LandedCostField[] =
+      landedCostRequired && line.landedCostIncluded === null ? ["landedCostIncluded"] : [];
+    const missing = [...docMissing, ...lineMissing, ...incompletePairHalves(line), ...landedCostMissing];
     if (missing.length > 0) perLine.push({ lineId: line.lineId, missing });
   }
   if (perLine.length > 0) return { ok: false, reason: "lines-incomplete", perLine };
