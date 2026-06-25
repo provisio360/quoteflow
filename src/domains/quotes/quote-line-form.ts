@@ -38,6 +38,14 @@ export function lineFieldsFromForm(fd: FormData): QuoteLineFields {
     warranty1Unit: str(fd, "warranty1Unit"),
     warranty2Value: warrantyValue("warranty2Value"),
     warranty2Unit: str(fd, "warranty2Unit"),
+    // Shipping Lead Time (ADR-0035): value groups at rest unit-agnostically like a
+    // warranty value; the unit is plain text. A half-filled pair is caught at submit.
+    leadTimeValue: warrantyValue("leadTimeValue"),
+    leadTimeUnit: str(fd, "leadTimeUnit"),
+    // Landed Cost (ADR-0035): a tri-state Included? flag; the Note rides along only
+    // when Included? is "Yes" (rendered, and so posted, only then).
+    landedCostIncluded: bool("landedCostIncluded"),
+    landedCostNote: str(fd, "landedCostNote"),
     discountAvailable: bool("discountAvailable"),
     discountApplied: bool("discountApplied"),
     discountValue: num("discountValue"),

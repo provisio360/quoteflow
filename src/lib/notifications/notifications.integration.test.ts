@@ -52,10 +52,12 @@ const header: MarketQuoteHeaderFields = {
 };
 const lineFields = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1 };
 
-/** Create a one-line document on `item` (in its own country) and return its line id. */
+/** Create a one-line document on `item` (in its own country) and return its line id.
+ *  The dealer sits in the item's own country (domestic) so Landed Cost is not asked
+ *  — these fixtures exercise notifications/release, not the cross-border gate (ADR-0035). */
 async function makeLine(item: string): Promise<string> {
   const it = await prisma.benchmarkItem.findUniqueOrThrow({ where: { id: item }, select: { country: true } });
-  const doc = await createMarketQuote(author, studyId, it.country, header);
+  const doc = await createMarketQuote(author, studyId, it.country, { ...header, sourceCountry: it.country });
   const { id } = await addQuoteLine(author, doc.id, item, lineFields);
   return id;
 }

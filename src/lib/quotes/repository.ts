@@ -471,6 +471,13 @@ export interface DraftMarketQuoteGroupLine {
   readonly discountApplied: boolean | null;
   readonly discountValue: string | null;
   readonly discountType: string | null;
+  /** Shipping Lead Time pair + Landed Cost, carried so an edit round-trips them. The
+   *  lead-time pair gates submit on coherence; Landed Cost is required cross-border
+   *  and editing the line is how either gap gets fixed (ADR-0035). */
+  readonly leadTimeValue: string | null;
+  readonly leadTimeUnit: string | null;
+  readonly landedCostIncluded: boolean | null;
+  readonly landedCostNote: string | null;
 }
 
 /** A researcher's own Draft Market Quote as the document-grouped view renders it
@@ -545,6 +552,10 @@ export async function listDraftMarketQuotesForResearcher(
             discountApplied: true,
             discountValue: true,
             discountType: true,
+            leadTimeValue: true,
+            leadTimeUnit: true,
+            landedCostIncluded: true,
+            landedCostNote: true,
             benchmarkItem: { select: { clientItemNumber: true, itemDescription: true } },
           },
         },
@@ -583,6 +594,10 @@ export async function listDraftMarketQuotesForResearcher(
         discountApplied: l.discountApplied,
         discountValue: l.discountValue === null ? null : l.discountValue.toString(),
         discountType: l.discountType,
+        leadTimeValue: l.leadTimeValue === null ? null : l.leadTimeValue.toString(),
+        leadTimeUnit: l.leadTimeUnit,
+        landedCostIncluded: l.landedCostIncluded,
+        landedCostNote: l.landedCostNote,
       })),
     itemIdsOnDocument: r.quoteLines.map((l) => l.benchmarkItemId),
   }));
@@ -616,6 +631,7 @@ export async function submitMarketQuote(
       select: {
         createdById: true,
         studyId: true,
+        country: true,
         sourceName: true,
         sourceCountry: true,
         sourceLocality: true,
@@ -630,11 +646,15 @@ export async function submitMarketQuote(
             competitorBrand: true,
             price: true,
             quantityQuoted: true,
-            // Warranty pairs gate submit on coherence, not presence (ADR-0034).
+            // Warranty + lead-time pairs gate submit on coherence (ADR-0034/0035);
+            // landed cost is conditionally required cross-border (ADR-0035).
             warranty1Value: true,
             warranty1Unit: true,
             warranty2Value: true,
             warranty2Unit: true,
+            leadTimeValue: true,
+            leadTimeUnit: true,
+            landedCostIncluded: true,
           },
         },
       },
@@ -663,9 +683,12 @@ export async function submitMarketQuote(
       warranty1Unit: l.warranty1Unit,
       warranty2Value: l.warranty2Value === null ? null : Number(l.warranty2Value),
       warranty2Unit: l.warranty2Unit,
+      leadTimeValue: l.leadTimeValue === null ? null : Number(l.leadTimeValue),
+      leadTimeUnit: l.leadTimeUnit,
+      landedCostIncluded: l.landedCostIncluded,
     }));
 
-    const result = submitDocument({ header, lines });
+    const result = submitDocument({ header, marketCountry: doc.country, lines });
     if (!result.ok) return result;
 
     // Move every targeted Draft line to Submitted under a state guard.

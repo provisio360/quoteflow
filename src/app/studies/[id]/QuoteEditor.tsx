@@ -17,6 +17,8 @@ import {
 import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
 import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
+import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
+import { landedCostApplies } from "@/domains/quotes/landed-cost";
 import {
   headerFieldsFromForm,
   lineFieldsFromForm,
@@ -61,10 +63,17 @@ export function QuoteEditor({
   mode,
   initial,
   onDone,
+  // The market Country and Dealer Country the Landed Cost conditional reads (ADR-0035).
+  // In create mode the Dealer Country is the live header select and the market is
+  // mode.country; in edit/addLine both are fixed on the saved document and passed in.
+  marketCountry,
+  dealerCountry,
 }: {
   mode: Mode;
   initial?: Partial<Record<string, string>>;
   onDone: () => void;
+  marketCountry?: string;
+  dealerCountry?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -83,6 +92,16 @@ export function QuoteEditor({
   // already the dealer's discount-inclusive final, per CONTEXT/ADR-0026).
   const [discountAvailable, setDiscountAvailable] = useState(initial?.discountAvailable ?? "");
   const [discountApplied, setDiscountApplied] = useState(initial?.discountApplied ?? "");
+
+  // Landed Cost is shown only when the part crosses a border — Dealer Country differs
+  // from the market Country (ADR-0035). The Dealer Country is the live select in
+  // create mode and a fixed prop otherwise. When hidden the fields unmount and post
+  // nothing, so a stale answer clears (like the discount chain). The Note nests under
+  // Included? = Yes.
+  const [landedCostIncluded, setLandedCostIncluded] = useState(initial?.landedCostIncluded ?? "");
+  const effectiveDealerCountry = mode.type === "create" ? country : dealerCountry;
+  const effectiveMarketCountry = mode.type === "create" ? mode.country : marketCountry;
+  const showLandedCost = landedCostApplies(effectiveDealerCountry, effectiveMarketCountry);
 
   function onCountryChange(next: string) {
     setCountry(next);
@@ -284,6 +303,67 @@ export function QuoteEditor({
               </div>
             );
           })}
+          {/* Shipping Lead Time: a numeric value + a unit (ADR-0035). Either half may
+              be left blank while drafting; a half-filled pair is caught at document
+              submit, like warranty. The value groups at rest, unit-agnostically. */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
+            <label style={{ fontSize: "0.85rem" }}>
+              Shipping lead time value
+              <input
+                name="leadTimeValue"
+                type="text"
+                inputMode="decimal"
+                defaultValue={formatMoneyInput(initial?.leadTimeValue, "")}
+                onFocus={(e) => {
+                  e.target.value = parseMoneyInput(e.target.value);
+                }}
+                onBlur={(e) => {
+                  const v = parseMoneyInput(e.target.value.trim());
+                  if (v === "" || Number.isNaN(Number(v))) return;
+                  e.target.value = formatMoneyInput(v, "");
+                }}
+                style={{ ...input, textAlign: "right" }}
+              />
+            </label>
+            <label style={{ fontSize: "0.85rem" }}>
+              Shipping lead time unit
+              <select name="leadTimeUnit" defaultValue={initial?.leadTimeUnit ?? ""} style={input}>
+                <option value="">— select —</option>
+                {leadTimeUnitOptions(initial?.leadTimeUnit).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {/* Landed Cost is a cross-border conditional (ADR-0035): shown only when the
+              Dealer Country differs from the market Country. Hidden ⇒ unmounted ⇒ posts
+              nothing ⇒ a stale answer clears. The Note nests under Included? = Yes. When
+              shown, an answer is required at submit. */}
+          {showLandedCost && (
+            <>
+              <label style={{ fontSize: "0.85rem" }}>
+                Landed cost included in the price? *
+                <select
+                  name="landedCostIncluded"
+                  value={landedCostIncluded}
+                  onChange={(e) => setLandedCostIncluded(e.target.value)}
+                  style={input}
+                >
+                  <option value="">— select —</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              {landedCostIncluded === "true" && (
+                <label style={{ fontSize: "0.85rem" }}>
+                  Landed cost note
+                  <input name="landedCostNote" defaultValue={initial?.landedCostNote ?? ""} style={input} />
+                </label>
+              )}
+            </>
+          )}
           {/* Discount chain (advisory metadata). "Available?" gates "Applied to the
               quote?", which gates the % + type. Each is a tri-state dropdown; the
               nested fields only render — and so only post — when the parent is Yes,

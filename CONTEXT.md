@@ -144,6 +144,14 @@ _Avoid_: Vendor, supplier, source
 The validated country a [[Distributor/Dealer]] is physically located in, held on the [[Market Quote]] as a canonical ISO 3166-1 short name (the same vocabulary the market [[Country]] validates against). **Distinct from [[Country]]** — that is the *market* being priced (the unit of client release); Dealer Country is merely *where the source sits* and a dealer may be in a different country than the market it quotes for. Its sole behavioural role: it supplies the **default selection** for the document's local [[currency|Exchange Rate]] (the country's local currency), which the researcher may override to another single currency — the document still holds exactly **one** currency (ADR-0004 unchanged). Purely descriptive provenance otherwise: it never scopes numbering, release, or tenant isolation.
 _Avoid_: Country (the market), source location, region
 
+**Shipping Lead Time**:
+The time the [[Distributor/Dealer]] quotes to ship the competitor's part, recorded on a [[Quote Line]] as a **value + unit** pair (e.g. `3` + `weeks`), unit-agnostic and stored verbatim like a [[Warranty]] pair. Exported as the artifact columns *Shipping Lead Time Value* / *Shipping Lead Time Unit*. Advisory provenance — never priced, converted, or used to scope anything.
+_Avoid_: Leadtime, delivery time, ETA
+
+**Landed Cost**:
+Whether the quoted [[price]] **already includes** the cost of getting the part to the customer (shipping, duties, import handling) — a Yes/No **Included?** flag plus an optional free-text **Note**. Captured on a [[Quote Line]]. Only relevant when the part crosses a border to reach the market, so the researcher is only asked when the [[Dealer Country]] differs from the market [[Country]]; when they match it is left unanswered (exports as *Landed Cost Value* = "No", *Landed Cost Note* = "N/A"). The Note is only meaningful — and only kept — when Included? is Yes.
+_Avoid_: Shipping cost, duty, freight
+
 **Export**:
 A downloadable spreadsheet of a [[Pricing Study]]'s data (Excel only in v1 — no PDF). Comes in two flavours distinguished by who runs it and what it may contain: the [[Client Export]] and the [[Internal Export]]. Both respect [[Client]] tenant isolation absolutely. There is no aggregate-vs-detail divide in the *format* — both are workbooks; the divide is in the **population and columns** each flavour is allowed.
 _Avoid_: Download, report, dump
