@@ -38,6 +38,10 @@ const FIELD_LABEL: Record<string, string> = {
   competitorBrand: "competitor brand",
   price: "price",
   quantityQuoted: "quantity",
+  warranty1Value: "warranty 1 value",
+  warranty1Unit: "warranty 1 unit",
+  warranty2Value: "warranty 2 value",
+  warranty2Unit: "warranty 2 unit",
 };
 
 const btn = { padding: "0.2rem 0.55rem", marginRight: "0.3rem" } as const;
@@ -52,6 +56,10 @@ function initialFromLine(
     competitorBrand: l.competitorBrand ?? "",
     price: l.price ?? "",
     quantityQuoted: l.quantityQuoted === null ? "" : String(l.quantityQuoted),
+    warranty1Value: l.warranty1Value ?? "",
+    warranty1Unit: l.warranty1Unit ?? "",
+    warranty2Value: l.warranty2Value ?? "",
+    warranty2Unit: l.warranty2Unit ?? "",
     // Currency lives on the document, not the line — pass it through so the
     // price input groups with the right minor units (ADR-0033).
     currency: currency ?? "",

@@ -459,6 +459,12 @@ export interface DraftMarketQuoteGroupLine {
   readonly competitorBrand: string | null;
   readonly price: string | null;
   readonly quantityQuoted: number | null;
+  /** Warranty pairs, carried so an edit round-trips them — a half pair blocks the
+   *  document's submit (ADR-0034) and editing the line is how it gets fixed. */
+  readonly warranty1Value: string | null;
+  readonly warranty1Unit: string | null;
+  readonly warranty2Value: string | null;
+  readonly warranty2Unit: string | null;
 }
 
 /** A researcher's own Draft Market Quote as the document-grouped view renders it
@@ -525,6 +531,10 @@ export async function listDraftMarketQuotesForResearcher(
             competitorBrand: true,
             price: true,
             quantityQuoted: true,
+            warranty1Value: true,
+            warranty1Unit: true,
+            warranty2Value: true,
+            warranty2Unit: true,
             benchmarkItem: { select: { clientItemNumber: true, itemDescription: true } },
           },
         },
@@ -555,6 +565,10 @@ export async function listDraftMarketQuotesForResearcher(
         competitorBrand: l.competitorBrand,
         price: l.price === null ? null : l.price.toString(),
         quantityQuoted: l.quantityQuoted,
+        warranty1Value: l.warranty1Value === null ? null : l.warranty1Value.toString(),
+        warranty1Unit: l.warranty1Unit,
+        warranty2Value: l.warranty2Value === null ? null : l.warranty2Value.toString(),
+        warranty2Unit: l.warranty2Unit,
       })),
     itemIdsOnDocument: r.quoteLines.map((l) => l.benchmarkItemId),
   }));
@@ -596,7 +610,18 @@ export async function submitMarketQuote(
         conversionStatus: true,
         exchangeRate: true,
         quoteLines: {
-          select: { id: true, state: true, competitorBrand: true, price: true, quantityQuoted: true },
+          select: {
+            id: true,
+            state: true,
+            competitorBrand: true,
+            price: true,
+            quantityQuoted: true,
+            // Warranty pairs gate submit on coherence, not presence (ADR-0034).
+            warranty1Value: true,
+            warranty1Unit: true,
+            warranty2Value: true,
+            warranty2Unit: true,
+          },
         },
       },
     });
@@ -620,6 +645,10 @@ export async function submitMarketQuote(
       competitorBrand: l.competitorBrand,
       price: l.price === null ? null : Number(l.price),
       quantityQuoted: l.quantityQuoted,
+      warranty1Value: l.warranty1Value === null ? null : Number(l.warranty1Value),
+      warranty1Unit: l.warranty1Unit,
+      warranty2Value: l.warranty2Value === null ? null : Number(l.warranty2Value),
+      warranty2Unit: l.warranty2Unit,
     }));
 
     const result = submitDocument({ header, lines });

@@ -58,14 +58,30 @@ export interface DocumentHeader {
 }
 
 /** A line the bulk submit considers: its state plus its own required-to-submit
- *  facts. Optional competitive context is omitted — it never gates submit. */
+ *  facts, plus the warranty pairs. Warranty is the ONE piece of optional context
+ *  that can gate submit — not on presence (a line with no warranty submits fine)
+ *  but on pair-coherence: a value with no unit, or a unit with no value, blocks
+ *  submit (ADR-0034). Everything else optional is omitted; it never gates. */
 export interface SubmittableLine {
   readonly lineId: string;
   readonly state: QuoteState;
   readonly competitorBrand: string | null;
   readonly price: number | null;
   readonly quantityQuoted: number | null;
+  readonly warranty1Value: number | null;
+  readonly warranty1Unit: string | null;
+  readonly warranty2Value: number | null;
+  readonly warranty2Unit: string | null;
 }
+
+/** The two warranty pairs, each [value field, unit field]. A pair is incoherent
+ *  when exactly one half is set; the absent half is reported as missing. */
+const WARRANTY_PAIRS = [
+  ["warranty1Value", "warranty1Unit"],
+  ["warranty2Value", "warranty2Unit"],
+] as const;
+
+export type WarrantyPairField = (typeof WARRANTY_PAIRS)[number][number];
 
 /** Document-level required-to-submit fields (validated once for the whole doc). */
 export const DOC_REQUIRED_TO_SUBMIT = [
@@ -83,10 +99,11 @@ export type DocRequiredField = (typeof DOC_REQUIRED_TO_SUBMIT)[number];
 export type LineRequiredField = (typeof LINE_REQUIRED_TO_SUBMIT)[number];
 export type BulkRequiredField = DocRequiredField | LineRequiredField;
 
-/** One incomplete line and the required fields it still lacks (doc + line fields). */
+/** One incomplete line and what it still lacks: required doc/line fields plus, for
+ *  a half-filled warranty pair, the absent half's field (ADR-0034). */
 export interface IncompleteLine {
   readonly lineId: string;
-  readonly missing: readonly BulkRequiredField[];
+  readonly missing: readonly (BulkRequiredField | WarrantyPairField)[];
 }
 
 export type SubmitDocumentResult =
@@ -98,6 +115,20 @@ function missingValue(value: string | number | Date | null): boolean {
   if (value === null) return true;
   if (typeof value === "string") return value.trim() === "";
   return false;
+}
+
+/** The absent half of any half-filled warranty pair on a line. A pair is coherent
+ *  when both halves are present or both absent; when exactly one is set, the other
+ *  is reported missing (ADR-0034). A whole-empty pair contributes nothing. */
+function incompleteWarrantyHalves(line: SubmittableLine): WarrantyPairField[] {
+  const out: WarrantyPairField[] = [];
+  for (const [valueField, unitField] of WARRANTY_PAIRS) {
+    const hasValue = !missingValue(line[valueField]);
+    const hasUnit = !missingValue(line[unitField]);
+    if (hasValue && !hasUnit) out.push(unitField);
+    else if (hasUnit && !hasValue) out.push(valueField);
+  }
+  return out;
 }
 
 /**
@@ -121,7 +152,7 @@ export function submitDocument(input: {
   const perLine: IncompleteLine[] = [];
   for (const line of drafts) {
     const lineMissing = LINE_REQUIRED_TO_SUBMIT.filter((field) => missingValue(line[field]));
-    const missing = [...docMissing, ...lineMissing];
+    const missing = [...docMissing, ...lineMissing, ...incompleteWarrantyHalves(line)];
     if (missing.length > 0) perLine.push({ lineId: line.lineId, missing });
   }
   if (perLine.length > 0) return { ok: false, reason: "lines-incomplete", perLine };

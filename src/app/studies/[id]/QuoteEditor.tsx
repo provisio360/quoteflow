@@ -16,6 +16,7 @@ import {
 } from "@/domains/quotes/quote-currency-picker";
 import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
+import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
 
 // The Quote entry/edit form for a Researcher (#87, #97). A Market Quote is a dealer
 // DOCUMENT (source/date/currency) that has many Quote Lines. Modes:
@@ -60,11 +61,21 @@ function lineFieldsFromForm(fd: FormData): QuoteLineFields {
     const v = String(fd.get(k) ?? "").trim();
     return v === "" ? undefined : Number(v);
   };
+  // A warranty value groups at rest like price (ADR-0034) but unit-agnostically;
+  // strip the commas before the bare number is stored.
+  const warrantyValue = (k: string) => {
+    const v = parseMoneyInput(String(fd.get(k) ?? "").trim());
+    return v === "" ? undefined : Number(v);
+  };
   return {
     competitorBrand: str(fd, "competitorBrand"),
     competitorPartNumber: str(fd, "competitorPartNumber"),
     competitorPartDescription: str(fd, "competitorPartDescription"),
     stockStatus: str(fd, "stockStatus"),
+    warranty1Value: warrantyValue("warranty1Value"),
+    warranty1Unit: str(fd, "warranty1Unit"),
+    warranty2Value: warrantyValue("warranty2Value"),
+    warranty2Unit: str(fd, "warranty2Unit"),
     notes: str(fd, "notes"),
     justification: str(fd, "justification"),
     // The input groups at rest (ADR-0033 amendment); strip the thousands commas
@@ -268,6 +279,46 @@ export function QuoteEditor({
               <input name="quantityQuoted" type="number" defaultValue={initial?.quantityQuoted ?? ""} style={input} />
             </label>
           </div>
+          {/* Up to two warranties, each a numeric value + a unit (ADR-0034). Either
+              half may be left blank while drafting; a half-filled pair is caught at
+              document submit. The value groups at rest like price, unit-agnostically. */}
+          {([1, 2] as const).map((n) => {
+            const valueKey = `warranty${n}Value`;
+            const unitKey = `warranty${n}Unit`;
+            return (
+              <div key={n} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
+                <label style={{ fontSize: "0.85rem" }}>
+                  Warranty {n} value
+                  <input
+                    name={valueKey}
+                    type="text"
+                    inputMode="decimal"
+                    defaultValue={formatMoneyInput(initial?.[valueKey], "")}
+                    onFocus={(e) => {
+                      e.target.value = parseMoneyInput(e.target.value);
+                    }}
+                    onBlur={(e) => {
+                      const v = parseMoneyInput(e.target.value.trim());
+                      if (v === "" || Number.isNaN(Number(v))) return;
+                      e.target.value = formatMoneyInput(v, "");
+                    }}
+                    style={{ ...input, textAlign: "right" }}
+                  />
+                </label>
+                <label style={{ fontSize: "0.85rem" }}>
+                  Warranty {n} unit
+                  <select name={unitKey} defaultValue={initial?.[unitKey] ?? ""} style={input}>
+                    <option value="">— select —</option>
+                    {warrantyUnitOptions(initial?.[unitKey]).map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            );
+          })}
           <label style={{ fontSize: "0.85rem" }}>
             Notes
             <textarea name="notes" rows={2} defaultValue={initial?.notes ?? ""} style={input} />
