@@ -465,6 +465,12 @@ export interface DraftMarketQuoteGroupLine {
   readonly warranty1Unit: string | null;
   readonly warranty2Value: string | null;
   readonly warranty2Unit: string | null;
+  /** Discount chain, carried so an edit round-trips it. Advisory metadata: the
+   *  value is a recorded percentage (15 = 15%), never applied to the price. */
+  readonly discountAvailable: boolean | null;
+  readonly discountApplied: boolean | null;
+  readonly discountValue: string | null;
+  readonly discountType: string | null;
 }
 
 /** A researcher's own Draft Market Quote as the document-grouped view renders it
@@ -535,6 +541,10 @@ export async function listDraftMarketQuotesForResearcher(
             warranty1Unit: true,
             warranty2Value: true,
             warranty2Unit: true,
+            discountAvailable: true,
+            discountApplied: true,
+            discountValue: true,
+            discountType: true,
             benchmarkItem: { select: { clientItemNumber: true, itemDescription: true } },
           },
         },
@@ -569,6 +579,10 @@ export async function listDraftMarketQuotesForResearcher(
         warranty1Unit: l.warranty1Unit,
         warranty2Value: l.warranty2Value === null ? null : l.warranty2Value.toString(),
         warranty2Unit: l.warranty2Unit,
+        discountAvailable: l.discountAvailable,
+        discountApplied: l.discountApplied,
+        discountValue: l.discountValue === null ? null : l.discountValue.toString(),
+        discountType: l.discountType,
       })),
     itemIdsOnDocument: r.quoteLines.map((l) => l.benchmarkItemId),
   }));

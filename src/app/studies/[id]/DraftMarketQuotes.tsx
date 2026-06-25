@@ -60,6 +60,12 @@ function initialFromLine(
     warranty1Unit: l.warranty1Unit ?? "",
     warranty2Value: l.warranty2Value ?? "",
     warranty2Unit: l.warranty2Unit ?? "",
+    // Discount chain round-trips as the dropdowns' tri-state strings ("true"/
+    // "false"/""): null ⇒ unanswered ⇒ blank option. The % is recorded as-is.
+    discountAvailable: l.discountAvailable === null ? "" : String(l.discountAvailable),
+    discountApplied: l.discountApplied === null ? "" : String(l.discountApplied),
+    discountValue: l.discountValue ?? "",
+    discountType: l.discountType ?? "",
     // Currency lives on the document, not the line — pass it through so the
     // price input groups with the right minor units (ADR-0033).
     currency: currency ?? "",
