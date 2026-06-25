@@ -142,6 +142,11 @@ export interface QuoteLineView {
   readonly competitorPartNumber: string | null;
   readonly competitorPartDescription: string | null;
   readonly price: string | null;
+  /** The parent Market Quote's local currency, joined for display so the line's
+   *  local `price` can be minor-unit formatted (ADR-0033). Null on a Draft
+   *  document whose header currency is not yet set. Currency still lives on the
+   *  document, never the line — this is a read-only display join. */
+  readonly currency: string | null;
   readonly quantityQuoted: number | null;
   readonly stockStatus: string | null;
   readonly notes: string | null;
@@ -173,6 +178,7 @@ const QUOTE_LINE_VIEW_SELECT = {
   rejectionReason: true,
   justification: true,
   createdBy: { select: { name: true } },
+  marketQuote: { select: { currency: true } },
 } as const;
 
 /**
@@ -435,9 +441,10 @@ export async function listLinesForItem(
       orderBy: { quoteLineNumber: "asc" },
     }),
   );
-  return rows.map(({ createdBy, ...r }) => ({
+  return rows.map(({ createdBy, marketQuote, ...r }) => ({
     ...r,
     authorName: createdBy.name,
+    currency: marketQuote.currency,
     price: r.price === null ? null : r.price.toString(),
   }));
 }

@@ -5,16 +5,17 @@ import { canViewClientPrice } from "@/domains/authz/benchmark-items";
 import { getStudyDetail } from "@/lib/studies/repository";
 import { listAuditEventsForStudy } from "@/lib/audit/repository";
 import { auditActionLabel } from "@/domains/audit/events";
+import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 960, lineHeight: 1.5 } as const;
 const th = { textAlign: "left", padding: "0.4rem 0.75rem", borderBottom: "2px solid #ccc", fontSize: "0.85rem", color: "#555" } as const;
 const td = { padding: "0.4rem 0.75rem", borderBottom: "1px solid #eee", fontSize: "0.9rem", verticalAlign: "top" } as const;
 
-const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-/** A before→after monetary pair for display; "—" stands in for an unset side. */
+/** A before→after monetary pair for display; "—" stands in for an unset side
+ *  (the audited pair is always USD — Client Price / converted document total). */
 function pair(before: number | null, after: number | null): string {
   if (before === null && after === null) return "";
-  return `${before === null ? "—" : usd.format(before)} → ${after === null ? "—" : usd.format(after)}`;
+  return `${before === null ? NO_AMOUNT : formatMoney(before, "USD")} → ${after === null ? NO_AMOUNT : formatMoney(after, "USD")}`;
 }
 
 // The internal audit-log view (issue #72 / ADR-0024): a read-only, per-study

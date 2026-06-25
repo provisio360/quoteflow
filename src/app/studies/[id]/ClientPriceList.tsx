@@ -63,9 +63,19 @@ function ClientPriceRow({ studyId, item }: { studyId: string; item: AnalystItemV
             type="text"
             inputMode="decimal"
             name="clientPrice"
-            defaultValue={item.clientPrice ?? ""}
+            defaultValue={item.clientPrice == null ? "" : Number(item.clientPrice).toFixed(2)}
             placeholder="unpriced"
-            style={{ width: "8rem", padding: "0.25rem" }}
+            // Right-aligned; normalise to 2dp on blur (ADR-0033). A bare number,
+            // not a currency string — the value is parsed server-side. Blank stays
+            // blank (clears the Client Price), non-numeric input is left untouched
+            // for the server to reject.
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              if (v === "") return;
+              const n = Number(v);
+              if (!Number.isNaN(n)) e.target.value = n.toFixed(2);
+            }}
+            style={{ width: "8rem", padding: "0.25rem", textAlign: "right" }}
           />
           <button type="submit" disabled={pending} style={{ padding: "0.25rem 0.75rem" }}>
             {pending ? "Saving…" : "Save"}

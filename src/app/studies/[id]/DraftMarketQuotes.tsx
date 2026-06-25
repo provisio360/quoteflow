@@ -7,6 +7,7 @@ import {
   submitMarketQuoteAction,
 } from "@/lib/quotes/actions";
 import type { DraftMarketQuoteGroup, DraftMarketQuoteGroupLine } from "@/lib/quotes/repository";
+import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
 import {
   partitionSubmitReport,
   type AddLineCandidate,
@@ -144,7 +145,7 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
           const missing = lineMissing.get(l.lineId) ?? [];
           return (
             <li key={l.lineId} style={{ padding: "0.25rem 0" }}>
-              #{l.quoteLineNumber} · {l.itemLabel} · {l.competitorBrand ?? "—"} {l.price ?? "—"}
+              #{l.quoteLineNumber} · {l.itemLabel} · {l.competitorBrand ?? "—"} {group.currency ? formatMoney(l.price, group.currency) : l.price ?? NO_AMOUNT}
               <span style={{ marginLeft: "0.4rem" }}>
                 <button type="button" style={btn} disabled={pending} onClick={() => setEditingLineId(editingLineId === l.lineId ? null : l.lineId)}>
                   {editingLineId === l.lineId ? "Close" : "Edit"}

@@ -1,4 +1,5 @@
 import type { ItemBenchmark } from "@/lib/analytics/repository";
+import { formatMoney } from "@/domains/quotes/format-money";
 
 // The internal benchmark comparison — View D (issue #14 / ADR-0017). Rendered
 // only on the internal study page (every viewer there is internal staff), it
@@ -65,10 +66,5 @@ export function BenchmarkComparison({ items }: { items: ItemBenchmark[] }) {
   );
 }
 
-function usd(value: number): string {
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 4,
-  });
-}
+/** USD/unit figures render 2dp via the shared minor-unit-aware helper (ADR-0033). */
+const usd = (value: number): string => formatMoney(value, "USD");

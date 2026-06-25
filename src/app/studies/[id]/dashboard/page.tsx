@@ -4,6 +4,7 @@ import { requireDashboardPage } from "@/lib/identity/page-guards";
 import { getStudyDetail } from "@/lib/studies/repository";
 import { getStudyDashboard } from "@/lib/analytics/repository";
 import type { PriceRange } from "@/domains/analytics/price-range";
+import { formatMoney } from "@/domains/quotes/format-money";
 
 const wrap = { fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 860, lineHeight: 1.5 } as const;
 const th = { textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "2px solid #ddd" } as const;
@@ -132,11 +133,5 @@ function RangeRow({ label, range }: { label: string; range: PriceRange }) {
   );
 }
 
-/** USD per unit, trimmed to a sensible display precision (data is Decimal(14,4)). */
-function usd(value: number): string {
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 4,
-  });
-}
+/** USD/unit figures render 2dp via the shared minor-unit-aware helper (ADR-0033). */
+const usd = (value: number): string => formatMoney(value, "USD");
