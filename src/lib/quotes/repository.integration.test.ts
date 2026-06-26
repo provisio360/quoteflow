@@ -615,6 +615,40 @@ describe("listDraftMarketQuotesForResearcher (#97 — document-grouped Draft vie
     const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
     expect(groups.some((g) => g.marketQuoteId === d.id)).toBe(false);
   });
+
+  // The `flagged` signal that gates the researcher's Justification field (ADR-0014).
+  // GATED (it.skip): the surrounding suite can't run against the current Neon DB —
+  // its seed omits the now-NOT-NULL `requiredCompetitors`, so `beforeAll` fails
+  // before any test. Unskip once that drift is resolved (the pure rule is covered
+  // by src/domains/quotes/price-flag.test.ts → isLineFlagged).
+  function draftLine(groups: Awaited<ReturnType<typeof listDraftMarketQuotesForResearcher>>, lineId: string) {
+    return groups.flatMap((g) => g.lines).find((l) => l.lineId === lineId);
+  }
+
+  it.skip("marks a returned-for-justification line flagged and round-trips its justification", async () => {
+    // usd 1250.5 vs CP 123.45 ⇒ symmetric diff ≫ 0.25 ⇒ flagged (ADR-0014).
+    const lineId = await submittedConverted(researcherA, itemG1, 1250.5);
+    await rejectLine(analyst, lineId, "Quoted price is higher than expected — please justify or correct.");
+    await reviseLine(researcherA, lineId); // → Draft, back in the author's hands
+    await updateDraftLine(researcherA, lineId, { justification: "Sole regional supplier of a premium part." });
+
+    const line = draftLine(await listDraftMarketQuotesForResearcher(researcherA, studyId), lineId);
+    expect(line).toBeDefined();
+    expect(line!.flagged).toBe(true); // ⇒ the editor shows the Justification field
+    expect(line!.justification).toContain("Sole regional supplier");
+  });
+
+  it.skip("leaves a plainly-rejected (in-range) line unflagged", async () => {
+    // usd 130 vs CP 123.45 ⇒ symmetric diff ≈ 0.052 < 0.25 ⇒ not flagged: a plain
+    // reject the author should fix, not justify ⇒ no Justification field.
+    const lineId = await submittedConverted(researcherA, itemG1, 130);
+    await rejectLine(analyst, lineId, "Wrong competitor brand — please correct.");
+    await reviseLine(researcherA, lineId);
+
+    const line = draftLine(await listDraftMarketQuotesForResearcher(researcherA, studyId), lineId);
+    expect(line).toBeDefined();
+    expect(line!.flagged).toBe(false);
+  });
 });
 
 describe("updateMarketQuote (#97 — edit document header)", () => {
