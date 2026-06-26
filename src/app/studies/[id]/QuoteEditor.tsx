@@ -68,12 +68,17 @@ export function QuoteEditor({
   // mode.country; in edit/addLine both are fixed on the saved document and passed in.
   marketCountry,
   dealerCountry,
+  // Whether to show the Justification field — true only when editing a flagged line
+  // the analyst returned to its author for a Justification (ADR-0014). A brand-new
+  // line (create/addLine) has no USD yet so is never flagged, hence the default.
+  showJustification = false,
 }: {
   mode: Mode;
   initial?: Partial<Record<string, string>>;
   onDone: () => void;
   marketCountry?: string;
   dealerCountry?: string;
+  showJustification?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -421,10 +426,14 @@ export function QuoteEditor({
             Notes
             <textarea name="notes" rows={2} defaultValue={initial?.notes ?? ""} style={input} />
           </label>
-          <label style={{ fontSize: "0.85rem" }}>
-            Justification (if asked to confirm your price)
-            <textarea name="justification" rows={2} defaultValue={initial?.justification ?? ""} style={input} />
-          </label>
+          {/* Shown only when the analyst returned this line asking the author to
+              confirm its price (the line is flagged) — ADR-0014. */}
+          {showJustification && (
+            <label style={{ fontSize: "0.85rem" }}>
+              Justification (your price was queried — confirm why it is correct)
+              <textarea name="justification" rows={2} defaultValue={initial?.justification ?? ""} style={input} />
+            </label>
+          )}
         </>
       )}
       <div style={{ display: "flex", gap: "0.4rem" }}>

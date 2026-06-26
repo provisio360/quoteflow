@@ -1,4 +1,7 @@
-// Pure decision core — no framework, DB, or network imports.
+// Pure decision core — no framework, DB, or network imports (depends only on
+// the equally-pure QC Threshold resolver).
+//
+import { resolveQcThreshold } from "@/domains/benchmark-items/qc-threshold";
 //
 // The QC out-of-range price flag (issue #11 / ADR-0014). A converted Quote's USD
 // price-per-unit is compared to its Benchmark Item's Client Price using the
@@ -57,4 +60,33 @@ export function evaluatePriceFlag(input: PriceFlagInput): PriceFlagResult {
   const percentDiff = relativeDiff * 100;
   const direction = a > b ? "above" : a < b ? "below" : "equal";
   return { comparable: true, flagged: relativeDiff > threshold, direction, relativeDiff, percentDiff };
+}
+
+/** Inputs the line-level flag reads — line + item + study primitives only. */
+export interface LineFlagInput {
+  /** The line's converted USD price-per-unit; null when not yet converted. */
+  readonly usdPricePerUnit: number | null;
+  /** The Benchmark Item's Client Price (USD/unit); null when the item is unpriced. */
+  readonly clientPrice: number | null;
+  /** The Benchmark Item's own QC Threshold (fraction), or null to fall back. */
+  readonly itemThreshold: number | null;
+  /** The Study's default QC Threshold (fraction), used when the item has none. */
+  readonly studyThreshold: number;
+}
+
+/**
+ * The single boolean the rest of the app keys off a Quote Line: resolve the
+ * per-item/study QC Threshold (ADR-0026) and collapse `evaluatePriceFlag`'s
+ * comparable+flagged result. A not-comparable line (pending, or item unpriced)
+ * is never flagged. Both the approve gate and the researcher's Justification
+ * field read exactly this (ADR-0014).
+ */
+export function isLineFlagged(input: LineFlagInput): boolean {
+  const threshold = resolveQcThreshold(input.itemThreshold, input.studyThreshold);
+  const flag = evaluatePriceFlag({
+    usdPricePerUnit: input.usdPricePerUnit,
+    clientPrice: input.clientPrice,
+    threshold,
+  });
+  return flag.comparable && flag.flagged;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evaluatePriceFlag } from "./price-flag";
+import { evaluatePriceFlag, isLineFlagged } from "./price-flag";
 
 // The QC out-of-range flag (ADR-0014). A converted Quote's USD price-per-unit is
 // compared to its Benchmark Item's Client Price via the symmetric relative
@@ -45,5 +45,38 @@ describe("evaluatePriceFlag", () => {
     expect(
       evaluatePriceFlag({ usdPricePerUnit: 100, clientPrice: 60, threshold: 0.5 }),
     ).toEqual({ comparable: true, flagged: false, direction: "above", relativeDiff: 0.5, percentDiff: 50 });
+  });
+});
+
+// The single boolean the rest of the app keys off a Quote Line — collapsing the
+// "comparable AND flagged" question and resolving the per-item/study threshold in
+// one place (ADR-0014). The Justification gate (approve) and the researcher's
+// Justification field (edit) both read exactly this.
+describe("isLineFlagged", () => {
+  it("flags a line whose USD price-per-unit diverges beyond the resolved threshold", () => {
+    // 150 vs 100 ⇒ symmetric diff 0.40 > study default 0.25.
+    expect(
+      isLineFlagged({ usdPricePerUnit: 150, clientPrice: 100, itemThreshold: null, studyThreshold: 0.25 }),
+    ).toBe(true);
+  });
+
+  it("never flags a not-yet-converted (pending) line", () => {
+    expect(
+      isLineFlagged({ usdPricePerUnit: null, clientPrice: 100, itemThreshold: null, studyThreshold: 0.25 }),
+    ).toBe(false);
+  });
+
+  it("never flags a line whose item has no Client Price", () => {
+    expect(
+      isLineFlagged({ usdPricePerUnit: 150, clientPrice: null, itemThreshold: null, studyThreshold: 0.25 }),
+    ).toBe(false);
+  });
+
+  it("resolves the per-item threshold over the study default", () => {
+    // 130 vs 100 ⇒ diff ≈ 0.26: inside the study default 0.40, outside the tight
+    // per-item 0.05 ⇒ flagged only because the item threshold won.
+    expect(
+      isLineFlagged({ usdPricePerUnit: 130, clientPrice: 100, itemThreshold: 0.05, studyThreshold: 0.4 }),
+    ).toBe(true);
   });
 });
