@@ -78,6 +78,8 @@ function initialFromLine(
     // Currency lives on the document, not the line — pass it through so the
     // price input groups with the right minor units (ADR-0033).
     currency: currency ?? "",
+    // Round-trip any existing Justification so an edit doesn't blank it (ADR-0014).
+    justification: l.justification ?? "",
   };
 }
 
@@ -194,6 +196,9 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
                   initial={initialFromLine(l, group.currency)}
                   marketCountry={group.country}
                   dealerCountry={group.sourceCountry ?? undefined}
+                  // Show the Justification field only when this line was returned
+                  // to its author for a Justification (its price is flagged) — ADR-0014.
+                  showJustification={l.flagged}
                   onDone={() => setEditingLineId(null)}
                 />
               )}

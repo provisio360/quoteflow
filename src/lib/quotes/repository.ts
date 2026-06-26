@@ -10,7 +10,7 @@ import {
   type SubmitDocumentResult,
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
-import { evaluatePriceFlag, type PriceFlagResult } from "@/domains/quotes/price-flag";
+import { evaluatePriceFlag, isLineFlagged, type PriceFlagResult } from "@/domains/quotes/price-flag";
 import { isValidCurrency } from "@/domains/quotes/currencies";
 import { canonicalCountry } from "@/domains/benchmark-items/countries";
 import { resolveQcThreshold } from "@/domains/benchmark-items/qc-threshold";
@@ -478,6 +478,12 @@ export interface DraftMarketQuoteGroupLine {
   readonly leadTimeUnit: string | null;
   readonly landedCostIncluded: boolean | null;
   readonly landedCostNote: string | null;
+  /** The author's existing Justification, round-tripped into the edit field (ADR-0014). */
+  readonly justification: string | null;
+  /** True when this line was returned to its author for a Justification (its price
+   *  is flagged against the hidden Client Price) — the only case the editor shows
+   *  the Justification field. The Client Price itself never crosses to the client. */
+  readonly flagged: boolean;
 }
 
 /** A researcher's own Draft Market Quote as the document-grouped view renders it
@@ -534,6 +540,9 @@ export async function listDraftMarketQuotesForResearcher(
         currency: true,
         dateQuoteReceived: true,
         conversionStatus: true,
+        // The study default QC Threshold (fraction), the fallback when a line's
+        // Benchmark Item has none — needed to decide the per-line flag (ADR-0014).
+        study: { select: { qcThreshold: true } },
         quoteLines: {
           orderBy: { quoteLineNumber: "asc" },
           select: {
@@ -556,7 +565,19 @@ export async function listDraftMarketQuotesForResearcher(
             leadTimeUnit: true,
             landedCostIncluded: true,
             landedCostNote: true,
-            benchmarkItem: { select: { clientItemNumber: true, itemDescription: true } },
+            // The author's existing Justification (round-trips into the edit field)
+            // and the inputs that decide whether the field is shown at all (ADR-0014):
+            // a flagged Draft line is one returned to its author for justification.
+            justification: true,
+            convertedUsdPricePerUnit: true,
+            benchmarkItem: {
+              select: {
+                clientItemNumber: true,
+                itemDescription: true,
+                clientPrice: true,
+                qcThreshold: true,
+              },
+            },
           },
         },
       },
@@ -598,6 +619,19 @@ export async function listDraftMarketQuotesForResearcher(
         leadTimeUnit: l.leadTimeUnit,
         landedCostIncluded: l.landedCostIncluded,
         landedCostNote: l.landedCostNote,
+        justification: l.justification,
+        // True only for a line returned to its author for justification: a Draft
+        // line is flagged only after it was submitted, converted, and revised back
+        // (a fresh Draft has no USD yet, so is never flagged) — ADR-0014.
+        flagged: isLineFlagged({
+          usdPricePerUnit:
+            l.convertedUsdPricePerUnit === null ? null : Number(l.convertedUsdPricePerUnit),
+          clientPrice:
+            l.benchmarkItem.clientPrice === null ? null : Number(l.benchmarkItem.clientPrice),
+          itemThreshold:
+            l.benchmarkItem.qcThreshold === null ? null : Number(l.benchmarkItem.qcThreshold),
+          studyThreshold: Number(r.study.qcThreshold),
+        }),
       })),
     itemIdsOnDocument: r.quoteLines.map((l) => l.benchmarkItemId),
   }));
@@ -949,17 +983,15 @@ export async function approveLine(
       throw new QuoteAccessError(`Quote Line not found: ${lineId}`);
     }
 
-    const flag = evaluatePriceFlag({
+    const flagged = isLineFlagged({
       usdPricePerUnit:
         line.convertedUsdPricePerUnit === null ? null : Number(line.convertedUsdPricePerUnit),
       clientPrice:
         line.benchmarkItem.clientPrice === null ? null : Number(line.benchmarkItem.clientPrice),
-      threshold: resolveQcThreshold(
+      itemThreshold:
         line.benchmarkItem.qcThreshold === null ? null : Number(line.benchmarkItem.qcThreshold),
-        Number(line.benchmarkItem.study.qcThreshold),
-      ),
+      studyThreshold: Number(line.benchmarkItem.study.qcThreshold),
     });
-    const flagged = flag.comparable && flag.flagged;
     const hasJustification = line.justification !== null && line.justification.trim() !== "";
 
     const result = transition(line.state, {
