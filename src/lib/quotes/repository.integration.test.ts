@@ -24,6 +24,11 @@ import {
 import { createStudy } from "@/lib/studies/repository";
 import { assignResearchers } from "@/lib/assignments/repository";
 import type { InternalPrincipal } from "@/domains/authz/principal";
+import {
+  leadTimeGroup,
+  warranty1Group,
+  warranty2Group,
+} from "@/domains/quotes/batch-line-fill";
 
 // Real-Postgres proof of the Market Quote aggregate data paths (#87 / ADR-0026).
 // The pure numbering/folding spec is unit-tested in src/domains/quotes/numbering;
@@ -322,6 +327,62 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     await batchUpdateDraftLines(researcherA, draftDoc.id, { stockStatus: "Out of stock" });
     const drafted = await prisma.quoteLine.findUnique({ where: { id: draftLine.id }, select: { stockStatus: true } });
     expect(drafted?.stockStatus).toBe("Out of stock");
+  });
+
+  it("stamps each value+unit pair group onto every Draft line (#129)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+
+    await batchUpdateDraftLines(researcherA, d.id, leadTimeGroup("3", "weeks"));
+    await batchUpdateDraftLines(researcherA, d.id, warranty1Group("12,000", "miles"));
+    await batchUpdateDraftLines(researcherA, d.id, warranty2Group("5", "years"));
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { id: { in: [l1.id, l2.id] } },
+      orderBy: { id: "asc" },
+      select: {
+        leadTimeValue: true,
+        leadTimeUnit: true,
+        warranty1Value: true,
+        warranty1Unit: true,
+        warranty2Value: true,
+        warranty2Unit: true,
+      },
+    });
+    for (const line of lines) {
+      expect({
+        leadTimeValue: Number(line.leadTimeValue),
+        leadTimeUnit: line.leadTimeUnit,
+        warranty1Value: Number(line.warranty1Value),
+        warranty1Unit: line.warranty1Unit,
+        warranty2Value: Number(line.warranty2Value),
+        warranty2Unit: line.warranty2Unit,
+      }).toEqual({
+        leadTimeValue: 3,
+        leadTimeUnit: "weeks",
+        warranty1Value: 12000,
+        warranty1Unit: "miles",
+        warranty2Value: 5,
+        warranty2Unit: "years",
+      });
+    }
+  });
+
+  it("stamps a half-pair (value, no unit), leaving submit to catch it (#129)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    await batchUpdateDraftLines(researcherA, d.id, leadTimeGroup("3", ""));
+
+    const after = await prisma.quoteLine.findUnique({
+      where: { id: l1.id },
+      select: { leadTimeValue: true, leadTimeUnit: true },
+    });
+    expect({ value: Number(after?.leadTimeValue), unit: after?.leadTimeUnit }).toEqual({
+      value: 3,
+      unit: null,
+    });
   });
 
   it("refuses a non-author and writes nothing", async () => {

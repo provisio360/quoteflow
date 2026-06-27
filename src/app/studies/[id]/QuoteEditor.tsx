@@ -19,6 +19,7 @@ import { stockStatusOptions } from "@/domains/quotes/stock-status";
 import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
+import { ValueUnitField } from "./ValueUnitField";
 import {
   headerFieldsFromForm,
   lineFieldsFromForm,
@@ -270,78 +271,33 @@ export function QuoteEditor({
           </div>
           {/* Up to two warranties, each a numeric value + a unit (ADR-0034). Either
               half may be left blank while drafting; a half-filled pair is caught at
-              document submit. The value groups at rest like price, unit-agnostically. */}
-          {([1, 2] as const).map((n) => {
-            const valueKey = `warranty${n}Value`;
-            const unitKey = `warranty${n}Unit`;
-            return (
-              <div key={n} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
-                <label style={{ fontSize: "0.85rem" }}>
-                  Warranty {n} value
-                  <input
-                    name={valueKey}
-                    type="text"
-                    inputMode="decimal"
-                    defaultValue={formatMoneyInput(initial?.[valueKey], "")}
-                    onFocus={(e) => {
-                      e.target.value = parseMoneyInput(e.target.value);
-                    }}
-                    onBlur={(e) => {
-                      const v = parseMoneyInput(e.target.value.trim());
-                      if (v === "" || Number.isNaN(Number(v))) return;
-                      e.target.value = formatMoneyInput(v, "");
-                    }}
-                    style={{ ...input, textAlign: "right" }}
-                  />
-                </label>
-                <label style={{ fontSize: "0.85rem" }}>
-                  Warranty {n} unit
-                  <select name={unitKey} defaultValue={initial?.[unitKey] ?? ""} style={input}>
-                    <option value="">— select —</option>
-                    {warrantyUnitOptions(initial?.[unitKey]).map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            );
-          })}
+              document submit. The value groups at rest like price, unit-agnostically.
+              Rendered via the shared ValueUnitField so batch line-fill (#129) and
+              per-line entry can never present a divergent field shape (AC4). */}
+          {([1, 2] as const).map((n) => (
+            <ValueUnitField
+              key={n}
+              mode="uncontrolled"
+              label={`Warranty ${n}`}
+              unitOptions={warrantyUnitOptions}
+              valueName={`warranty${n}Value`}
+              unitName={`warranty${n}Unit`}
+              defaultValue={initial?.[`warranty${n}Value`]}
+              defaultUnit={initial?.[`warranty${n}Unit`]}
+            />
+          ))}
           {/* Shipping Lead Time: a numeric value + a unit (ADR-0035). Either half may
               be left blank while drafting; a half-filled pair is caught at document
-              submit, like warranty. The value groups at rest, unit-agnostically. */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
-            <label style={{ fontSize: "0.85rem" }}>
-              Shipping lead time value
-              <input
-                name="leadTimeValue"
-                type="text"
-                inputMode="decimal"
-                defaultValue={formatMoneyInput(initial?.leadTimeValue, "")}
-                onFocus={(e) => {
-                  e.target.value = parseMoneyInput(e.target.value);
-                }}
-                onBlur={(e) => {
-                  const v = parseMoneyInput(e.target.value.trim());
-                  if (v === "" || Number.isNaN(Number(v))) return;
-                  e.target.value = formatMoneyInput(v, "");
-                }}
-                style={{ ...input, textAlign: "right" }}
-              />
-            </label>
-            <label style={{ fontSize: "0.85rem" }}>
-              Shipping lead time unit
-              <select name="leadTimeUnit" defaultValue={initial?.leadTimeUnit ?? ""} style={input}>
-                <option value="">— select —</option>
-                {leadTimeUnitOptions(initial?.leadTimeUnit).map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+              submit, like warranty. Same shared widget as warranty and batch fill. */}
+          <ValueUnitField
+            mode="uncontrolled"
+            label="Shipping lead time"
+            unitOptions={leadTimeUnitOptions}
+            valueName="leadTimeValue"
+            unitName="leadTimeUnit"
+            defaultValue={initial?.leadTimeValue}
+            defaultUnit={initial?.leadTimeUnit}
+          />
           {/* Landed Cost is a cross-border conditional (ADR-0035): shown only when the
               Dealer Country differs from the market Country. Hidden ⇒ unmounted ⇒ posts
               nothing ⇒ a stale answer clears. The Note nests under Included? = Yes. When

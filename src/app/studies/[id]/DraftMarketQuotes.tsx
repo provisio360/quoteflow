@@ -7,10 +7,22 @@ import {
   submitMarketQuoteAction,
   batchUpdateDraftLinesAction,
 } from "@/lib/quotes/actions";
-import type { DraftMarketQuoteGroup, DraftMarketQuoteGroupLine } from "@/lib/quotes/repository";
+import type {
+  DraftMarketQuoteGroup,
+  DraftMarketQuoteGroupLine,
+  QuoteLineFields,
+} from "@/lib/quotes/repository";
 import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
-import { stockStatusGroup } from "@/domains/quotes/batch-line-fill";
+import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
+import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
+import {
+  stockStatusGroup,
+  leadTimeGroup,
+  warranty1Group,
+  warranty2Group,
+} from "@/domains/quotes/batch-line-fill";
+import { ValueUnitField } from "./ValueUnitField";
 import {
   partitionSubmitReport,
   type AddLineCandidate,
@@ -105,43 +117,101 @@ function initialFromHeader(g: DraftDocGroup): Record<string, string> {
  * EVERY Draft line of the document at once. Shown only at ≥2 Draft lines (one line
  * — just edit it). Each group has its own "Apply to all N draft lines" button (the
  * count is live — `draftCount` is the document's Draft-line array length). Tracer
- * group: stock status, reusing the entry form's `stockStatusOptions` so batch and
- * per-line entry can never present a different option set. Per-group apply is total:
- * leaving the select blank stamps blank (clears) on every line (`stockStatusGroup`).
+ * groups: stock status (reusing `stockStatusOptions`) and the three value+unit pairs
+ * — shipping lead time, warranty 1, warranty 2 (#129) — rendered via the shared
+ * `ValueUnitField` so batch and per-line entry can never present a different field
+ * shape. Per-group apply is total: leaving a half blank stamps blank (clears) on every
+ * line; a half-filled pair is stampable and caught by the existing submit gate, not
+ * here (ADR-0034/0035). Each group has its own apply button (the click IS the intent);
+ * the status line reports the most recent apply.
  */
 function BatchFillPanel({ marketQuoteId, draftCount }: { marketQuoteId: string; draftCount: number }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [stock, setStock] = useState("");
+  const [leadTimeValue, setLeadTimeValue] = useState("");
+  const [leadTimeUnit, setLeadTimeUnit] = useState("");
+  const [warranty1Value, setWarranty1Value] = useState("");
+  const [warranty1Unit, setWarranty1Unit] = useState("");
+  const [warranty2Value, setWarranty2Value] = useState("");
+  const [warranty2Unit, setWarranty2Unit] = useState("");
   const [message, setMessage] = useState<string | null>(null);
 
-  function applyStock() {
+  function apply(group: QuoteLineFields) {
     setMessage(null);
     startTransition(async () => {
-      const result = await batchUpdateDraftLinesAction(marketQuoteId, stockStatusGroup(stock));
+      const result = await batchUpdateDraftLinesAction(marketQuoteId, group);
       if (result.ok) router.refresh();
       else setMessage(result.message ?? "Couldn't apply to the draft lines.");
     });
   }
 
+  const applyButton = (group: QuoteLineFields) => (
+    <button type="button" disabled={pending} onClick={() => apply(group)} style={{ padding: "0.2rem 0.55rem" }}>
+      Apply to all {draftCount} draft lines
+    </button>
+  );
+
   return (
     <details style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
       <summary style={{ cursor: "pointer", color: "#555" }}>Set for all lines</summary>
-      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.4rem" }}>
-        <label>
-          Stock status{" "}
-          <select value={stock} onChange={(e) => setStock(e.target.value)} style={{ padding: "0.2rem" }}>
-            <option value="">— select —</option>
-            {stockStatusOptions(stock || undefined).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" disabled={pending} onClick={applyStock} style={{ padding: "0.2rem 0.55rem" }}>
-          Apply to all {draftCount} draft lines
-        </button>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "0.4rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <label>
+            Stock status{" "}
+            <select value={stock} onChange={(e) => setStock(e.target.value)} style={{ padding: "0.2rem" }}>
+              <option value="">— select —</option>
+              {stockStatusOptions(stock || undefined).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {applyButton(stockStatusGroup(stock))}
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
+          <div style={{ flex: 1 }}>
+            <ValueUnitField
+              mode="controlled"
+              label="Shipping lead time"
+              unitOptions={leadTimeUnitOptions}
+              value={leadTimeValue}
+              unit={leadTimeUnit}
+              onValueChange={setLeadTimeValue}
+              onUnitChange={setLeadTimeUnit}
+            />
+          </div>
+          {applyButton(leadTimeGroup(leadTimeValue, leadTimeUnit))}
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
+          <div style={{ flex: 1 }}>
+            <ValueUnitField
+              mode="controlled"
+              label="Warranty 1"
+              unitOptions={warrantyUnitOptions}
+              value={warranty1Value}
+              unit={warranty1Unit}
+              onValueChange={setWarranty1Value}
+              onUnitChange={setWarranty1Unit}
+            />
+          </div>
+          {applyButton(warranty1Group(warranty1Value, warranty1Unit))}
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
+          <div style={{ flex: 1 }}>
+            <ValueUnitField
+              mode="controlled"
+              label="Warranty 2"
+              unitOptions={warrantyUnitOptions}
+              value={warranty2Value}
+              unit={warranty2Unit}
+              onValueChange={setWarranty2Value}
+              onUnitChange={setWarranty2Unit}
+            />
+          </div>
+          {applyButton(warranty2Group(warranty2Value, warranty2Unit))}
+        </div>
       </div>
       {message !== null && (
         <p role="alert" style={{ color: "#b00", margin: "0.3rem 0 0" }}>
