@@ -5,9 +5,12 @@ import { useRouter } from "next/navigation";
 import {
   deleteDraftLineAction,
   submitMarketQuoteAction,
+  batchUpdateDraftLinesAction,
 } from "@/lib/quotes/actions";
 import type { DraftMarketQuoteGroup, DraftMarketQuoteGroupLine } from "@/lib/quotes/repository";
 import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
+import { stockStatusOptions } from "@/domains/quotes/stock-status";
+import { stockStatusGroup } from "@/domains/quotes/batch-line-fill";
 import {
   partitionSubmitReport,
   type AddLineCandidate,
@@ -97,6 +100,58 @@ function initialFromHeader(g: DraftDocGroup): Record<string, string> {
   };
 }
 
+/**
+ * Batch line-fill panel (#128 / ADR-0036): stamps a group of line fields onto
+ * EVERY Draft line of the document at once. Shown only at ≥2 Draft lines (one line
+ * — just edit it). Each group has its own "Apply to all N draft lines" button (the
+ * count is live — `draftCount` is the document's Draft-line array length). Tracer
+ * group: stock status, reusing the entry form's `stockStatusOptions` so batch and
+ * per-line entry can never present a different option set. Per-group apply is total:
+ * leaving the select blank stamps blank (clears) on every line (`stockStatusGroup`).
+ */
+function BatchFillPanel({ marketQuoteId, draftCount }: { marketQuoteId: string; draftCount: number }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [stock, setStock] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+
+  function applyStock() {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await batchUpdateDraftLinesAction(marketQuoteId, stockStatusGroup(stock));
+      if (result.ok) router.refresh();
+      else setMessage(result.message ?? "Couldn't apply to the draft lines.");
+    });
+  }
+
+  return (
+    <details style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
+      <summary style={{ cursor: "pointer", color: "#555" }}>Set for all lines</summary>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.4rem" }}>
+        <label>
+          Stock status{" "}
+          <select value={stock} onChange={(e) => setStock(e.target.value)} style={{ padding: "0.2rem" }}>
+            <option value="">— select —</option>
+            {stockStatusOptions(stock || undefined).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" disabled={pending} onClick={applyStock} style={{ padding: "0.2rem 0.55rem" }}>
+          Apply to all {draftCount} draft lines
+        </button>
+      </div>
+      {message !== null && (
+        <p role="alert" style={{ color: "#b00", margin: "0.3rem 0 0" }}>
+          {message}
+        </p>
+      )}
+    </details>
+  );
+}
+
 function DocGroup({ group }: { group: DraftDocGroup }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -169,6 +224,10 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
         <p role="alert" style={{ color: "#b00", margin: "0.4rem 0", fontSize: "0.9rem" }}>
           ⚠ Document missing: {docMissingLabels.join(", ")}.
         </p>
+      )}
+
+      {group.lines.length >= 2 && (
+        <BatchFillPanel marketQuoteId={group.marketQuoteId} draftCount={group.lines.length} />
       )}
 
       <ul style={{ listStyle: "none", padding: 0, margin: "0.4rem 0 0" }}>

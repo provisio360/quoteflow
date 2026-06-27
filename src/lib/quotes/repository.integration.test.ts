@@ -5,6 +5,7 @@ import {
   createMarketQuote,
   addQuoteLine,
   updateDraftLine,
+  batchUpdateDraftLines,
   updateMarketQuote,
   deleteDraftLine,
   listLinesForItem,
@@ -68,6 +69,7 @@ async function seedItem(country: string, n: string): Promise<string> {
       clientItemNumberKey: n.toLowerCase(),
       itemDescription: `Item ${n}`,
       requiredQuotes: 2,
+      requiredCompetitors: [],
       clientPrice: "123.4500",
     },
   });
@@ -283,6 +285,88 @@ describe("Draft-edit (owner-only, Draft-only)", () => {
     await expect(updateDraftLine(researcherA, line.id, { competitorBrand: "X" })).rejects.toThrow(
       QuoteAccessError,
     );
+  });
+});
+
+describe("batch line-fill (#128 / ADR-0036)", () => {
+  it("stamps the group onto every Draft line of the document (overwrite-all, not fill-blanks)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine); // no stock status
+
+    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" });
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { id: { in: [l1.id, l2.id] } },
+      select: { stockStatus: true },
+    });
+    expect(lines.map((l) => l.stockStatus)).toEqual(["Out of stock", "Out of stock"]);
+  });
+
+  it("touches only Draft lines, leaving a Submitted sibling untouched", async () => {
+    // Two documents for the same author: one stays Draft, one is submitted. Batch
+    // the submitted document — its line has left Draft, so nothing changes.
+    const draftDoc = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const draftLine = await addQuoteLine(researcherA, draftDoc.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+
+    const subDoc = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const subLine = await addQuoteLine(researcherA, subDoc.id, itemG2, { ...completeLine, stockStatus: "In stock" });
+    await submitMarketQuote(researcherA, subDoc.id); // subLine → Submitted
+
+    await batchUpdateDraftLines(researcherA, subDoc.id, { stockStatus: "Out of stock" });
+
+    const sub = await prisma.quoteLine.findUnique({ where: { id: subLine.id }, select: { state: true, stockStatus: true } });
+    expect(sub).toMatchObject({ state: "Submitted", stockStatus: "In stock" }); // untouched
+
+    // And the Draft document still fills normally (control).
+    await batchUpdateDraftLines(researcherA, draftDoc.id, { stockStatus: "Out of stock" });
+    const drafted = await prisma.quoteLine.findUnique({ where: { id: draftLine.id }, select: { stockStatus: true } });
+    expect(drafted?.stockStatus).toBe("Out of stock");
+  });
+
+  it("refuses a non-author and writes nothing", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const line = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+
+    await expect(
+      batchUpdateDraftLines(researcherB, d.id, { stockStatus: "Out of stock" }),
+    ).rejects.toThrow(QuoteAccessError);
+
+    const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { stockStatus: true } });
+    expect(after?.stockStatus).toBe("In stock"); // unchanged
+  });
+
+  it("refuses a non-internal principal", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const clientUser = { kind: "client", userId: randomUUID(), tenantId } as const;
+    await expect(
+      batchUpdateDraftLines(clientUser, d.id, { stockStatus: "Out of stock" }),
+    ).rejects.toThrow(QuoteAccessError);
+  });
+
+  it("stamps a blank value through, clearing the field on every Draft line (ADR-0036)", async () => {
+    // Overwrite-all means a blank in the group CLEARS — a per-group apply is total,
+    // unlike a partial per-line edit (which omits empty fields). null reaches the DB.
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const line = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+
+    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: null });
+
+    const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { stockStatus: true } });
+    expect(after?.stockStatus).toBeNull();
+  });
+
+  it("produces no audit event (a Draft write is not in the audited set, ADR-0036)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+
+    const before = await prisma.auditEvent.count({ where: { studyId } });
+    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" });
+    const after = await prisma.auditEvent.count({ where: { studyId } });
+
+    expect(after).toBe(before); // batch pushes nothing to the audit log
   });
 });
 
@@ -557,6 +641,7 @@ describe("Price Flag + Justification gate (#90 / ADR-0014)", () => {
         clientItemNumberKey: "tight",
         itemDescription: "Tight-tolerance item",
         requiredQuotes: 2,
+        requiredCompetitors: [],
         clientPrice: "123.4500",
         qcThreshold: "0.0500",
       },
@@ -617,15 +702,13 @@ describe("listDraftMarketQuotesForResearcher (#97 — document-grouped Draft vie
   });
 
   // The `flagged` signal that gates the researcher's Justification field (ADR-0014).
-  // GATED (it.skip): the surrounding suite can't run against the current Neon DB —
-  // its seed omits the now-NOT-NULL `requiredCompetitors`, so `beforeAll` fails
-  // before any test. Unskip once that drift is resolved (the pure rule is covered
-  // by src/domains/quotes/price-flag.test.ts → isLineFlagged).
+  // (Previously gated by a seed drift — `requiredCompetitors` is now NOT NULL and
+  // `seedItem` supplies it, so `beforeAll` runs and these are live again. #128.)
   function draftLine(groups: Awaited<ReturnType<typeof listDraftMarketQuotesForResearcher>>, lineId: string) {
     return groups.flatMap((g) => g.lines).find((l) => l.lineId === lineId);
   }
 
-  it.skip("marks a returned-for-justification line flagged and round-trips its justification", async () => {
+  it("marks a returned-for-justification line flagged and round-trips its justification", async () => {
     // usd 1250.5 vs CP 123.45 ⇒ symmetric diff ≫ 0.25 ⇒ flagged (ADR-0014).
     const lineId = await submittedConverted(researcherA, itemG1, 1250.5);
     await rejectLine(analyst, lineId, "Quoted price is higher than expected — please justify or correct.");
@@ -638,7 +721,7 @@ describe("listDraftMarketQuotesForResearcher (#97 — document-grouped Draft vie
     expect(line!.justification).toContain("Sole regional supplier");
   });
 
-  it.skip("leaves a plainly-rejected (in-range) line unflagged", async () => {
+  it("leaves a plainly-rejected (in-range) line unflagged", async () => {
     // usd 130 vs CP 123.45 ⇒ symmetric diff ≈ 0.052 < 0.25 ⇒ not flagged: a plain
     // reject the author should fix, not justify ⇒ no Justification field.
     const lineId = await submittedConverted(researcherA, itemG1, 130);
