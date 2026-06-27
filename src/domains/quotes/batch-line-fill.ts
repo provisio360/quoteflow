@@ -49,3 +49,19 @@ export function warranty1Group(value: string, unit: string): QuoteLineFields {
 export function warranty2Group(value: string, unit: string): QuoteLineFields {
   return pairGroup("warranty2Value", "warranty2Unit", value, unit);
 }
+
+// The Landed Cost chain (#130 / ADR-0035): a tri-state Included? gating an optional
+// Note. The builder owns chain coherence so a stamped chain is always valid — the
+// Note rides along ONLY when Included? = Yes, and is cleared for No/blank, ignoring
+// any note text the panel still held. Empty Included? clears the whole group (null),
+// per ADR-0036's empty-is-clear contract; the submit gate catches a now-blank
+// required field, not batch. `included` is the form tri-state ("" / "true" / "false").
+export function landedCostGroup(included: string, note: string): QuoteLineFields {
+  if (included !== "true") {
+    return {
+      landedCostIncluded: included === "" ? null : false,
+      landedCostNote: null,
+    };
+  }
+  return { landedCostIncluded: true, landedCostNote: note === "" ? null : note };
+}

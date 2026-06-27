@@ -20,6 +20,7 @@ import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
 import { ValueUnitField } from "./ValueUnitField";
+import { LandedCostField } from "./LandedCostField";
 import {
   headerFieldsFromForm,
   lineFieldsFromForm,
@@ -303,27 +304,14 @@ export function QuoteEditor({
               nothing ⇒ a stale answer clears. The Note nests under Included? = Yes. When
               shown, an answer is required at submit. */}
           {showLandedCost && (
-            <>
-              <label style={{ fontSize: "0.85rem" }}>
-                Landed cost included in the price? *
-                <select
-                  name="landedCostIncluded"
-                  value={landedCostIncluded}
-                  onChange={(e) => setLandedCostIncluded(e.target.value)}
-                  style={input}
-                >
-                  <option value="">— select —</option>
-                  <option value="true">Yes</option>
-                  <option value="false">No</option>
-                </select>
-              </label>
-              {landedCostIncluded === "true" && (
-                <label style={{ fontSize: "0.85rem" }}>
-                  Landed cost note
-                  <input name="landedCostNote" defaultValue={initial?.landedCostNote ?? ""} style={input} />
-                </label>
-              )}
-            </>
+            <LandedCostField
+              mode="uncontrolled"
+              included={landedCostIncluded}
+              onIncludedChange={setLandedCostIncluded}
+              includedName="landedCostIncluded"
+              noteName="landedCostNote"
+              defaultNote={initial?.landedCostNote}
+            />
           )}
           {/* Discount chain (advisory metadata). "Available?" gates "Applied to the
               quote?", which gates the % + type. Each is a tri-state dropdown; the
