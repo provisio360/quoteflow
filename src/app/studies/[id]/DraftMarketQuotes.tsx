@@ -23,9 +23,11 @@ import {
   warranty1Group,
   warranty2Group,
   landedCostGroup,
+  discountGroup,
 } from "@/domains/quotes/batch-line-fill";
 import { ValueUnitField } from "./ValueUnitField";
 import { LandedCostField } from "./LandedCostField";
+import { DiscountField } from "./DiscountField";
 import {
   partitionSubmitReport,
   type AddLineCandidate,
@@ -127,9 +129,11 @@ function initialFromHeader(g: DraftDocGroup): Record<string, string> {
  * line; a half-filled pair is stampable and caught by the existing submit gate, not
  * here (ADR-0034/0035). The landed-cost group (#130) shows only when the document is
  * cross-border (`landedCostApplies` on the document's two countries — doc-uniform, so
- * the whole group is present or absent), mirroring the single-line form. Each group has
- * its own apply button (the click IS the intent); the status line reports the most
- * recent apply.
+ * the whole group is present or absent), mirroring the single-line form. The discount
+ * group (#131) is the full gated chain (available → type + applied → value) via the
+ * shared `DiscountField`, always shown; `discountGroup` owns its chain coherence. Each
+ * group has its own apply button (the click IS the intent); the status line reports the
+ * most recent apply.
  */
 function BatchFillPanel({
   marketQuoteId,
@@ -153,6 +157,10 @@ function BatchFillPanel({
   const [warranty2Unit, setWarranty2Unit] = useState("");
   const [landedCostIncluded, setLandedCostIncluded] = useState("");
   const [landedCostNote, setLandedCostNote] = useState("");
+  const [discountAvailable, setDiscountAvailable] = useState("");
+  const [discountType, setDiscountType] = useState("");
+  const [discountApplied, setDiscountApplied] = useState("");
+  const [discountValue, setDiscountValue] = useState("");
   const [message, setMessage] = useState<string | null>(null);
 
   // Same predicate the single-line form uses, so the group's show/hide can never drift
@@ -248,6 +256,22 @@ function BatchFillPanel({
             {applyButton(landedCostGroup(landedCostIncluded, landedCostNote))}
           </div>
         )}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+            <DiscountField
+              mode="controlled"
+              available={discountAvailable}
+              onAvailableChange={setDiscountAvailable}
+              applied={discountApplied}
+              onAppliedChange={setDiscountApplied}
+              type={discountType}
+              onTypeChange={setDiscountType}
+              value={discountValue}
+              onValueChange={setDiscountValue}
+            />
+          </div>
+          {applyButton(discountGroup(discountAvailable, discountType, discountApplied, discountValue))}
+        </div>
       </div>
       {message !== null && (
         <p role="alert" style={{ color: "#b00", margin: "0.3rem 0 0" }}>

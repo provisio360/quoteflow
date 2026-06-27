@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  discountGroup,
   landedCostGroup,
   leadTimeGroup,
   stockStatusGroup,
@@ -101,6 +102,66 @@ describe("landedCostGroup", () => {
     expect(landedCostGroup("", "ignored")).toEqual({
       landedCostIncluded: null,
       landedCostNote: null,
+    });
+  });
+});
+
+// The discount group is the full gated CHAIN (#131 / ADR-0036): Available? gates
+// Type + Applied?, Applied? gates the % — so a stamped chain is always coherent.
+// Type rides under Available (kept even when not applied — CONTEXT), % rides under
+// Applied. The % is recorded as typed (15 = 15%), never applied to the price.
+describe("discountGroup", () => {
+  it("stamps the full chain: Available=Yes, Type, Applied=Yes, %", () => {
+    expect(discountGroup("true", "Volume", "true", "15")).toEqual({
+      discountAvailable: true,
+      discountType: "Volume",
+      discountApplied: true,
+      discountValue: 15,
+    });
+  });
+
+  it("keeps Type but clears the % when Applied=No (type captured even if not applied)", () => {
+    expect(discountGroup("true", "Volume", "false", "15")).toEqual({
+      discountAvailable: true,
+      discountType: "Volume",
+      discountApplied: false,
+      discountValue: null,
+    });
+  });
+
+  it("keeps Available=Yes with an unanswered Applied, clearing the %", () => {
+    expect(discountGroup("true", "Volume", "", "")).toEqual({
+      discountAvailable: true,
+      discountType: "Volume",
+      discountApplied: null,
+      discountValue: null,
+    });
+  });
+
+  it("clears Type/% on a blank Type even with Applied=Yes", () => {
+    expect(discountGroup("true", "", "true", "")).toEqual({
+      discountAvailable: true,
+      discountType: null,
+      discountApplied: true,
+      discountValue: null,
+    });
+  });
+
+  it("clears the whole chain on Available=No (no stale type/applied/value)", () => {
+    expect(discountGroup("false", "Volume", "true", "15")).toEqual({
+      discountAvailable: false,
+      discountType: null,
+      discountApplied: null,
+      discountValue: null,
+    });
+  });
+
+  it("clears the whole chain on a blank Available (empty-is-clear)", () => {
+    expect(discountGroup("", "Volume", "true", "15")).toEqual({
+      discountAvailable: null,
+      discountType: null,
+      discountApplied: null,
+      discountValue: null,
     });
   });
 });
