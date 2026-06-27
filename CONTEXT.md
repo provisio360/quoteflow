@@ -152,6 +152,10 @@ _Avoid_: Leadtime, delivery time, ETA
 Whether the quoted [[price]] **already includes** the cost of getting the part to the customer (shipping, duties, import handling) — a Yes/No **Included?** flag plus an optional free-text **Note**. Captured on a [[Quote Line]]. Only relevant when the part crosses a border to reach the market, so the researcher is only asked when the [[Dealer Country]] differs from the market [[Country]]; when they match it is left unanswered (exports as *Landed Cost Value* = "No", *Landed Cost Note* = "N/A"). The Note is only meaningful — and only kept — when Included? is Yes.
 _Avoid_: Shipping cost, duty, freight
 
+**Batch Line-Fill**:
+A [[Researcher]] convenience for a [[Market Quote]] whose [[Quote Line]]s share the same dealer-level answers: it **stamps a group of line fields onto every [[Draft]] line in the document at once**, sparing per-line retyping. Covers six groups — stock status, the [[Shipping Lead Time]] pair, [[Landed Cost]], the two [[Warranty]] pairs, and the discount chain. It is a **writer, not a relocation**: the fields stay **line-level** (they may still vary per line via ordinary per-line edit, the override path) — Batch Line-Fill never makes them [[Market Quote]] facts. Overwrites the whole group on every Draft line (blank is a legitimate value to stamp), touches only Draft lines the author owns, and holds **no state** — a line added afterward starts blank until batched again. Adds no validation of its own (the [[document submit|Quote Lifecycle]] gate still catches half-pairs) and pushes no [[Notification]] or [[Audit Event]] (ADR-0036).
+_Avoid_: bulk edit, mass update, template, document defaults
+
 **Export**:
 A downloadable spreadsheet of a [[Pricing Study]]'s data (Excel only in v1 — no PDF). Comes in two flavours distinguished by who runs it and what it may contain: the [[Client Export]] and the [[Internal Export]]. Both respect [[Client]] tenant isolation absolutely. There is no aggregate-vs-detail divide in the *format* — both are workbooks; the divide is in the **population and columns** each flavour is allowed.
 _Avoid_: Download, report, dump
