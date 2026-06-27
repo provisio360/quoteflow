@@ -6,6 +6,7 @@ import {
   createMarketQuote,
   addQuoteLine,
   updateDraftLine,
+  batchUpdateDraftLines,
   updateMarketQuote,
   deleteDraftLine,
   submitMarketQuote,
@@ -80,6 +81,25 @@ export async function updateDraftLineAction(
   const principal = await requirePrincipal();
   try {
     await updateDraftLine(principal, lineId, fields);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
+    throw error;
+  }
+}
+
+/** Author convenience: batch line-fill (#128 / ADR-0036). Stamps one group of line
+ *  fields onto every Draft line of the document at once; the repository gates it
+ *  owner-only + Draft-only. Unlike the single-line edit (optimistic), a batch write
+ *  touches many lines, so it revalidates the study screen the researcher fills from. */
+export async function batchUpdateDraftLinesAction(
+  marketQuoteId: string,
+  group: QuoteLineFields,
+): Promise<{ readonly ok: boolean; readonly message?: string }> {
+  const principal = await requirePrincipal();
+  try {
+    await batchUpdateDraftLines(principal, marketQuoteId, group);
+    revalidatePath("/studies");
     return { ok: true };
   } catch (error) {
     if (error instanceof QuoteAccessError) return { ok: false, message: error.message };

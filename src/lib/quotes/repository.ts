@@ -375,6 +375,48 @@ export async function updateDraftLine(
 }
 
 /**
+ * Batch line-fill (ADR-0036): stamp a partial group of line fields onto EVERY
+ * Draft line of a Market Quote in one write — a Researcher convenience that spares
+ * per-line retyping when a dealer gives the same answer for every item. Generic in
+ * the group: it accepts any subset of QuoteLineFields, so later slices add field
+ * groups with no change here. Gated identically to `updateDraftLine` but at the
+ * DOCUMENT level: owner-only (the author who created the document — every Draft
+ * line on a document shares that author, since `addQuoteLine` is author-only) and
+ * Draft-only (the `state: "Draft"` filter leaves Submitted/Approved/Rejected
+ * siblings untouched). Overwrite-all, not fill-blanks — a stamped value replaces a
+ * line's current one, and a blank in the group clears it (`toData` writes null/""
+ * through, omitting only `undefined`). It is a writer, not a relocation: the fields
+ * stay line-level and per-line edit remains the override path. No new validation
+ * (the document submit gate still catches half-pairs), no audit event, no
+ * notification — Draft writes are not in the audited set and push nothing.
+ */
+export async function batchUpdateDraftLines(
+  principal: Principal,
+  marketQuoteId: string,
+  group: QuoteLineFields,
+): Promise<void> {
+  await withTenant(principal, async (tx) => {
+    if (!isInternal(principal)) {
+      throw new QuoteAccessError("Internal staff only");
+    }
+    const doc = await tx.marketQuote.findUnique({
+      where: { id: marketQuoteId },
+      select: { createdById: true },
+    });
+    if (doc === null) {
+      throw new QuoteAccessError(`Market Quote not found: ${marketQuoteId}`);
+    }
+    if (doc.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the document's author may batch-fill its lines");
+    }
+    await tx.quoteLine.updateMany({
+      where: { marketQuoteId, state: "Draft" },
+      data: toData(group),
+    });
+  });
+}
+
+/**
  * Edit a Draft Market Quote's document header (source/date/currency). Owner-only
  * and unconverted-only (#97): the author may change the shared facts ONLY while
  * the document has never been submitted (`conversionStatus === null`). Once
