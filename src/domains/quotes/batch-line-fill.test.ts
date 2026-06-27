@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stockStatusGroup } from "./batch-line-fill";
+import { leadTimeGroup, stockStatusGroup, warranty1Group, warranty2Group } from "./batch-line-fill";
 
 // Batch line-fill's per-group builders (#128 / ADR-0036). A per-group apply is
 // TOTAL: an empty select clears the field on every Draft line, so empty maps to
@@ -13,5 +13,55 @@ describe("stockStatusGroup", () => {
 
   it("maps an empty selection to null (stamp blank / clear-all)", () => {
     expect(stockStatusGroup("")).toEqual({ stockStatus: null });
+  });
+});
+
+describe("leadTimeGroup", () => {
+  it("carries a value + unit pair through", () => {
+    expect(leadTimeGroup("3", "weeks")).toEqual({
+      leadTimeValue: 3,
+      leadTimeUnit: "weeks",
+    });
+  });
+
+  it("strips thousands grouping from the value", () => {
+    expect(leadTimeGroup("1,200", "days")).toEqual({
+      leadTimeValue: 1200,
+      leadTimeUnit: "days",
+    });
+  });
+
+  it("clears each half independently — a half-pair (value, no unit) is stampable", () => {
+    expect(leadTimeGroup("3", "")).toEqual({ leadTimeValue: 3, leadTimeUnit: null });
+  });
+
+  it("clears each half independently — a half-pair (unit, no value)", () => {
+    expect(leadTimeGroup("", "weeks")).toEqual({ leadTimeValue: null, leadTimeUnit: "weeks" });
+  });
+
+  it("maps a fully-empty pair to null/null (clear-all)", () => {
+    expect(leadTimeGroup("", "")).toEqual({ leadTimeValue: null, leadTimeUnit: null });
+  });
+});
+
+describe("warranty1Group", () => {
+  it("stamps its own warranty-1 keys, thousands-stripped", () => {
+    expect(warranty1Group("12,000", "miles")).toEqual({
+      warranty1Value: 12000,
+      warranty1Unit: "miles",
+    });
+  });
+
+  it("clears its own keys on a fully-empty pair", () => {
+    expect(warranty1Group("", "")).toEqual({ warranty1Value: null, warranty1Unit: null });
+  });
+});
+
+describe("warranty2Group", () => {
+  it("stamps its own warranty-2 keys", () => {
+    expect(warranty2Group("5", "years")).toEqual({
+      warranty2Value: 5,
+      warranty2Unit: "years",
+    });
   });
 });
