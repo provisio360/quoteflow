@@ -25,6 +25,7 @@ import { createStudy } from "@/lib/studies/repository";
 import { assignResearchers } from "@/lib/assignments/repository";
 import type { InternalPrincipal } from "@/domains/authz/principal";
 import {
+  landedCostGroup,
   leadTimeGroup,
   warranty1Group,
   warranty2Group,
@@ -383,6 +384,36 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
       value: 3,
       unit: null,
     });
+  });
+
+  it("stamps the landed-cost chain (Included? + Note) onto every Draft line (#130)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+
+    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("true", "ships DDP"));
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { id: { in: [l1.id, l2.id] } },
+      select: { landedCostIncluded: true, landedCostNote: true },
+    });
+    for (const line of lines) {
+      expect(line).toMatchObject({ landedCostIncluded: true, landedCostNote: "ships DDP" });
+    }
+  });
+
+  it("clears a stale note when the chain is re-stamped as No (#130)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("true", "ships DDP"));
+
+    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("false", ""));
+
+    const after = await prisma.quoteLine.findUnique({
+      where: { id: l1.id },
+      select: { landedCostIncluded: true, landedCostNote: true },
+    });
+    expect(after).toMatchObject({ landedCostIncluded: false, landedCostNote: null });
   });
 
   it("refuses a non-author and writes nothing", async () => {

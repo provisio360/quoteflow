@@ -16,13 +16,16 @@ import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
 import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
+import { landedCostApplies } from "@/domains/quotes/landed-cost";
 import {
   stockStatusGroup,
   leadTimeGroup,
   warranty1Group,
   warranty2Group,
+  landedCostGroup,
 } from "@/domains/quotes/batch-line-fill";
 import { ValueUnitField } from "./ValueUnitField";
+import { LandedCostField } from "./LandedCostField";
 import {
   partitionSubmitReport,
   type AddLineCandidate,
@@ -122,10 +125,23 @@ function initialFromHeader(g: DraftDocGroup): Record<string, string> {
  * `ValueUnitField` so batch and per-line entry can never present a different field
  * shape. Per-group apply is total: leaving a half blank stamps blank (clears) on every
  * line; a half-filled pair is stampable and caught by the existing submit gate, not
- * here (ADR-0034/0035). Each group has its own apply button (the click IS the intent);
- * the status line reports the most recent apply.
+ * here (ADR-0034/0035). The landed-cost group (#130) shows only when the document is
+ * cross-border (`landedCostApplies` on the document's two countries — doc-uniform, so
+ * the whole group is present or absent), mirroring the single-line form. Each group has
+ * its own apply button (the click IS the intent); the status line reports the most
+ * recent apply.
  */
-function BatchFillPanel({ marketQuoteId, draftCount }: { marketQuoteId: string; draftCount: number }) {
+function BatchFillPanel({
+  marketQuoteId,
+  draftCount,
+  dealerCountry,
+  marketCountry,
+}: {
+  marketQuoteId: string;
+  draftCount: number;
+  dealerCountry?: string;
+  marketCountry: string;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [stock, setStock] = useState("");
@@ -135,7 +151,13 @@ function BatchFillPanel({ marketQuoteId, draftCount }: { marketQuoteId: string; 
   const [warranty1Unit, setWarranty1Unit] = useState("");
   const [warranty2Value, setWarranty2Value] = useState("");
   const [warranty2Unit, setWarranty2Unit] = useState("");
+  const [landedCostIncluded, setLandedCostIncluded] = useState("");
+  const [landedCostNote, setLandedCostNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+
+  // Same predicate the single-line form uses, so the group's show/hide can never drift
+  // from per-line entry. Both countries live on the document → uniform across lines.
+  const showLandedCost = landedCostApplies(dealerCountry, marketCountry);
 
   function apply(group: QuoteLineFields) {
     setMessage(null);
@@ -212,6 +234,20 @@ function BatchFillPanel({ marketQuoteId, draftCount }: { marketQuoteId: string; 
           </div>
           {applyButton(warranty2Group(warranty2Value, warranty2Unit))}
         </div>
+        {showLandedCost && (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
+            <div style={{ flex: 1 }}>
+              <LandedCostField
+                mode="controlled"
+                included={landedCostIncluded}
+                onIncludedChange={setLandedCostIncluded}
+                note={landedCostNote}
+                onNoteChange={setLandedCostNote}
+              />
+            </div>
+            {applyButton(landedCostGroup(landedCostIncluded, landedCostNote))}
+          </div>
+        )}
       </div>
       {message !== null && (
         <p role="alert" style={{ color: "#b00", margin: "0.3rem 0 0" }}>
@@ -297,7 +333,12 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
       )}
 
       {group.lines.length >= 2 && (
-        <BatchFillPanel marketQuoteId={group.marketQuoteId} draftCount={group.lines.length} />
+        <BatchFillPanel
+          marketQuoteId={group.marketQuoteId}
+          draftCount={group.lines.length}
+          dealerCountry={group.sourceCountry ?? undefined}
+          marketCountry={group.country}
+        />
       )}
 
       <ul style={{ listStyle: "none", padding: 0, margin: "0.4rem 0 0" }}>
