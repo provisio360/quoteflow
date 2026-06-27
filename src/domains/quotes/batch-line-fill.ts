@@ -65,3 +65,33 @@ export function landedCostGroup(included: string, note: string): QuoteLineFields
   }
   return { landedCostIncluded: true, landedCostNote: note === "" ? null : note };
 }
+
+// The Discount chain (#131 / ADR-0036): Available? gates the free-text Type + the
+// Applied? flag; Applied? gates the % value. The builder owns chain coherence so a
+// stamped chain is always valid: Type rides under Available (kept even when not
+// applied — CONTEXT captures the kind of discount on offer regardless), the % rides
+// under Applied, and any child below a non-Yes parent is cleared (null), ignoring
+// stale panel text. A blank Available clears the whole chain (empty-is-clear,
+// ADR-0036). `available`/`applied` are the form tri-states ("" / "true" / "false");
+// the % is recorded as typed (15 = 15%), never applied to the price (ADR-0026).
+export function discountGroup(
+  available: string,
+  type: string,
+  applied: string,
+  value: string,
+): QuoteLineFields {
+  if (available !== "true") {
+    return {
+      discountAvailable: available === "" ? null : false,
+      discountType: null,
+      discountApplied: null,
+      discountValue: null,
+    };
+  }
+  return {
+    discountAvailable: true,
+    discountType: type === "" ? null : type,
+    discountApplied: applied === "" ? null : applied === "true",
+    discountValue: applied === "true" && value !== "" ? Number(value) : null,
+  };
+}

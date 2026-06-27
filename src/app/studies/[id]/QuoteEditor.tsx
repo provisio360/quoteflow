@@ -21,6 +21,7 @@ import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
 import { ValueUnitField } from "./ValueUnitField";
 import { LandedCostField } from "./LandedCostField";
+import { DiscountField } from "./DiscountField";
 import {
   headerFieldsFromForm,
   lineFieldsFromForm,
@@ -313,59 +314,23 @@ export function QuoteEditor({
               defaultNote={initial?.landedCostNote}
             />
           )}
-          {/* Discount chain (advisory metadata). "Available?" gates "Applied to the
-              quote?", which gates the % + type. Each is a tri-state dropdown; the
-              nested fields only render — and so only post — when the parent is Yes,
-              so a No/blank answer never carries a stale child value. The % is
-              recorded as typed (15 = 15%) and is NOT applied to the price. */}
-          <label style={{ fontSize: "0.85rem" }}>
-            Discount available?
-            <select
-              name="discountAvailable"
-              value={discountAvailable}
-              onChange={(e) => setDiscountAvailable(e.target.value)}
-              style={input}
-            >
-              <option value="">— select —</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </select>
-          </label>
-          {discountAvailable === "true" && (
-            <>
-              {/* Type describes the kind of discount on offer — captured whenever a
-                  discount is available, even if it was not applied to this quote. */}
-              <label style={{ fontSize: "0.85rem" }}>
-                Discount type
-                <input name="discountType" defaultValue={initial?.discountType ?? ""} style={input} />
-              </label>
-              <label style={{ fontSize: "0.85rem" }}>
-                Discount applied to the quote?
-                <select
-                  name="discountApplied"
-                  value={discountApplied}
-                  onChange={(e) => setDiscountApplied(e.target.value)}
-                  style={input}
-                >
-                  <option value="">— select —</option>
-                  <option value="true">Yes</option>
-                  <option value="false">No</option>
-                </select>
-              </label>
-            </>
-          )}
-          {discountAvailable === "true" && discountApplied === "true" && (
-            <label style={{ fontSize: "0.85rem" }}>
-              Discount %
-              <input
-                name="discountValue"
-                type="number"
-                inputMode="decimal"
-                defaultValue={initial?.discountValue ?? ""}
-                style={{ ...input, textAlign: "right" }}
-              />
-            </label>
-          )}
+          {/* Discount chain (advisory metadata) via the shared DiscountField so
+              batch line-fill (#131) and per-line entry can never present a divergent
+              shape. "Available?" gates type + "Applied?"; "Applied?" gates the %. The
+              % is recorded as typed (15 = 15%) and is NOT applied to the price. */}
+          <DiscountField
+            mode="uncontrolled"
+            available={discountAvailable}
+            onAvailableChange={setDiscountAvailable}
+            applied={discountApplied}
+            onAppliedChange={setDiscountApplied}
+            availableName="discountAvailable"
+            appliedName="discountApplied"
+            typeName="discountType"
+            valueName="discountValue"
+            defaultType={initial?.discountType}
+            defaultValue={initial?.discountValue}
+          />
           <label style={{ fontSize: "0.85rem" }}>
             Notes
             <textarea name="notes" rows={2} defaultValue={initial?.notes ?? ""} style={input} />
