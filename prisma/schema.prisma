@@ -270,8 +270,11 @@ model BenchmarkItem {
   // levels so the fallback never mixes scales.
   qcThreshold          Decimal? @db.Decimal(6, 4)
   // Advisory competitor brands the client wants benchmarked (CONTEXT.md: Required
-  // Competitors). Ordered, up to 10, never a release gate; empty is normal.
-  requiredCompetitors  String[]
+  // Competitors). Ordered, up to 10, never a release gate; empty is normal — hence the
+  // empty-array default, matching the column's `DEFAULT ARRAY[]::TEXT[]`. Without the
+  // `@default`, Prisma sends an explicit NULL on create when the field is omitted,
+  // bypassing the DB default and tripping the NOT NULL constraint.
+  requiredCompetitors  String[] @default([])
   // The operative Client Price: derived USD/unit (price / priceQuantity), analyst-
   // owned after seeding — re-import never overwrites it (ADR-0015).
   clientPrice          Decimal? @db.Decimal(14, 4)
