@@ -4,8 +4,7 @@ import {
   landedCostGroup,
   leadTimeGroup,
   stockStatusGroup,
-  warranty1Group,
-  warranty2Group,
+  warrantyGroup,
 } from "./batch-line-fill";
 
 // Batch line-fill's per-group builders (#128 / ADR-0036). A per-group apply is
@@ -51,24 +50,47 @@ describe("leadTimeGroup", () => {
   });
 });
 
-describe("warranty1Group", () => {
-  it("stamps its own warranty-1 keys, thousands-stripped", () => {
-    expect(warranty1Group("12,000", "miles")).toEqual({
+// The warranty group is a CHAIN gated by Offered? (ADR-0037): Yes stamps both pairs;
+// No/blank clears the gate AND all four pair fields, so a stamped "No" can never leave
+// a stale warranty — regardless of any lingering panel input.
+describe("warrantyGroup", () => {
+  it("stamps Offered=Yes with both pairs, thousands-stripped", () => {
+    expect(warrantyGroup("true", "12,000", "miles", "5", "years")).toEqual({
+      warrantyOffered: true,
       warranty1Value: 12000,
       warranty1Unit: "miles",
+      warranty2Value: 5,
+      warranty2Unit: "years",
     });
   });
 
-  it("clears its own keys on a fully-empty pair", () => {
-    expect(warranty1Group("", "")).toEqual({ warranty1Value: null, warranty1Unit: null });
+  it("stamps a half pair under Yes (stampable, caught by the submit gate)", () => {
+    expect(warrantyGroup("true", "3", "", "", "")).toEqual({
+      warrantyOffered: true,
+      warranty1Value: 3,
+      warranty1Unit: null,
+      warranty2Value: null,
+      warranty2Unit: null,
+    });
   });
-});
 
-describe("warranty2Group", () => {
-  it("stamps its own warranty-2 keys", () => {
-    expect(warranty2Group("5", "years")).toEqual({
-      warranty2Value: 5,
-      warranty2Unit: "years",
+  it("Offered=No clears the gate to false and nulls all four pairs (ignores lingering input)", () => {
+    expect(warrantyGroup("false", "3", "year", "5", "years")).toEqual({
+      warrantyOffered: false,
+      warranty1Value: null,
+      warranty1Unit: null,
+      warranty2Value: null,
+      warranty2Unit: null,
+    });
+  });
+
+  it("a blank Offered clears the whole group (gate null, pairs null)", () => {
+    expect(warrantyGroup("", "3", "year", "", "")).toEqual({
+      warrantyOffered: null,
+      warranty1Value: null,
+      warranty1Unit: null,
+      warranty2Value: null,
+      warranty2Unit: null,
     });
   });
 });

@@ -16,10 +16,10 @@ import {
 } from "@/domains/quotes/quote-currency-picker";
 import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
-import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
 import { ValueUnitField } from "./ValueUnitField";
+import { WarrantyField } from "./WarrantyField";
 import { LandedCostField } from "./LandedCostField";
 import { DiscountField } from "./DiscountField";
 import {
@@ -100,6 +100,11 @@ export function QuoteEditor({
   // already the dealer's discount-inclusive final, per CONTEXT/ADR-0026).
   const [discountAvailable, setDiscountAvailable] = useState(initial?.discountAvailable ?? "");
   const [discountApplied, setDiscountApplied] = useState(initial?.discountApplied ?? "");
+
+  // Warranty Offered? gates the two warranty pairs (ADR-0037). Controlled so the pairs
+  // only render (and only post) once Offered is "Yes"; a No/blank answer clears them on
+  // save. Required to submit — blank blocks (unlike the discount "available" gate).
+  const [warrantyOffered, setWarrantyOffered] = useState(initial?.warrantyOffered ?? "");
 
   // Landed Cost is shown only when the part crosses a border — Dealer Country differs
   // from the market Country (ADR-0035). The Dealer Country is the live select in
@@ -271,23 +276,17 @@ export function QuoteEditor({
               <input name="quantityQuoted" type="number" defaultValue={initial?.quantityQuoted ?? ""} style={input} />
             </label>
           </div>
-          {/* Up to two warranties, each a numeric value + a unit (ADR-0034). Either
-              half may be left blank while drafting; a half-filled pair is caught at
-              document submit. The value groups at rest like price, unit-agnostically.
-              Rendered via the shared ValueUnitField so batch line-fill (#129) and
-              per-line entry can never present a divergent field shape (AC4). */}
-          {([1, 2] as const).map((n) => (
-            <ValueUnitField
-              key={n}
-              mode="uncontrolled"
-              label={`Warranty ${n}`}
-              unitOptions={warrantyUnitOptions}
-              valueName={`warranty${n}Value`}
-              unitName={`warranty${n}Unit`}
-              defaultValue={initial?.[`warranty${n}Value`]}
-              defaultUnit={initial?.[`warranty${n}Unit`]}
-            />
-          ))}
+          {/* Warranty: a Yes/No "Offered?" gate over up to two value+unit pairs
+              (ADR-0037). Offered is required to submit; the pairs show only under Yes
+              and clear on save otherwise. Rendered via the shared WarrantyField so
+              batch line-fill and per-line entry can never present a divergent shape. */}
+          <WarrantyField
+            mode="uncontrolled"
+            offered={warrantyOffered}
+            onOfferedChange={setWarrantyOffered}
+            offeredName="warrantyOffered"
+            defaults={initial}
+          />
           {/* Shipping Lead Time: a numeric value + a unit (ADR-0035). Either half may
               be left blank while drafting; a half-filled pair is caught at document
               submit, like warranty. Same shared widget as warranty and batch fill. */}

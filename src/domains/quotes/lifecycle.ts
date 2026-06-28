@@ -59,18 +59,23 @@ export interface DocumentHeader {
 }
 
 /** A line the bulk submit considers: its state plus its own required-to-submit
- *  facts, plus the value+unit pairs and the landed-cost flag. Most optional context
- *  never gates, but three things conditionally do: a warranty pair (ADR-0034) and the
- *  shipping lead time pair (ADR-0035) gate on coherence — a value with no unit, or a
- *  unit with no value, blocks submit; and Landed Cost's Included? flag is required
- *  when the document is cross-border (Dealer Country differs from market Country,
- *  ADR-0035). Presence is never forced — a line with none of these submits fine. */
+ *  facts, plus the value+unit pairs, the landed-cost flag, and the warranty gate.
+ *  Most optional context never gates, but four things conditionally do: a warranty
+ *  pair (ADR-0034) and the shipping lead time pair (ADR-0035) gate on coherence — a
+ *  value with no unit, or a unit with no value, blocks submit; Landed Cost's
+ *  Included? flag is required when the document is cross-border (ADR-0035); and
+ *  Warranty Offered? is required on presence — a null answer blocks (ADR-0037), the
+ *  one piece of warranty context forced to be answered. Warranty pairs are absent
+ *  (never checked) when Offered is not Yes. */
 export interface SubmittableLine {
   readonly lineId: string;
   readonly state: QuoteState;
   readonly competitorBrand: string | null;
   readonly price: number | null;
   readonly quantityQuoted: number | null;
+  // Warranty Offered? — required to submit (null blocks); when not `true`, the two
+  // warranty pairs below are treated as absent and never coherence-checked (ADR-0037).
+  readonly warrantyOffered: boolean | null;
   readonly warranty1Value: number | null;
   readonly warranty1Unit: string | null;
   readonly warranty2Value: number | null;
@@ -115,9 +120,18 @@ export type BulkRequiredField = DocRequiredField | LineRequiredField;
  *  missing field when a cross-border document leaves it unanswered. */
 export type LandedCostField = "landedCostIncluded";
 
+/** The always-required Warranty Offered? gate (ADR-0037), reported like a missing
+ *  field when a line leaves it unanswered (null). */
+export type WarrantyOfferedField = "warrantyOffered";
+
 export interface IncompleteLine {
   readonly lineId: string;
-  readonly missing: readonly (BulkRequiredField | PairField | LandedCostField)[];
+  readonly missing: readonly (
+    | BulkRequiredField
+    | PairField
+    | LandedCostField
+    | WarrantyOfferedField
+  )[];
 }
 
 export type SubmitDocumentResult =
@@ -137,6 +151,10 @@ function missingValue(value: string | number | Date | null): boolean {
 function incompletePairHalves(line: SubmittableLine): PairField[] {
   const out: PairField[] = [];
   for (const [valueField, unitField] of VALUE_UNIT_PAIRS) {
+    // A warranty pair only gates when warranty is Offered (= true). When Offered is
+    // No or unanswered the pairs are absent by construction (cleared on save,
+    // ADR-0037), so they are never coherence-checked. Lead time is unconditional.
+    if (valueField.startsWith("warranty") && line.warrantyOffered !== true) continue;
     const hasValue = !missingValue(line[valueField]);
     const hasUnit = !missingValue(line[unitField]);
     if (hasValue && !hasUnit) out.push(unitField);
@@ -176,7 +194,16 @@ export function submitDocument(input: {
     const lineMissing = LINE_REQUIRED_TO_SUBMIT.filter((field) => missingValue(line[field]));
     const landedCostMissing: LandedCostField[] =
       landedCostRequired && line.landedCostIncluded === null ? ["landedCostIncluded"] : [];
-    const missing = [...docMissing, ...lineMissing, ...incompletePairHalves(line), ...landedCostMissing];
+    // Warranty Offered? is required on every line — a null answer blocks (ADR-0037).
+    const warrantyOfferedMissing: WarrantyOfferedField[] =
+      line.warrantyOffered === null ? ["warrantyOffered"] : [];
+    const missing = [
+      ...docMissing,
+      ...lineMissing,
+      ...incompletePairHalves(line),
+      ...landedCostMissing,
+      ...warrantyOfferedMissing,
+    ];
     if (missing.length > 0) perLine.push({ lineId: line.lineId, missing });
   }
   if (perLine.length > 0) return { ok: false, reason: "lines-incomplete", perLine };

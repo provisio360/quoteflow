@@ -50,7 +50,8 @@ const header: MarketQuoteHeaderFields = {
   currency: "EUR",
   dateQuoteReceived: new Date("2026-06-01"),
 };
-const lineFields = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1 };
+// warrantyOffered answered so the line clears the submit gate (ADR-0037).
+const lineFields = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1, warrantyOffered: false };
 
 /** Create a one-line document on `item` (in its own country) and return its line id.
  *  The dealer sits in the item's own country (domestic) so Landed Cost is not asked

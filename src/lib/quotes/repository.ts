@@ -110,6 +110,7 @@ export interface QuoteLineFields {
   readonly stockStatus?: string | null;
   readonly leadTimeValue?: number | string | null;
   readonly leadTimeUnit?: string | null;
+  readonly warrantyOffered?: boolean | null;
   readonly warranty1Value?: number | string | null;
   readonly warranty1Unit?: string | null;
   readonly warranty2Value?: number | string | null;
@@ -501,6 +502,9 @@ export interface DraftMarketQuoteGroupLine {
   readonly competitorBrand: string | null;
   readonly price: string | null;
   readonly quantityQuoted: number | null;
+  /** Warranty Offered? gate, carried so an edit round-trips it — null blocks submit
+   *  (ADR-0037). When not Yes the pairs below are absent (cleared on save). */
+  readonly warrantyOffered: boolean | null;
   /** Warranty pairs, carried so an edit round-trips them — a half pair blocks the
    *  document's submit (ADR-0034) and editing the line is how it gets fixed. */
   readonly warranty1Value: string | null;
@@ -595,6 +599,7 @@ export async function listDraftMarketQuotesForResearcher(
             competitorBrand: true,
             price: true,
             quantityQuoted: true,
+            warrantyOffered: true,
             warranty1Value: true,
             warranty1Unit: true,
             warranty2Value: true,
@@ -649,6 +654,7 @@ export async function listDraftMarketQuotesForResearcher(
         competitorBrand: l.competitorBrand,
         price: l.price === null ? null : l.price.toString(),
         quantityQuoted: l.quantityQuoted,
+        warrantyOffered: l.warrantyOffered,
         warranty1Value: l.warranty1Value === null ? null : l.warranty1Value.toString(),
         warranty1Unit: l.warranty1Unit,
         warranty2Value: l.warranty2Value === null ? null : l.warranty2Value.toString(),
@@ -723,7 +729,9 @@ export async function submitMarketQuote(
             price: true,
             quantityQuoted: true,
             // Warranty + lead-time pairs gate submit on coherence (ADR-0034/0035);
-            // landed cost is conditionally required cross-border (ADR-0035).
+            // landed cost is conditionally required cross-border (ADR-0035); the
+            // Warranty Offered? gate is required on presence (ADR-0037).
+            warrantyOffered: true,
             warranty1Value: true,
             warranty1Unit: true,
             warranty2Value: true,
@@ -755,6 +763,7 @@ export async function submitMarketQuote(
       competitorBrand: l.competitorBrand,
       price: l.price === null ? null : Number(l.price),
       quantityQuoted: l.quantityQuoted,
+      warrantyOffered: l.warrantyOffered,
       warranty1Value: l.warranty1Value === null ? null : Number(l.warranty1Value),
       warranty1Unit: l.warranty1Unit,
       warranty2Value: l.warranty2Value === null ? null : Number(l.warranty2Value),

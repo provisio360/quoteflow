@@ -27,8 +27,7 @@ import type { InternalPrincipal } from "@/domains/authz/principal";
 import {
   landedCostGroup,
   leadTimeGroup,
-  warranty1Group,
-  warranty2Group,
+  warrantyGroup,
 } from "@/domains/quotes/batch-line-fill";
 
 // Real-Postgres proof of the Market Quote aggregate data paths (#87 / ADR-0026).
@@ -63,6 +62,8 @@ const completeLine: QuoteLineFields = {
   competitorBrand: "Caterpillar",
   price: 1250.5,
   quantityQuoted: 1,
+  // Warranty Offered? is required to submit (ADR-0037); a "complete" line answers it.
+  warrantyOffered: false,
 };
 
 async function seedItem(country: string, n: string): Promise<string> {
@@ -336,8 +337,11 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
 
     await batchUpdateDraftLines(researcherA, d.id, leadTimeGroup("3", "weeks"));
-    await batchUpdateDraftLines(researcherA, d.id, warranty1Group("12,000", "miles"));
-    await batchUpdateDraftLines(researcherA, d.id, warranty2Group("5", "years"));
+    await batchUpdateDraftLines(
+      researcherA,
+      d.id,
+      warrantyGroup("true", "12,000", "miles", "5", "years"),
+    );
 
     const lines = await prisma.quoteLine.findMany({
       where: { id: { in: [l1.id, l2.id] } },
@@ -345,6 +349,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
       select: {
         leadTimeValue: true,
         leadTimeUnit: true,
+        warrantyOffered: true,
         warranty1Value: true,
         warranty1Unit: true,
         warranty2Value: true,
@@ -355,6 +360,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
       expect({
         leadTimeValue: Number(line.leadTimeValue),
         leadTimeUnit: line.leadTimeUnit,
+        warrantyOffered: line.warrantyOffered,
         warranty1Value: Number(line.warranty1Value),
         warranty1Unit: line.warranty1Unit,
         warranty2Value: Number(line.warranty2Value),
@@ -362,12 +368,44 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
       }).toEqual({
         leadTimeValue: 3,
         leadTimeUnit: "weeks",
+        warrantyOffered: true,
         warranty1Value: 12000,
         warranty1Unit: "miles",
         warranty2Value: 5,
         warranty2Unit: "years",
       });
     }
+  });
+
+  it("Offered=No nulls all warranty pairs in one stamp (#129/ADR-0037)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    // First give the line a warranty, then stamp Offered=No — the pairs must clear.
+    await batchUpdateDraftLines(
+      researcherA,
+      d.id,
+      warrantyGroup("true", "3", "year", "", ""),
+    );
+    await batchUpdateDraftLines(researcherA, d.id, warrantyGroup("false", "", "", "", ""));
+
+    const after = await prisma.quoteLine.findUnique({
+      where: { id: l1.id },
+      select: {
+        warrantyOffered: true,
+        warranty1Value: true,
+        warranty1Unit: true,
+        warranty2Value: true,
+        warranty2Unit: true,
+      },
+    });
+    expect(after).toEqual({
+      warrantyOffered: false,
+      warranty1Value: null,
+      warranty1Unit: null,
+      warranty2Value: null,
+      warranty2Unit: null,
+    });
   });
 
   it("stamps a half-pair (value, no unit), leaving submit to catch it (#129)", async () => {
@@ -469,7 +507,8 @@ describe("ported per-line lifecycle", () => {
     const blocked = await submitMarketQuote(researcherA, d.id);
     expect(blocked.ok).toBe(false);
 
-    await updateDraftLine(researcherA, line.id, { price: 100, quantityQuoted: 1 });
+    // Also answer Warranty Offered? — required to submit (ADR-0037).
+    await updateDraftLine(researcherA, line.id, { price: 100, quantityQuoted: 1, warrantyOffered: false });
     const ok = await submitMarketQuote(researcherA, d.id);
     expect(ok.ok).toBe(true);
     // Submitting marks the parent document pending.
@@ -634,8 +673,8 @@ describe("audit + notification re-point to Market Quote / Quote Line (#92 / ADR-
     // Two lines with DIFFERENT prices, so the audited total is provably a SUM,
     // not a single line's figure (the per-quote → document-total amendment).
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
-    await addQuoteLine(researcherA, d.id, itemG1, { competitorBrand: "Caterpillar", price: 1000, quantityQuoted: 1 });
-    await addQuoteLine(researcherA, d.id, itemG2, { competitorBrand: "Caterpillar", price: 250.5, quantityQuoted: 1 });
+    await addQuoteLine(researcherA, d.id, itemG1, { competitorBrand: "Caterpillar", price: 1000, quantityQuoted: 1, warrantyOffered: false });
+    await addQuoteLine(researcherA, d.id, itemG2, { competitorBrand: "Caterpillar", price: 250.5, quantityQuoted: 1, warrantyOffered: false });
     await submitMarketQuote(researcherA, d.id); // document → pending
 
     const result = await setMarketQuoteManualRate(analyst, d.id, "1.10");

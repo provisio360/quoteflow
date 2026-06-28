@@ -40,7 +40,8 @@ const header: Omit<MarketQuoteHeaderFields, "dateQuoteReceived"> = {
   sourceLocality: "Munich",
   currency: "EUR",
 };
-const line = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1 };
+// warrantyOffered answered so the line clears the submit gate (ADR-0037).
+const line = { competitorBrand: "Caterpillar", price: 1250.5, quantityQuoted: 1, warrantyOffered: false };
 
 /** Create a one-line document dated `dateQuoteReceived` and submit it → pending. */
 async function submittedPending(dateQuoteReceived: Date): Promise<{ docId: string; lineId: string }> {
@@ -113,8 +114,8 @@ describe("fillPendingConversions", () => {
   it("pins ONE rate across a multi-line document, deriving each line from it", async () => {
     // Two items priced in one dealer document at different prices/quantities.
     const doc = await createMarketQuote(researcher, studyId, "Germany", { ...header, dateQuoteReceived: CLOSED_DATE });
-    const a = await addQuoteLine(researcher, doc.id, itemId, { competitorBrand: "Cat", price: 1250.5, quantityQuoted: 1 });
-    const b = await addQuoteLine(researcher, doc.id, itemId2, { competitorBrand: "Cat", price: 800, quantityQuoted: 4 });
+    const a = await addQuoteLine(researcher, doc.id, itemId, { competitorBrand: "Cat", price: 1250.5, quantityQuoted: 1, warrantyOffered: false });
+    const b = await addQuoteLine(researcher, doc.id, itemId2, { competitorBrand: "Cat", price: 800, quantityQuoted: 4, warrantyOffered: false });
     const submitted = await submitMarketQuote(researcher, doc.id);
     if (!submitted.ok) throw new Error("seed doc failed to submit");
     const provider = new InMemoryRateProvider().set("EUR", CLOSED_DATE, 1.08);

@@ -111,6 +111,9 @@ const draftLine = (lineId: string, over: Partial<SubmittableLine> = {}): Submitt
   competitorBrand: "Bosch",
   price: 1250.5,
   quantityQuoted: 2,
+  // Default the Warranty Offered? gate to Yes (ADR-0037) so the warranty pairs are
+  // coherence-checked exactly as before; the offered-gate cases drive it explicitly.
+  warrantyOffered: true,
   warranty1Value: null,
   warranty1Unit: null,
   warranty2Value: null,
@@ -288,6 +291,64 @@ describe("submitDocument: warranty pair-completeness (ADR-0034)", () => {
       ok: false,
       reason: "lines-incomplete",
       perLine: [{ lineId: "l1", missing: ["price", "warranty1Value"] }],
+    });
+  });
+});
+
+describe("submitDocument: Warranty Offered? gate (ADR-0037)", () => {
+  it("blocks a line whose Warranty Offered? is unanswered (null)", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { warrantyOffered: null })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["warrantyOffered"] }],
+    });
+  });
+
+  it("submits a line answered No, even if stale warranty pairs linger", () => {
+    // Offered = No short-circuits the pair coherence check — a residual half pair
+    // that would otherwise block is treated as absent (the save path nulls it).
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [
+        draftLine("l1", { warrantyOffered: false, warranty1Value: 3, warranty1Unit: null }),
+      ],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("submits a line answered Yes with both pairs empty — Yes does not force a value", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { warrantyOffered: true })],
+    });
+    expect(result).toEqual({ ok: true, toSubmit: ["l1"] });
+  });
+
+  it("still checks pair coherence under Yes (a half pair blocks)", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { warrantyOffered: true, warranty1Value: 3, warranty1Unit: null })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["warranty1Unit"] }],
+    });
+  });
+
+  it("reports an unanswered Offered alongside other missing required fields", () => {
+    const result = submitDocument({
+      header: completeHeader,
+      lines: [draftLine("l1", { price: null, warrantyOffered: null })],
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: "lines-incomplete",
+      perLine: [{ lineId: "l1", missing: ["price", "warrantyOffered"] }],
     });
   });
 });
