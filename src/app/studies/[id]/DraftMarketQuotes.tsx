@@ -14,18 +14,17 @@ import type {
 } from "@/lib/quotes/repository";
 import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
-import { warrantyUnitOptions } from "@/domains/quotes/warranty-unit";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
 import {
   stockStatusGroup,
   leadTimeGroup,
-  warranty1Group,
-  warranty2Group,
+  warrantyGroup,
   landedCostGroup,
   discountGroup,
 } from "@/domains/quotes/batch-line-fill";
 import { ValueUnitField } from "./ValueUnitField";
+import { WarrantyField } from "./WarrantyField";
 import { LandedCostField } from "./LandedCostField";
 import { DiscountField } from "./DiscountField";
 import {
@@ -58,6 +57,7 @@ const FIELD_LABEL: Record<string, string> = {
   competitorBrand: "competitor brand",
   price: "price",
   quantityQuoted: "quantity",
+  warrantyOffered: "warranty offered?",
   warranty1Value: "warranty 1 value",
   warranty1Unit: "warranty 1 unit",
   warranty2Value: "warranty 2 value",
@@ -79,6 +79,9 @@ function initialFromLine(
     competitorBrand: l.competitorBrand ?? "",
     price: l.price ?? "",
     quantityQuoted: l.quantityQuoted === null ? "" : String(l.quantityQuoted),
+    // Warranty Offered? round-trips as the dropdown's tri-state string ("true"/
+    // "false"/""): null ⇒ unanswered ⇒ blank option. The pairs ride under Yes.
+    warrantyOffered: l.warrantyOffered === null ? "" : String(l.warrantyOffered),
     warranty1Value: l.warranty1Value ?? "",
     warranty1Unit: l.warranty1Unit ?? "",
     warranty2Value: l.warranty2Value ?? "",
@@ -122,10 +125,11 @@ function initialFromHeader(g: DraftDocGroup): Record<string, string> {
  * EVERY Draft line of the document at once. Shown only at ≥2 Draft lines (one line
  * — just edit it). Each group has its own "Apply to all N draft lines" button (the
  * count is live — `draftCount` is the document's Draft-line array length). Tracer
- * groups: stock status (reusing `stockStatusOptions`) and the three value+unit pairs
- * — shipping lead time, warranty 1, warranty 2 (#129) — rendered via the shared
- * `ValueUnitField` so batch and per-line entry can never present a different field
- * shape. Per-group apply is total: leaving a half blank stamps blank (clears) on every
+ * groups: stock status (reusing `stockStatusOptions`) and the shipping lead time
+ * value+unit pair (#129) — rendered via the shared `ValueUnitField` — plus the warranty
+ * chain (ADR-0037): a Yes/No Offered? gate over both warranty pairs via the shared
+ * `WarrantyField`, where `warrantyGroup` owns gate-coherence (a No/blank clears all four
+ * pair fields). Per-group apply is total: leaving a half blank stamps blank (clears) on every
  * line; a half-filled pair is stampable and caught by the existing submit gate, not
  * here (ADR-0034/0035). The landed-cost group (#130) shows only when the document is
  * cross-border (`landedCostApplies` on the document's two countries — doc-uniform, so
@@ -151,10 +155,13 @@ function BatchFillPanel({
   const [stock, setStock] = useState("");
   const [leadTimeValue, setLeadTimeValue] = useState("");
   const [leadTimeUnit, setLeadTimeUnit] = useState("");
-  const [warranty1Value, setWarranty1Value] = useState("");
-  const [warranty1Unit, setWarranty1Unit] = useState("");
-  const [warranty2Value, setWarranty2Value] = useState("");
-  const [warranty2Unit, setWarranty2Unit] = useState("");
+  const [warrantyOffered, setWarrantyOffered] = useState("");
+  const [warranty, setWarranty] = useState({
+    warranty1Value: "",
+    warranty1Unit: "",
+    warranty2Value: "",
+    warranty2Unit: "",
+  });
   const [landedCostIncluded, setLandedCostIncluded] = useState("");
   const [landedCostNote, setLandedCostNote] = useState("");
   const [discountAvailable, setDiscountAvailable] = useState("");
@@ -215,32 +222,24 @@ function BatchFillPanel({
           {applyButton(leadTimeGroup(leadTimeValue, leadTimeUnit))}
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
-          <div style={{ flex: 1 }}>
-            <ValueUnitField
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+            <WarrantyField
               mode="controlled"
-              label="Warranty 1"
-              unitOptions={warrantyUnitOptions}
-              value={warranty1Value}
-              unit={warranty1Unit}
-              onValueChange={setWarranty1Value}
-              onUnitChange={setWarranty1Unit}
+              offered={warrantyOffered}
+              onOfferedChange={setWarrantyOffered}
+              values={warranty}
+              onChange={(field, next) => setWarranty((w) => ({ ...w, [field]: next }))}
             />
           </div>
-          {applyButton(warranty1Group(warranty1Value, warranty1Unit))}
-        </div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
-          <div style={{ flex: 1 }}>
-            <ValueUnitField
-              mode="controlled"
-              label="Warranty 2"
-              unitOptions={warrantyUnitOptions}
-              value={warranty2Value}
-              unit={warranty2Unit}
-              onValueChange={setWarranty2Value}
-              onUnitChange={setWarranty2Unit}
-            />
-          </div>
-          {applyButton(warranty2Group(warranty2Value, warranty2Unit))}
+          {applyButton(
+            warrantyGroup(
+              warrantyOffered,
+              warranty.warranty1Value,
+              warranty.warranty1Unit,
+              warranty.warranty2Value,
+              warranty.warranty2Unit,
+            ),
+          )}
         </div>
         {showLandedCost && (
           <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>

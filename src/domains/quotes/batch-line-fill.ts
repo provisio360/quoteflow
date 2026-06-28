@@ -16,12 +16,12 @@ export function stockStatusGroup(value: string): QuoteLineFields {
   return { stockStatus: value === "" ? null : value };
 }
 
-// A value+unit pair group (lead time, warranty 1, warranty 2 — #129/ADR-0036).
-// Each half is independent: empty ⇒ null (clear that half), so a half-filled pair
-// can be stamped and is caught by the existing document-submit gate (ADR-0034/0035),
-// not by batch. The value groups at rest unit-agnostically like a warranty value, so
-// strip the thousands commas before the bare number is stored (matching the single-
-// line `warrantyValue` parser in quote-line-form.ts).
+// A value+unit pair group (lead time, and each warranty pair under warrantyGroup —
+// #129/ADR-0036). Each half is independent: empty ⇒ null (clear that half), so a
+// half-filled pair can be stamped and is caught by the existing document-submit gate
+// (ADR-0034/0035), not by batch. The value groups at rest unit-agnostically like a
+// warranty value, so strip the thousands commas before the bare number is stored
+// (matching the single-line `warrantyValue` parser in quote-line-form.ts).
 function pairGroup(
   valueKey: keyof QuoteLineFields,
   unitKey: keyof QuoteLineFields,
@@ -40,14 +40,34 @@ export function leadTimeGroup(value: string, unit: string): QuoteLineFields {
   return pairGroup("leadTimeValue", "leadTimeUnit", value, unit);
 }
 
-/** The Warranty 1 pair (ADR-0034). */
-export function warranty1Group(value: string, unit: string): QuoteLineFields {
-  return pairGroup("warranty1Value", "warranty1Unit", value, unit);
-}
-
-/** The Warranty 2 pair (ADR-0034). */
-export function warranty2Group(value: string, unit: string): QuoteLineFields {
-  return pairGroup("warranty2Value", "warranty2Unit", value, unit);
+// The Warranty chain (ADR-0037): one Yes/No Offered? gate over BOTH value+unit pairs,
+// mirroring the discount chain's gate-owns-coherence shape. When Offered is not Yes,
+// the builder clears the gate (null when blank, else false) AND nulls all four pair
+// fields, so a "No" line can never carry a stale warranty — ignoring whatever the
+// panel inputs still held. Under Yes it stamps the gate true and each pair through
+// `pairGroup` (a half pair is stampable, caught by the submit gate, not here). The
+// editor and panel render this same single gate, so the two surfaces never diverge.
+export function warrantyGroup(
+  offered: string,
+  w1Value: string,
+  w1Unit: string,
+  w2Value: string,
+  w2Unit: string,
+): QuoteLineFields {
+  if (offered !== "true") {
+    return {
+      warrantyOffered: offered === "" ? null : false,
+      warranty1Value: null,
+      warranty1Unit: null,
+      warranty2Value: null,
+      warranty2Unit: null,
+    };
+  }
+  return {
+    warrantyOffered: true,
+    ...pairGroup("warranty1Value", "warranty1Unit", w1Value, w1Unit),
+    ...pairGroup("warranty2Value", "warranty2Unit", w2Value, w2Unit),
+  };
 }
 
 // The Landed Cost chain (#130 / ADR-0035): a tri-state Included? gating an optional

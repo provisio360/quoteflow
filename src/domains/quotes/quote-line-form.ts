@@ -29,15 +29,32 @@ export function lineFieldsFromForm(fd: FormData): QuoteLineFields {
     const v = String(fd.get(k) ?? "").trim();
     return v === "" ? undefined : v === "true";
   };
+  // Warranty Offered? gates the two pairs (ADR-0037). When it is not "Yes" the
+  // pairs are hidden and post nothing; we CLEAR them to null (not undefined) so a
+  // No/blank answer can never leave a stale warranty on the line — unlike the
+  // discount chain, warranty owns the coherence of its own DB state.
+  const warrantyOffered = bool("warrantyOffered");
+  const warrantyPairs =
+    warrantyOffered === true
+      ? {
+          warranty1Value: warrantyValue("warranty1Value"),
+          warranty1Unit: str(fd, "warranty1Unit"),
+          warranty2Value: warrantyValue("warranty2Value"),
+          warranty2Unit: str(fd, "warranty2Unit"),
+        }
+      : {
+          warranty1Value: null,
+          warranty1Unit: null,
+          warranty2Value: null,
+          warranty2Unit: null,
+        };
   return {
     competitorBrand: str(fd, "competitorBrand"),
     competitorPartNumber: str(fd, "competitorPartNumber"),
     competitorPartDescription: str(fd, "competitorPartDescription"),
     stockStatus: str(fd, "stockStatus"),
-    warranty1Value: warrantyValue("warranty1Value"),
-    warranty1Unit: str(fd, "warranty1Unit"),
-    warranty2Value: warrantyValue("warranty2Value"),
-    warranty2Unit: str(fd, "warranty2Unit"),
+    warrantyOffered,
+    ...warrantyPairs,
     // Shipping Lead Time (ADR-0035): value groups at rest unit-agnostically like a
     // warranty value; the unit is plain text. A half-filled pair is caught at submit.
     leadTimeValue: warrantyValue("leadTimeValue"),

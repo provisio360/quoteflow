@@ -467,7 +467,12 @@ model QuoteLine {
   leadTimeValue Decimal? @db.Decimal(14, 4)
   leadTimeUnit  String?
 
-  // Up to two warranties, each a value + unit pair.
+  // Warranty Offered? — the Yes/No gate over the two warranty pairs (ADR-0037).
+  // Tri-state nullable boolean (null = unanswered) like discountAvailable; the
+  // answer is required to submit and, when not Yes, the pairs below are cleared.
+  warrantyOffered Boolean?
+
+  // Up to two warranties, each a value + unit pair (shown only when Offered = Yes).
   warranty1Value Decimal? @db.Decimal(14, 4)
   warranty1Unit  String?
   warranty2Value Decimal? @db.Decimal(14, 4)
