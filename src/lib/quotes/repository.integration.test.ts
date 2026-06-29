@@ -240,6 +240,58 @@ describe("Country-pool + owner-only write gates", () => {
   });
 });
 
+describe("implicit Primary Researcher claim on first line-fill (ADR-0038)", () => {
+  async function primaryOf(itemId: string): Promise<string | null> {
+    const row = await prisma.benchmarkItem.findUnique({
+      where: { id: itemId },
+      select: { primaryResearcherId: true },
+    });
+    return row?.primaryResearcherId ?? null;
+  }
+
+  it("filing the first line for an unclaimed item makes the filer its Primary", async () => {
+    const item = await seedItem("Germany", `AC1-${randomUUID().slice(0, 8)}`);
+    expect(await primaryOf(item)).toBeNull();
+
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, item, completeLine);
+
+    expect(await primaryOf(item)).toBe(researcherA.userId);
+  });
+
+  it("a second filer on an already-claimed item does not take over the Primary", async () => {
+    const item = await seedItem("Germany", `AC2-${randomUUID().slice(0, 8)}`);
+    // A claims it by filing the first line.
+    const dA = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, dA.id, item, completeLine);
+    expect(await primaryOf(item)).toBe(researcherA.userId);
+
+    // B (also Germany pool) contributes a line on their own document — Primary stays A.
+    const dB = await createMarketQuote(researcherB, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherB, dB.id, item, completeLine);
+
+    expect(await primaryOf(item)).toBe(researcherA.userId);
+  });
+
+  it("contributing to a claimed item still records the contributor's authorship", async () => {
+    const item = await seedItem("Germany", `AC3-${randomUUID().slice(0, 8)}`);
+    const dA = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, dA.id, item, completeLine);
+
+    const dB = await createMarketQuote(researcherB, studyId, "Germany", completeHeader);
+    const bLine = await addQuoteLine(researcherB, dB.id, item, completeLine);
+
+    // Primary is unchanged (A) but B authored B's line — authorship is independent
+    // of the lead (rejection routing/notifications follow createdById, ADR-0038).
+    expect(await primaryOf(item)).toBe(researcherA.userId);
+    const row = await prisma.quoteLine.findUnique({
+      where: { id: bLine.id },
+      select: { createdById: true },
+    });
+    expect(row?.createdById).toBe(researcherB.userId);
+  });
+});
+
 describe("Draft privacy on the line (ADR-0011)", () => {
   it("hides another author's Draft but shows it once submitted", async () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);

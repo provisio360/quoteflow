@@ -334,7 +334,7 @@ export async function addQuoteLine(
       doc.country,
     );
     try {
-      return await tx.quoteLine.create({
+      const line = await tx.quoteLine.create({
         data: {
           marketQuoteId,
           benchmarkItemId,
@@ -348,6 +348,20 @@ export async function addQuoteLine(
         },
         select: { id: true, quoteLineNumber: true },
       });
+
+      // Claiming is implicit: doing the work (filing a line) makes the filer the
+      // item's Primary Researcher if it is still unclaimed (ADR-0038). First-come
+      // and no-takeover — the conditional write only matches while the lead is
+      // NULL, so a concurrent second filer's claim no-ops and the original Primary
+      // stands. Authorship (createdById) is independent and untouched. The
+      // cross-Country boundary is already held: the item shares the document's
+      // Country and the author was assignment-gated at createMarketQuote (ADR-0025).
+      await tx.benchmarkItem.updateMany({
+        where: { id: benchmarkItemId, primaryResearcherId: null },
+        data: { primaryResearcherId: principal.userId },
+      });
+
+      return line;
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new QuoteAccessError(
