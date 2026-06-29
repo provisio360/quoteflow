@@ -27,6 +27,7 @@ import { createStudy } from "@/lib/studies/repository";
 import { assignResearchers } from "@/lib/assignments/repository";
 import type { InternalPrincipal } from "@/domains/authz/principal";
 import {
+  batchStampFields,
   landedCostGroup,
   leadTimeGroup,
   warrantyGroup,
@@ -315,7 +316,7 @@ describe("seedMarketQuote — Quote Group Collect seam (ADR-0038, #140)", () => 
     });
     expect(lines).toHaveLength(2);
     expect(new Set(lines.map((l) => l.benchmarkItemId))).toEqual(new Set([i1, i2]));
-    // Batch-stamp is a later slice: lines start blank (no line fields) but valid Draft.
+    // With no batch stamp passed, lines start blank (no line fields) but valid Draft.
     expect(lines.every((l) => l.state === "Draft")).toBe(true);
     expect(lines.every((l) => l.price === null)).toBe(true);
   });
@@ -364,6 +365,135 @@ describe("seedMarketQuote — Quote Group Collect seam (ADR-0038, #140)", () => 
     const lines = await prisma.quoteLine.findMany({ where: { benchmarkItemId: gFresh } });
     expect(lines).toHaveLength(0);
     expect(await primaryOf(gFresh)).toBeNull();
+  });
+
+  // The dealer + batch step (ADR-0038, #141): the five Batch Line-Fill groups are
+  // captured once in the entry session's transient UI state and stamped onto EACH
+  // line at creation. Nothing new is persisted — the fields stay line-level.
+  const crossBorderHeader: MarketQuoteHeaderFields = { ...completeHeader, sourceCountry: "France" };
+
+  it("stamp-on-create: pre-stamps every seeded line with the batch fields", async () => {
+    const i1 = await seedItem("Germany", `SD5a-${randomUUID().slice(0, 8)}`);
+    const i2 = await seedItem("Germany", `SD5b-${randomUUID().slice(0, 8)}`);
+
+    // A cross-border (France dealer → Germany market) document, so Landed Cost applies.
+    const stamp = batchStampFields(
+      {
+        stockStatus: "In stock",
+        leadTimeValue: "3",
+        leadTimeUnit: "weeks",
+        warrantyOffered: "true",
+        warranty1Value: "12",
+        warranty1Unit: "months",
+        warranty2Value: "",
+        warranty2Unit: "",
+        landedCostIncluded: "true",
+        landedCostNote: "ships DDP",
+        discountAvailable: "false",
+        discountType: "",
+        discountApplied: "",
+        discountValue: "",
+      },
+      true,
+    );
+
+    const doc = await seedMarketQuote(researcherA, studyId, "Germany", crossBorderHeader, [i1, i2], stamp);
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { marketQuoteId: doc.id },
+      select: {
+        state: true,
+        stockStatus: true,
+        leadTimeValue: true,
+        leadTimeUnit: true,
+        warrantyOffered: true,
+        warranty1Value: true,
+        landedCostIncluded: true,
+        landedCostNote: true,
+        discountAvailable: true,
+      },
+    });
+    expect(lines).toHaveLength(2);
+    for (const l of lines) {
+      expect(l.state).toBe("Draft");
+      expect(l.stockStatus).toBe("In stock");
+      expect(l.leadTimeValue?.toString()).toBe("3");
+      expect(l.leadTimeUnit).toBe("weeks");
+      expect(l.warrantyOffered).toBe(true);
+      expect(l.warranty1Value?.toString()).toBe("12");
+      expect(l.landedCostIncluded).toBe(true);
+      expect(l.landedCostNote).toBe("ships DDP");
+      expect(l.discountAvailable).toBe(false);
+    }
+  });
+
+  it("domestic: never stamps Landed Cost even when its values are present", async () => {
+    const i1 = await seedItem("Germany", `SD6-${randomUUID().slice(0, 8)}`);
+    // Same-country (Germany dealer → Germany market): the merge drops Landed Cost.
+    const stamp = batchStampFields(
+      {
+        stockStatus: "In stock",
+        leadTimeValue: "",
+        leadTimeUnit: "",
+        warrantyOffered: "",
+        warranty1Value: "",
+        warranty1Unit: "",
+        warranty2Value: "",
+        warranty2Unit: "",
+        landedCostIncluded: "true",
+        landedCostNote: "ignored domestically",
+        discountAvailable: "",
+        discountType: "",
+        discountApplied: "",
+        discountValue: "",
+      },
+      false,
+    );
+
+    const doc = await seedMarketQuote(researcherA, studyId, "Germany", completeHeader, [i1], stamp);
+
+    const line = await prisma.quoteLine.findFirst({
+      where: { marketQuoteId: doc.id },
+      select: { stockStatus: true, landedCostIncluded: true, landedCostNote: true },
+    });
+    expect(line?.stockStatus).toBe("In stock");
+    expect(line?.landedCostIncluded).toBeNull();
+    expect(line?.landedCostNote).toBeNull();
+  });
+
+  it("stateless: a part added in a LATER session inherits no batch defaults (ADR-0036/0038)", async () => {
+    const i1 = await seedItem("Germany", `SD7a-${randomUUID().slice(0, 8)}`);
+    const later = await seedItem("Germany", `SD7b-${randomUUID().slice(0, 8)}`);
+    const stamp = batchStampFields(
+      {
+        stockStatus: "In stock",
+        leadTimeValue: "3",
+        leadTimeUnit: "weeks",
+        warrantyOffered: "",
+        warranty1Value: "",
+        warranty1Unit: "",
+        warranty2Value: "",
+        warranty2Unit: "",
+        landedCostIncluded: "",
+        landedCostNote: "",
+        discountAvailable: "",
+        discountType: "",
+        discountApplied: "",
+        discountValue: "",
+      },
+      false,
+    );
+
+    const doc = await seedMarketQuote(researcherA, studyId, "Germany", completeHeader, [i1], stamp);
+    // The batch held no document-level template, so a part added afterward is blank.
+    await addQuoteLine(researcherA, doc.id, later);
+
+    const lateLine = await prisma.quoteLine.findFirst({
+      where: { marketQuoteId: doc.id, benchmarkItemId: later },
+      select: { stockStatus: true, leadTimeValue: true },
+    });
+    expect(lateLine?.stockStatus).toBeNull();
+    expect(lateLine?.leadTimeValue).toBeNull();
   });
 });
 

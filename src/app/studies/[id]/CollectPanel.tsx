@@ -9,6 +9,13 @@ import {
   currencyOptions,
   defaultCurrencyOnCountryChange,
 } from "@/domains/quotes/quote-currency-picker";
+import { landedCostApplies } from "@/domains/quotes/landed-cost";
+import {
+  batchStampFields,
+  emptyBatchGroupValues,
+  type BatchGroupValues,
+} from "@/domains/quotes/batch-line-fill";
+import { BatchGroupFields } from "./BatchGroupFields";
 import type { QuoteGroup, QuoteGroupPart } from "@/domains/benchmark-items/researcher-view";
 
 // The Collect surface (ADR-0038, #140): the dealer-first researcher entry path —
@@ -76,6 +83,16 @@ function GroupBlock({
     () => new Set(group.members.map((m) => m.id)),
   );
   const [currency, setCurrency] = useState("");
+  // Dealer country is controlled so the batch step's Landed Cost group can show/hide
+  // reactively (cross-border ⇒ shown), mirroring the single-line entry form (ADR-0035).
+  const [sourceCountry, setSourceCountry] = useState("");
+  // The five Batch Line-Fill groups in transient UI state — stamped onto each line at
+  // creation (ADR-0038, #141). Nothing batch-level is persisted.
+  const [batch, setBatch] = useState<BatchGroupValues>(emptyBatchGroupValues);
+
+  // The market Country is `country` (the group's Country); the dealer Country is the
+  // live header select. Cross-border ⇒ Landed Cost applies, doc-uniform.
+  const showLandedCost = landedCostApplies(sourceCountry, country);
 
   function toggle(id: string) {
     setChecked((prev) => {
@@ -87,6 +104,7 @@ function GroupBlock({
   }
 
   function onDealerCountryChange(next: string) {
+    setSourceCountry(next);
     const applied = defaultCurrencyOnCountryChange(next);
     if (applied !== null) setCurrency(applied);
   }
@@ -100,8 +118,11 @@ function GroupBlock({
     }
     const fd = new FormData(event.currentTarget);
     setMessage(null);
+    // Merge the five batch groups into one document-uniform stamp; Landed Cost rides
+    // along only when cross-border (excluded otherwise, exactly as the field unmounts).
+    const fields = batchStampFields(batch, showLandedCost);
     startTransition(async () => {
-      const result = await seedMarketQuoteAction(studyId, country, headerFieldsFromForm(fd), itemIds);
+      const result = await seedMarketQuoteAction(studyId, country, headerFieldsFromForm(fd), itemIds, fields);
       if (!result.ok) {
         setMessage(result.message ?? "Couldn't start the quote.");
         return;
@@ -161,7 +182,7 @@ function GroupBlock({
               Dealer country *
               <select
                 name="sourceCountry"
-                defaultValue=""
+                value={sourceCountry}
                 onChange={(e) => onDealerCountryChange(e.target.value)}
                 style={input}
               >
@@ -189,6 +210,14 @@ function GroupBlock({
               <input name="dateQuoteReceived" type="date" style={input} />
             </label>
           </div>
+          <details style={{ fontSize: "0.85rem" }}>
+            <summary style={{ cursor: "pointer", color: "#555" }}>
+              Set for all parts (optional)
+            </summary>
+            <div style={{ marginTop: "0.4rem" }}>
+              <BatchGroupFields values={batch} onChange={setBatch} showLandedCost={showLandedCost} />
+            </div>
+          </details>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <button type="submit" disabled={pending}>
               {pending ? "Starting…" : `Start quote (${checked.size} part${checked.size === 1 ? "" : "s"})`}

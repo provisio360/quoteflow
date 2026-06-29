@@ -1,16 +1,70 @@
 import { describe, expect, it } from "vitest";
 import {
+  batchStampFields,
   discountGroup,
   landedCostGroup,
   leadTimeGroup,
   stockStatusGroup,
   warrantyGroup,
+  type BatchGroupValues,
 } from "./batch-line-fill";
 
 // Batch line-fill's per-group builders (#128 / ADR-0036). A per-group apply is
 // TOTAL: an empty select clears the field on every Draft line, so empty maps to
 // `null` (stamp blank) — deliberately UNLIKE the single-line entry parser
 // (`quote-line-form.ts`), where an empty field is `undefined` (omit, "don't touch").
+
+// `batchStampFields` is the merge the Quote Group Collect dealer step uses to
+// stamp the five groups onto EACH line at creation (ADR-0038, #141). It spreads the
+// same per-group builders (so the create-time stamp can never diverge from the
+// Drafts-surface panel), and includes the Landed Cost group ONLY when the document is
+// cross-border — exactly as the entry form unmounts the field domestically (ADR-0035).
+describe("batchStampFields", () => {
+  const filled: BatchGroupValues = {
+    stockStatus: "In stock",
+    leadTimeValue: "3",
+    leadTimeUnit: "weeks",
+    warrantyOffered: "true",
+    warranty1Value: "12",
+    warranty1Unit: "months",
+    warranty2Value: "",
+    warranty2Unit: "",
+    landedCostIncluded: "true",
+    landedCostNote: "ships DDP",
+    discountAvailable: "true",
+    discountType: "Volume",
+    discountApplied: "true",
+    discountValue: "15",
+  };
+
+  it("cross-border: spreads all five groups (landed cost included)", () => {
+    expect(batchStampFields(filled, true)).toEqual({
+      stockStatus: "In stock",
+      leadTimeValue: 3,
+      leadTimeUnit: "weeks",
+      warrantyOffered: true,
+      warranty1Value: 12,
+      warranty1Unit: "months",
+      warranty2Value: null,
+      warranty2Unit: null,
+      landedCostIncluded: true,
+      landedCostNote: "ships DDP",
+      discountAvailable: true,
+      discountType: "Volume",
+      discountApplied: true,
+      discountValue: 15,
+    });
+  });
+
+  it("domestic: omits the Landed Cost group entirely (never stamps it)", () => {
+    const stamped = batchStampFields(filled, false);
+    expect(stamped).not.toHaveProperty("landedCostIncluded");
+    expect(stamped).not.toHaveProperty("landedCostNote");
+    // The other four groups are unaffected.
+    expect(stamped.stockStatus).toBe("In stock");
+    expect(stamped.discountApplied).toBe(true);
+  });
+});
 
 describe("stockStatusGroup", () => {
   it("carries a chosen value through", () => {
