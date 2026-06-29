@@ -3,6 +3,7 @@ import {
   addLineCandidates,
   partitionSubmitReport,
   quoteAffordances,
+  quoteGroups,
   resolveResearcherEntries,
 } from "./researcher-view";
 import type { ResearcherItemView } from "@/lib/benchmark-items/repository";
@@ -79,6 +80,41 @@ describe("resolveResearcherEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].item.id).toBe("mine");
     expect(entries.some((e) => e.item.country === "France")).toBe(false);
+  });
+});
+
+describe("quoteGroups", () => {
+  // A Quote Group is a non-persisted ordinal lens (ADR-0038): within a Country there
+  // are max(Required Quotes) groups, and a part appears in slots 1 … its own Required
+  // Quotes. Caller scopes `items` to one Country first.
+  it("renders max(Required Quotes) groups; group N lists parts with Required Quotes >= N", () => {
+    const groups = quoteGroups([
+      item({ id: "a", requiredQuotes: 1 }),
+      item({ id: "b", requiredQuotes: 3 }),
+    ]);
+
+    expect(groups.map((g) => g.groupNumber)).toEqual([1, 2, 3]);
+    expect(groups[0].members.map((m) => m.id)).toEqual(["a", "b"]); // group 1: both
+    expect(groups[1].members.map((m) => m.id)).toEqual(["b"]); // group 2: only b (>=2)
+    expect(groups[2].members.map((m) => m.id)).toEqual(["b"]); // group 3: only b (>=3)
+  });
+
+  it("collapsed escape hatch lists the Country's off-slot parts (Required Quotes < N)", () => {
+    // A dealer carrying an off-slot part is never imprisoned by the slot (ADR-0038):
+    // group N's otherParts is everything below the slot.
+    const groups = quoteGroups([
+      item({ id: "a", requiredQuotes: 1 }),
+      item({ id: "b", requiredQuotes: 3 }),
+    ]);
+
+    expect(groups[0].otherParts).toEqual([]); // group 1: nothing is below slot 1
+    expect(groups[1].otherParts.map((m) => m.id)).toEqual(["a"]); // a (1) < 2
+    expect(groups[2].otherParts.map((m) => m.id)).toEqual(["a"]); // a (1) < 3
+  });
+
+  it("a Country with no parts above Required Quotes 0 yields no groups", () => {
+    expect(quoteGroups([])).toEqual([]);
+    expect(quoteGroups([item({ requiredQuotes: 0 })])).toEqual([]);
   });
 });
 

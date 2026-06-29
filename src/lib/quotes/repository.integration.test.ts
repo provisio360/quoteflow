@@ -4,6 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import {
   createMarketQuote,
   addQuoteLine,
+  seedMarketQuote,
   updateDraftLine,
   batchUpdateDraftLines,
   updateMarketQuote,
@@ -290,6 +291,79 @@ describe("implicit Primary Researcher claim on first line-fill (ADR-0038)", () =
       select: { createdById: true },
     });
     expect(row?.createdById).toBe(researcherB.userId);
+  });
+});
+
+describe("seedMarketQuote — Quote Group Collect seam (ADR-0038, #140)", () => {
+  async function primaryOf(itemId: string): Promise<string | null> {
+    const row = await prisma.benchmarkItem.findUnique({
+      where: { id: itemId },
+      select: { primaryResearcherId: true },
+    });
+    return row?.primaryResearcherId ?? null;
+  }
+
+  it("seeds one Draft Market Quote with one blank Draft line per selected part", async () => {
+    const i1 = await seedItem("Germany", `SD1a-${randomUUID().slice(0, 8)}`);
+    const i2 = await seedItem("Germany", `SD1b-${randomUUID().slice(0, 8)}`);
+
+    const doc = await seedMarketQuote(researcherA, studyId, "Germany", completeHeader, [i1, i2]);
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { marketQuoteId: doc.id },
+      select: { benchmarkItemId: true, state: true, price: true },
+    });
+    expect(lines).toHaveLength(2);
+    expect(new Set(lines.map((l) => l.benchmarkItemId))).toEqual(new Set([i1, i2]));
+    // Batch-stamp is a later slice: lines start blank (no line fields) but valid Draft.
+    expect(lines.every((l) => l.state === "Draft")).toBe(true);
+    expect(lines.every((l) => l.price === null)).toBe(true);
+  });
+
+  it("auto-claims each unclaimed selected part for the seeding researcher (#138)", async () => {
+    const i1 = await seedItem("Germany", `SD2a-${randomUUID().slice(0, 8)}`);
+    const i2 = await seedItem("Germany", `SD2b-${randomUUID().slice(0, 8)}`);
+    expect(await primaryOf(i1)).toBeNull();
+    expect(await primaryOf(i2)).toBeNull();
+
+    await seedMarketQuote(researcherA, studyId, "Germany", completeHeader, [i1, i2]);
+
+    expect(await primaryOf(i1)).toBe(researcherA.userId);
+    expect(await primaryOf(i2)).toBe(researcherA.userId);
+  });
+
+  it("does not take over a part a peer already leads (no-takeover); still files the line", async () => {
+    const item = await seedItem("Germany", `SD3-${randomUUID().slice(0, 8)}`);
+    // A claims it first.
+    const dA = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, dA.id, item, completeLine);
+    expect(await primaryOf(item)).toBe(researcherA.userId);
+
+    // B seeds a Collect document including the same part — Primary stays A, line still files.
+    const doc = await seedMarketQuote(researcherB, studyId, "Germany", completeHeader, [item]);
+
+    expect(await primaryOf(item)).toBe(researcherA.userId);
+    const line = await prisma.quoteLine.findFirst({
+      where: { marketQuoteId: doc.id, benchmarkItemId: item },
+      select: { createdById: true },
+    });
+    expect(line?.createdById).toBe(researcherB.userId);
+  });
+
+  it("enforces the cross-Country boundary and is atomic — an off-Country part rejects the whole seed (ADR-0025)", async () => {
+    // A fresh Germany part precedes itemF1 in the list, so its line is created and the
+    // France part then fails the same-Country gate — proving the rollback.
+    const gFresh = await seedItem("Germany", `SD4-${randomUUID().slice(0, 8)}`);
+
+    // researcherA is in the France pool too, but itemF1 cannot join a GERMANY document.
+    await expect(
+      seedMarketQuote(researcherA, studyId, "Germany", completeHeader, [gFresh, itemF1]),
+    ).rejects.toThrow(QuoteAccessError);
+
+    // Atomic: the whole document rolled back — the fresh part's line never persisted.
+    const lines = await prisma.quoteLine.findMany({ where: { benchmarkItemId: gFresh } });
+    expect(lines).toHaveLength(0);
+    expect(await primaryOf(gFresh)).toBeNull();
   });
 });
 

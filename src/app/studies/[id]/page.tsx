@@ -35,8 +35,10 @@ import { CountryAssignRow } from "./CountryAssignRow";
 import { ResearcherItem } from "./ResearcherItem";
 import { DraftMarketQuotes, type DraftDocGroup } from "./DraftMarketQuotes";
 import { RejectedLines } from "./RejectedLines";
+import { CollectPanel } from "./CollectPanel";
 import {
   addLineCandidates,
+  quoteGroups,
   resolveResearcherEntries,
   type GuidanceFields,
   type ItemMode,
@@ -160,6 +162,18 @@ export default async function StudyDetailPage({
             </ul>
           )}
         </section>
+      )}
+
+      {mayResearch && (
+        <CollectPanel
+          studyId={study.id}
+          countries={research.map((g) => ({
+            country: g.country,
+            // The Quote Group lens is computed per Country from its parts' Required
+            // Quotes (ADR-0038) — a non-persisted ordinal view, no new read needed.
+            groups: quoteGroups(g.items.map((e) => e.item)),
+          }))}
+        />
       )}
 
       {mayResearch && <DraftMarketQuotes groups={draftDocs} />}

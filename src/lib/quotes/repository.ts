@@ -239,47 +239,86 @@ export async function createMarketQuote(
   country: string,
   header: MarketQuoteHeaderFields = {},
 ): Promise<{ readonly id: string; readonly marketQuoteNumber: number }> {
+  return withTenant(principal, (tx) =>
+    createMarketQuoteTx(tx, principal, studyId, country, header),
+  );
+}
+
+/** The transactional body of {@link createMarketQuote}, factored out so the
+ *  multi-line Quote Group seed ({@link seedMarketQuote}) can compose it with
+ *  {@link addQuoteLineTx} inside ONE transaction (ADR-0038, #140) — keeping the
+ *  Researcher-role, study-exists and Country-pool gates single-sourced. */
+async function createMarketQuoteTx(
+  tx: TenantClient,
+  principal: Principal,
+  studyId: string,
+  country: string,
+  header: MarketQuoteHeaderFields,
+): Promise<{ readonly id: string; readonly marketQuoteNumber: number }> {
   if (!canCreateQuote(principal)) {
     throw new QuoteAccessError("Only Researchers may create a Market Quote");
   }
   validateHeaderWrite(header);
 
-  return withTenant(principal, async (tx) => {
-    const study = await tx.study.findUnique({
-      where: { id: studyId },
-      select: { id: true, clientId: true },
-    });
-    if (study === null) {
-      throw new QuoteAccessError(`Study not found: ${studyId}`);
-    }
+  const study = await tx.study.findUnique({
+    where: { id: studyId },
+    select: { id: true, clientId: true },
+  });
+  if (study === null) {
+    throw new QuoteAccessError(`Study not found: ${studyId}`);
+  }
 
-    const membership = await tx.countryAssignment.findFirst({
-      where: { studyId, country, researcherId: principal.userId },
-      select: { id: true },
-    });
-    if (membership === null) {
-      throw new QuoteAccessError(
-        `Not assigned to Country "${country}" — ask the Engagement Manager`,
-      );
-    }
-
-    const marketQuoteNumber = await allocateMarketQuoteNumber(
-      tx,
-      studyId,
-      study.clientId,
-      country,
+  const membership = await tx.countryAssignment.findFirst({
+    where: { studyId, country, researcherId: principal.userId },
+    select: { id: true },
+  });
+  if (membership === null) {
+    throw new QuoteAccessError(
+      `Not assigned to Country "${country}" — ask the Engagement Manager`,
     );
-    return tx.marketQuote.create({
-      data: {
-        studyId,
-        clientId: study.clientId,
-        country,
-        marketQuoteNumber,
-        createdById: principal.userId,
-        ...toData(header),
-      },
-      select: { id: true, marketQuoteNumber: true },
-    });
+  }
+
+  const marketQuoteNumber = await allocateMarketQuoteNumber(
+    tx,
+    studyId,
+    study.clientId,
+    country,
+  );
+  return tx.marketQuote.create({
+    data: {
+      studyId,
+      clientId: study.clientId,
+      country,
+      marketQuoteNumber,
+      createdById: principal.userId,
+      ...toData(header),
+    },
+    select: { id: true, marketQuoteNumber: true },
+  });
+}
+
+/**
+ * Seed a new Draft Market Quote from a Quote Group selection: the dealer document
+ * plus one blank Draft [[Quote Line]] per selected Benchmark Item, all in ONE
+ * transaction so a mid-loop failure rolls the whole document back (no half-seeded
+ * document, ADR-0038). The group number is a non-persisted lens — nothing about the
+ * grouping is stored; only the Market Quote and its lines are. Filing each line
+ * auto-claims its unclaimed part first-come via {@link addQuoteLineTx} (#138). Lines
+ * start blank — the transient batch stamp-on-create is a separate slice.
+ */
+export async function seedMarketQuote(
+  principal: Principal,
+  studyId: string,
+  country: string,
+  header: MarketQuoteHeaderFields,
+  itemIds: readonly string[],
+): Promise<{ readonly id: string; readonly marketQuoteNumber: number }> {
+  return withTenant(principal, async (tx) => {
+    const doc = await createMarketQuoteTx(tx, principal, studyId, country, header);
+    for (const itemId of itemIds) {
+      await addQuoteLineTx(tx, principal, doc.id, itemId, {});
+    }
+    return doc;
   });
 }
 
@@ -298,11 +337,26 @@ export async function addQuoteLine(
   benchmarkItemId: string,
   fields: QuoteLineFields = {},
 ): Promise<{ readonly id: string; readonly quoteLineNumber: number }> {
+  return withTenant(principal, (tx) =>
+    addQuoteLineTx(tx, principal, marketQuoteId, benchmarkItemId, fields),
+  );
+}
+
+/** The transactional body of {@link addQuoteLine}, factored out so the Quote Group
+ *  seed ({@link seedMarketQuote}) can file many lines in one transaction — the
+ *  implicit first-come Primary-Researcher claim (#138) thus lives in ONE place. */
+async function addQuoteLineTx(
+  tx: TenantClient,
+  principal: Principal,
+  marketQuoteId: string,
+  benchmarkItemId: string,
+  fields: QuoteLineFields,
+): Promise<{ readonly id: string; readonly quoteLineNumber: number }> {
   if (!canCreateQuote(principal)) {
     throw new QuoteAccessError("Only Researchers may add a Quote Line");
   }
 
-  return withTenant(principal, async (tx) => {
+  {
     const doc = await tx.marketQuote.findUnique({
       where: { id: marketQuoteId },
       select: { id: true, studyId: true, country: true, clientId: true, createdById: true },
@@ -370,7 +424,7 @@ export async function addQuoteLine(
       }
       throw error;
     }
-  });
+  }
 }
 
 /**

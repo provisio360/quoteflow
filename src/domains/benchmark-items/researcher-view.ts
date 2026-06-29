@@ -59,6 +59,50 @@ export function addLineCandidates(
     .map((item) => ({ id: item.id, label: `${item.clientItemNumber} ${item.itemDescription}` }));
 }
 
+/** A part as the Quote Group part-picker lists it: the picker label fields. */
+export interface QuoteGroupPart {
+  readonly id: string;
+  readonly clientItemNumber: string;
+  readonly itemDescription: string;
+}
+
+/** One Quote Group: an ordinal dealer-document slot (ADR-0038). `members` are the
+ *  parts in this slot's position membership (Required Quotes >= N); `otherParts` is
+ *  the collapsed escape hatch — the Country's off-slot parts (Required Quotes < N) a
+ *  dealer carrying one is never blocked from adding. The number is a bucket label,
+ *  never persisted on the seeded Market Quote. */
+export interface QuoteGroup {
+  readonly groupNumber: number;
+  readonly members: readonly QuoteGroupPart[];
+  readonly otherParts: readonly QuoteGroupPart[];
+}
+
+/**
+ * Build the Quote Group lens for ONE Country's Benchmark Items (caller scopes the
+ * read to a single Country). A non-persisted ordinal lens (ADR-0038): there are
+ * `max(Required Quotes)` groups, and group N lists the parts whose Required Quotes
+ * reaches N (`>= N`), so later groups are sparser and group 1 the fullest. A Country
+ * with no parts (or every part at Required Quotes 0) yields no groups. The group
+ * number labels a slot and is never stored on the Market Quote a group seeds.
+ */
+export function quoteGroups(items: readonly GuidanceFields[]): QuoteGroup[] {
+  const maxRequired = items.reduce((max, item) => Math.max(max, item.requiredQuotes), 0);
+  const part = (i: GuidanceFields): QuoteGroupPart => ({
+    id: i.id,
+    clientItemNumber: i.clientItemNumber,
+    itemDescription: i.itemDescription,
+  });
+  const groups: QuoteGroup[] = [];
+  for (let n = 1; n <= maxRequired; n += 1) {
+    groups.push({
+      groupNumber: n,
+      members: items.filter((i) => i.requiredQuotes >= n).map(part),
+      otherParts: items.filter((i) => i.requiredQuotes < n).map(part),
+    });
+  }
+  return groups;
+}
+
 /** The Rejected-line affordances a researcher has on a single Quote in the item
  *  view (Draft mutation + Submit moved to the document panel, #97/Q8). */
 export interface QuoteAffordances {
