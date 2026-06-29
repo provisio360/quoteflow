@@ -27,3 +27,6 @@ build/
 coverage/
 *.log
 *.tsbuildinfo
+
+# graphify knowledge-graph output — regenerated, never committed
+graphify-out/
