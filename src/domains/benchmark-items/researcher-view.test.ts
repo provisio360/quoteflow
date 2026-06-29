@@ -137,28 +137,34 @@ describe("partitionSubmitReport", () => {
 });
 
 describe("addLineCandidates", () => {
-  const me = "user-me";
-
-  it("offers my-led items in the doc's country that the doc does not already cover", () => {
+  // Pre-claiming is gone (ADR-0038): the candidate set is no longer primary-only.
+  // Any part in the document's Country the doc does not already cover is offerable;
+  // filing the line auto-claims an unclaimed part. So the filter is Country +
+  // not-already-on-this-document, nothing about who leads it.
+  it("offers items in the doc's country that the doc does not already cover, whoever leads them", () => {
     const items = [
-      item({ id: "pump", clientItemNumber: "CPN-001", itemDescription: "pump", primaryResearcherId: me, country: "Germany" }),
-      item({ id: "valve", clientItemNumber: "CPN-002", itemDescription: "valve", primaryResearcherId: me, country: "Germany" }),
+      item({ id: "pump", clientItemNumber: "CPN-001", itemDescription: "pump", primaryResearcherId: "user-me", country: "Germany" }),
+      item({ id: "valve", clientItemNumber: "CPN-002", itemDescription: "valve", primaryResearcherId: "user-other", country: "Germany" }),
+      item({ id: "gasket", clientItemNumber: "CPN-003", itemDescription: "gasket", primaryResearcherId: null, country: "Germany" }),
     ];
-    // The doc already has a line for the pump → only the valve remains.
-    const candidates = addLineCandidates(items, "Germany", new Set(["pump"]), me);
+    // The doc already has a line for the pump → the peer-led valve and the
+    // unclaimed gasket both remain offerable.
+    const candidates = addLineCandidates(items, "Germany", new Set(["pump"]));
 
-    expect(candidates).toEqual([{ id: "valve", label: "CPN-002 valve" }]);
+    expect(candidates).toEqual([
+      { id: "valve", label: "CPN-002 valve" },
+      { id: "gasket", label: "CPN-003 gasket" },
+    ]);
   });
 
-  it("excludes items I do not lead and items in another country", () => {
+  it("excludes items in another country", () => {
     const items = [
-      item({ id: "mine", primaryResearcherId: me, country: "Germany" }),
-      item({ id: "peer", primaryResearcherId: "user-other", country: "Germany" }),
-      item({ id: "elsewhere", primaryResearcherId: me, country: "France" }),
+      item({ id: "here", primaryResearcherId: null, country: "Germany" }),
+      item({ id: "elsewhere", primaryResearcherId: "user-me", country: "France" }),
     ];
-    const candidates = addLineCandidates(items, "Germany", new Set(), me);
+    const candidates = addLineCandidates(items, "Germany", new Set());
 
-    expect(candidates.map((c) => c.id)).toEqual(["mine"]);
+    expect(candidates.map((c) => c.id)).toEqual(["here"]);
   });
 });
 

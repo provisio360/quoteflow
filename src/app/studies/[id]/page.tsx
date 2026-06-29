@@ -296,9 +296,9 @@ async function buildResearcherView(
 }
 
 /** The researcher's own Draft Market Quotes for the document-grouped submit panel
- *  (#97), each annotated with the items a new line may be added for — the items
- *  they lead in the document's Country that the document does not already cover
- *  (the pure `addLineCandidates`). */
+ *  (#97), each annotated with the items a new line may be added for — every part
+ *  in the document's Country that the document does not already cover (filing the
+ *  line auto-claims an unclaimed part, ADR-0038; the pure `addLineCandidates`). */
 async function buildDraftDocGroups(
   principal: Parameters<typeof listDraftMarketQuotesForResearcher>[0] & { userId: string },
   studyId: string,
@@ -309,11 +309,6 @@ async function buildDraftDocGroups(
   ]);
   return groups.map((g) => ({
     ...g,
-    addCandidates: addLineCandidates(
-      items,
-      g.country,
-      new Set(g.itemIdsOnDocument),
-      principal.userId,
-    ),
+    addCandidates: addLineCandidates(items, g.country, new Set(g.itemIdsOnDocument)),
   }));
 }

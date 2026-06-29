@@ -40,24 +40,22 @@ export interface AddLineCandidate {
 
 /**
  * The items a researcher may add a new [[Quote Line]] for to an existing Market
- * Quote: the items they lead (Primary) in the document's Country that the document
- * does not already cover (one line per Benchmark Item, #97/Q7). A line for an item
- * already on the document is barred by the `@@unique(marketQuoteId, benchmarkItemId)`
- * backstop, so it is never offered.
+ * Quote: every Benchmark Item in the document's Country that the document does not
+ * already cover (one line per Benchmark Item, #97/Q7) — NOT filtered to items the
+ * researcher already leads. Pre-claiming is gone (ADR-0038): filing the first line
+ * for an unclaimed item auto-claims it, so the picker offers peer-led and unclaimed
+ * parts alike. A line for an item already on the document is barred by the
+ * `@@unique(marketQuoteId, benchmarkItemId)` backstop, so it is never offered. The
+ * Country filter is the cross-boundary backstop (ADR-0025): callers already scope
+ * `items` to the researcher's assigned (study, country) pairs.
  */
 export function addLineCandidates(
   items: readonly ResearcherItemView[],
   docCountry: string,
   itemIdsOnDoc: ReadonlySet<string>,
-  userId: string,
 ): AddLineCandidate[] {
   return items
-    .filter(
-      (item) =>
-        item.primaryResearcherId === userId &&
-        item.country === docCountry &&
-        !itemIdsOnDoc.has(item.id),
-    )
+    .filter((item) => item.country === docCountry && !itemIdsOnDoc.has(item.id))
     .map((item) => ({ id: item.id, label: `${item.clientItemNumber} ${item.itemDescription}` }));
 }
 
