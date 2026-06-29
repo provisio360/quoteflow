@@ -6,7 +6,7 @@ import { getStudyDetail } from "@/lib/studies/repository";
 import {
   canImportBenchmarkItems,
   canMaintainClientPrice,
-  canSelfAssignBenchmarkItem,
+  canResearch,
   canViewClientPrice,
 } from "@/domains/authz/benchmark-items";
 import { canAssignResearchers } from "@/domains/authz/assignments";
@@ -21,11 +21,9 @@ import {
   listAssignmentsForStudy,
 } from "@/lib/assignments/repository";
 import {
-  listLinesForItem,
   listDraftMarketQuotesForResearcher,
   listRejectedLinesForResearcher,
   countPartProgressForResearcher,
-  type QuoteLineView,
 } from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
 import { canReleaseCountry } from "@/domains/authz/release";
@@ -33,16 +31,14 @@ import { listCountryReleaseStatus } from "@/lib/release/repository";
 import { ClientPriceList } from "./ClientPriceList";
 import { BenchmarkComparison } from "./BenchmarkComparison";
 import { CountryAssignRow } from "./CountryAssignRow";
-import { ResearcherItem } from "./ResearcherItem";
 import { DraftMarketQuotes, type DraftDocGroup } from "./DraftMarketQuotes";
 import { RejectedLines } from "./RejectedLines";
 import { CollectPanel } from "./CollectPanel";
 import {
   addLineCandidates,
   quoteGroups,
-  resolveResearcherEntries,
-  type GuidanceFields,
-  type ItemMode,
+  researcherCountryGroups,
+  type ResearcherCountryGroup,
 } from "@/domains/benchmark-items/researcher-view";
 import { CountryReleaseRow } from "./CountryReleaseRow";
 
@@ -91,9 +87,10 @@ export default async function StudyDetailPage({
   const mayAssign = canAssignResearchers(principal);
   const staffing = mayAssign ? await buildStaffing(principal, study.id) : [];
 
-  // Researcher work surface (#7/#8): the study's items grouped by Country, with a
-  // per-item mode (mine / claimable / claimed / locked). Client Price never loaded.
-  const mayResearch = canSelfAssignBenchmarkItem(principal);
+  // Researcher work surface: the study's items grouped by Country, scoped to the
+  // researcher's assigned Countries (ADR-0025). Client Price is never loaded. Feeds
+  // the Collect lens (ADR-0038); the per-part tri-mode grid is retired (#143).
+  const mayResearch = canResearch(principal);
   const research = mayResearch ? await buildResearcherView(principal, study.id) : [];
   // Per-part layered progress for the Collect lens (#142): all-author approved
   // n/N + the researcher's own in-flight tally, keyed per Benchmark Item. A
@@ -178,7 +175,7 @@ export default async function StudyDetailPage({
             country: g.country,
             // The Quote Group lens is computed per Country from its parts' Required
             // Quotes (ADR-0038); each part carries its layered progress (#142).
-            groups: quoteGroups(g.items.map((e) => e.item), partProgress),
+            groups: quoteGroups(g.items, partProgress),
           }))}
         />
       )}
@@ -186,33 +183,6 @@ export default async function StudyDetailPage({
       {mayResearch && <DraftMarketQuotes groups={draftDocs} />}
 
       {mayResearch && <RejectedLines lines={rejectedLines} />}
-
-      {mayResearch && (
-        <section style={{ marginTop: "2rem" }}>
-          <h2 style={{ fontSize: "1.1rem" }}>Your quote collection</h2>
-          {research.length === 0 ? (
-            <p style={{ color: "#777" }}>No Benchmark Items yet.</p>
-          ) : (
-            research.map((group) => (
-              <div key={group.country} style={{ marginTop: "1rem" }}>
-                <h3 style={{ fontSize: "1rem", margin: "0 0 0.25rem" }}>{group.country}</h3>
-                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                  {group.items.map((entry) => (
-                    <ResearcherItem
-                      key={entry.item.id}
-                      item={entry.item}
-                      mode={entry.mode}
-                      studyId={study.id}
-                      quotes={entry.quotes}
-                      myUserId={principal.userId}
-                    />
-                  ))}
-                </ul>
-              </div>
-            ))
-          )}
-        </section>
-      )}
 
       {mayRelease && (
         <section style={{ marginTop: "2rem" }}>
@@ -277,21 +247,15 @@ async function buildStaffing(
   });
 }
 
-type ResearcherItemEntry = {
-  item: GuidanceFields;
-  mode: ItemMode;
-  quotes: QuoteLineView[];
-};
-type ResearcherGroup = { country: string; items: ResearcherItemEntry[] };
-
-/** The researcher's per-Country items with their work mode and (for owned items)
- *  their quotes. Mode resolution + guidance threading is the pure
- *  `resolveResearcherEntries`; this layer adds the IO: loading the items and
- *  assignments, then attaching quotes for the items that are mine. */
+/** The researcher's Benchmark Items grouped by their assigned Countries, carrying
+ *  the guidance the Collect lens needs (ADR-0038). The pure grouping + the ADR-0025
+ *  backstop is `researcherCountryGroups`; this layer adds the IO (loading the items
+ *  and assignments). No quotes are attached and no work mode is resolved — the
+ *  retired per-part grid was the only consumer of those (#143). */
 async function buildResearcherView(
   principal: Parameters<typeof listBenchmarkItemsForResearcher>[0] & { userId: string },
   studyId: string,
-): Promise<ResearcherGroup[]> {
+): Promise<ResearcherCountryGroup[]> {
   const [items, assignments] = await Promise.all([
     listBenchmarkItemsForResearcher(principal, studyId),
     listAssignmentsForResearcher(principal),
@@ -299,28 +263,7 @@ async function buildResearcherView(
   const myCountries = new Set(
     assignments.filter((a) => a.studyId === studyId).map((a) => a.country),
   );
-
-  // Attach quotes for items I lead (mine) AND items a peer leads (claimed): on a
-  // claimed item the pool read surfaces the peer's non-Draft quotes (#68). The
-  // pool-read filter already enforces Draft privacy (ADR-0011) and never carries
-  // Client Price (ADR-0003). claimable/locked items show no quotes.
-  const entries: ResearcherItemEntry[] = await Promise.all(
-    resolveResearcherEntries(items, myCountries, principal.userId).map(async (e) => ({
-      ...e,
-      quotes:
-        e.mode === "mine" || e.mode === "claimed"
-          ? await listLinesForItem(principal, e.item.id)
-          : [],
-    })),
-  );
-
-  const byCountry = new Map<string, ResearcherItemEntry[]>();
-  for (const e of entries) {
-    const list = byCountry.get(e.item.country) ?? [];
-    list.push(e);
-    byCountry.set(e.item.country, list);
-  }
-  return [...byCountry.entries()].map(([country, list]) => ({ country, items: list }));
+  return researcherCountryGroups(items, myCountries);
 }
 
 /** The researcher's own Draft Market Quotes for the document-grouped submit panel

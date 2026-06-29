@@ -1186,6 +1186,30 @@ describe("listRejectedLinesForResearcher (#139 — Needs-attention surface)", ()
     expect((await listRejectedLinesForResearcher(researcherA, studyId)).some((r) => r.lineId === id)).toBe(false);
   });
 
+  // The cutover AC (#143 / ADR-0038): the two researcher surfaces hand a line off.
+  // A Rejected line lives in Needs attention; revising it (the author's only move
+  // out of Rejected) moves it OUT of Needs attention and back INTO Drafts as a Draft
+  // line — one spec naming the whole handoff the three surfaces depend on.
+  it("revising a Rejected line moves it from Needs attention into Drafts", async () => {
+    const { id } = await rejectedLine(researcherA, itemG1, "Fix and resubmit.");
+
+    // Before revise: in Needs attention, NOT a Draft line in Drafts.
+    expect(
+      (await listRejectedLinesForResearcher(researcherA, studyId)).some((r) => r.lineId === id),
+    ).toBe(true);
+    const draftIds = (groups: Awaited<ReturnType<typeof listDraftMarketQuotesForResearcher>>) =>
+      new Set(groups.flatMap((g) => g.lines.map((l) => l.lineId)));
+    expect(draftIds(await listDraftMarketQuotesForResearcher(researcherA, studyId)).has(id)).toBe(false);
+
+    await reviseLine(researcherA, id); // Rejected → Draft — the author's only move out
+
+    // After revise: gone from Needs attention, present as a Draft line in Drafts.
+    expect(
+      (await listRejectedLinesForResearcher(researcherA, studyId)).some((r) => r.lineId === id),
+    ).toBe(false);
+    expect(draftIds(await listDraftMarketQuotesForResearcher(researcherA, studyId)).has(id)).toBe(true);
+  });
+
   it("orders newest analyst verdict first (reviewedAt desc)", async () => {
     const first = await rejectedLine(researcherA, itemG1, "First.");
     const second = await rejectedLine(researcherA, itemG2, "Second.");

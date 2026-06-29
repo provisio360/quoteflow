@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { requirePrincipal } from "@/lib/identity/current-principal";
 import {
-  createMarketQuote,
   addQuoteLine,
   seedMarketQuote,
   updateDraftLine,
@@ -37,24 +36,11 @@ export type SubmitMarketQuoteActionResult =
 // gate, Country-pool check, atomic numbering, owner-only writes and the lifecycle
 // transition. This layer adds no domain logic.
 
+// The new-document result the Collect seed returns: the new Market Quote's id and
+// its allocated Market Quote Number, or an access failure surfaced as a message.
 export type CreateMarketQuoteActionResult =
   | { readonly ok: true; readonly id: string; readonly marketQuoteNumber: number }
   | { readonly ok: false; readonly message: string };
-
-export async function createMarketQuoteAction(
-  studyId: string,
-  country: string,
-  header: MarketQuoteHeaderFields,
-): Promise<CreateMarketQuoteActionResult> {
-  const principal = await requirePrincipal();
-  try {
-    const { id, marketQuoteNumber } = await createMarketQuote(principal, studyId, country, header);
-    return { ok: true, id, marketQuoteNumber };
-  } catch (error) {
-    if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
-    throw error;
-  }
-}
 
 /** Seed a new Market Quote from a Quote Group selection (ADR-0038, #140/#141): one
  *  document + one Draft line per selected part, atomically. The dealer + batch step's

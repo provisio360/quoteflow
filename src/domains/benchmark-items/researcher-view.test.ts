@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   addLineCandidates,
   partitionSubmitReport,
-  quoteAffordances,
   quoteGroups,
-  resolveResearcherEntries,
+  researcherCountryGroups,
 } from "./researcher-view";
 import type { ResearcherItemView } from "@/lib/benchmark-items/repository";
 import type { IncompleteLine } from "@/domains/quotes/lifecycle";
@@ -27,59 +26,36 @@ function item(overrides: Partial<ResearcherItemView> = {}): ResearcherItemView {
   };
 }
 
-describe("resolveResearcherEntries", () => {
-  it("own claim resolves to mine and carries all guidance fields", () => {
-    const me = "user-me";
-    // Being Primary requires a Country Assignment (self-assign enforces it), so a
-    // 'mine' item is always in an assigned Country.
-    const entries = resolveResearcherEntries(
-      [item({ primaryResearcherId: me, country: "Germany" })],
-      new Set(["Germany"]),
-      me,
-    );
-
-    expect(entries).toHaveLength(1);
-    const [entry] = entries;
-    expect(entry.mode).toBe("mine");
-    // The defect (#66): these guidance fields were dropped before the UI.
-    expect(entry.item.configurationComment).toBe("230V variant");
-    expect(entry.item.quantity).toBe(10);
-    expect(entry.item.clientSourceUnit).toBe("Model X");
-  });
-
-  it("another researcher's claim resolves to claimed", () => {
-    const entries = resolveResearcherEntries(
-      [item({ primaryResearcherId: "user-other" })],
-      new Set(["Germany"]),
-      "user-me",
-    );
-    expect(entries[0].mode).toBe("claimed");
-  });
-
-  it("unclaimed item in my Country pool resolves to claimable", () => {
-    const entries = resolveResearcherEntries(
-      [item({ primaryResearcherId: null, country: "Germany" })],
-      new Set(["Germany"]),
-      "user-me",
-    );
-    expect(entries[0].mode).toBe("claimable");
-  });
-
-  it("an item outside my assigned Countries is DROPPED, never returned (no `locked` mode — ADR-0025)", () => {
-    // The query is the primary wall (unassigned items are not loaded); this is the
-    // app-layer backstop — a stray unassigned item is filtered out, not rendered
-    // as a 'locked' row that would leak its country/description across the boundary.
-    const entries = resolveResearcherEntries(
+describe("researcherCountryGroups", () => {
+  it("groups assigned-Country items by Country, carrying the guidance fields (no work mode — ADR-0038 retires the tri-mode)", () => {
+    const groups = researcherCountryGroups(
       [
-        item({ id: "mine", primaryResearcherId: null, country: "Germany" }),
-        item({ id: "stray", primaryResearcherId: null, country: "France" }),
+        item({ id: "de-1", country: "Germany" }),
+        item({ id: "de-2", country: "Germany" }),
+        item({ id: "fr-1", country: "France" }),
+      ],
+      new Set(["Germany", "France"]),
+    );
+
+    const byCountry = new Map(groups.map((g) => [g.country, g.items]));
+    expect(byCountry.get("Germany")?.map((i) => i.id)).toEqual(["de-1", "de-2"]);
+    expect(byCountry.get("France")?.map((i) => i.id)).toEqual(["fr-1"]);
+    // Guidance the Collect lens needs is threaded through (no Client Price, ADR-0003).
+    expect(byCountry.get("Germany")?.[0].requiredQuotes).toBe(3);
+    expect(byCountry.get("Germany")?.[0].clientItemNumber).toBe("CPN-001");
+  });
+
+  it("drops an item in a Country I am not assigned to — backstop, never grouped (ADR-0025)", () => {
+    const groups = researcherCountryGroups(
+      [
+        item({ id: "mine", country: "Germany" }),
+        item({ id: "stray", country: "France" }),
       ],
       new Set(["Germany"]),
-      "user-me",
     );
-    expect(entries).toHaveLength(1);
-    expect(entries[0].item.id).toBe("mine");
-    expect(entries.some((e) => e.item.country === "France")).toBe(false);
+
+    expect(groups.map((g) => g.country)).toEqual(["Germany"]);
+    expect(groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["mine"]);
   });
 });
 
@@ -253,27 +229,5 @@ describe("addLineCandidates", () => {
     const candidates = addLineCandidates(items, "Germany", new Set());
 
     expect(candidates.map((c) => c.id)).toEqual(["here"]);
-  });
-});
-
-describe("quoteAffordances", () => {
-  // The item view is now a read-only reference: all Draft mutation (edit/delete)
-  // and submit moved to the document panel (#97/Q8). The item view keeps only the
-  // Rejected-line affordances — Revise and the rejection reason.
-  it("a quote I do not own exposes no affordances, whatever its state", () => {
-    for (const state of ["Draft", "Submitted", "Approved", "Rejected"] as const) {
-      const a = quoteAffordances({ state, createdById: "user-other" }, "user-me");
-      expect(a).toEqual({ canRevise: false, showRejectionReason: false });
-    }
-  });
-
-  it("my own Draft exposes no item-view affordances (Draft mgmt lives in the doc panel)", () => {
-    const a = quoteAffordances({ state: "Draft", createdById: "user-me" }, "user-me");
-    expect(a).toEqual({ canRevise: false, showRejectionReason: false });
-  });
-
-  it("my own Rejected quote can be revised and shows its rejection reason", () => {
-    const a = quoteAffordances({ state: "Rejected", createdById: "user-me" }, "user-me");
-    expect(a).toEqual({ canRevise: true, showRejectionReason: true });
   });
 });

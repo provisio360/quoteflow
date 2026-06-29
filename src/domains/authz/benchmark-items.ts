@@ -17,13 +17,13 @@ export function canImportBenchmarkItems(principal: Principal): boolean {
   );
 }
 
-// Self-assigning a Benchmark Item (becoming its Primary Researcher; issue #7) is
-// a Researcher act — narrower than import, which is EM+Analyst setup. The role is
-// gated explicitly even though only Researchers are ever in a Country pool (the
-// repository's membership check would imply it): defense-in-depth, so a future
-// loosening of the pool invariant can't silently let other roles claim a lead.
-// Per CONTEXT.md, the Primary Researcher of an item is always a Researcher.
-export function canSelfAssignBenchmarkItem(principal: Principal): boolean {
+// Whether a principal may use the researcher collection surfaces (Collect / Drafts
+// / Needs attention; ADR-0038) — a Researcher act, narrower than import (EM+Analyst
+// setup). Claiming a Benchmark Item is no longer a distinct user action: a lead is
+// established implicitly on first line-filing (ADR-0038), so this gate names the
+// researcher capability itself, not a self-assign step. Per CONTEXT.md, the Primary
+// Researcher of an item is always a Researcher.
+export function canResearch(principal: Principal): boolean {
   return principal.kind === "internal" && principal.role === "Researcher";
 }
 

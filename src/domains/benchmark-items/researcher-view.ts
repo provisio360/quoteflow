@@ -8,14 +8,12 @@ import {
 
 const DOC_FIELDS = new Set<string>(DOC_REQUIRED_TO_SUBMIT);
 
-// The researcher work surface (#7/#8): per-item work mode plus the client's
-// guidance the researcher needs to describe the part to a dealer. Pure and
-// IO-free so it is unit-testable — the page attaches quotes (IO) afterwards.
+// The researcher collection surface (ADR-0038): the client's guidance the
+// researcher needs to describe a part to a dealer, grouped per Country to feed the
+// Collect lens. Pure and IO-free so it is unit-testable — the page adds the IO.
 
-export type ItemMode = "mine" | "claimable" | "claimed";
-
-/** The client guidance a Researcher sees for a Benchmark Item — the full set the
- *  `mine` panel renders (#66). NO Client Price (ADR-0003). */
+/** The client guidance a Researcher sees for a Benchmark Item (#66). NO Client
+ *  Price (ADR-0003). */
 export interface GuidanceFields {
   readonly id: string;
   readonly country: string;
@@ -27,9 +25,43 @@ export interface GuidanceFields {
   readonly requiredQuotes: number;
 }
 
-export interface ResearcherEntry {
-  readonly item: GuidanceFields;
-  readonly mode: ItemMode;
+/** One Country's parts as the Collect lens consumes them: the guidance fields
+ *  grouped under their Country, ready to feed `quoteGroups` (ADR-0038). No work
+ *  mode — the tri-mode (mine/claimable/claimed) is retired, claiming is implicit. */
+export interface ResearcherCountryGroup {
+  readonly country: string;
+  readonly items: readonly GuidanceFields[];
+}
+
+/**
+ * Group a Researcher's Benchmark Items by Country, scoped to the Countries they
+ * are assigned to. The repository read already scopes to assigned (study, country)
+ * pairs (ADR-0025); `myCountries` is kept as the app-layer BACKSTOP — a stray item
+ * outside it is DROPPED, never grouped, so not-loaded data can never render and
+ * leak a country/description across the assignment boundary. Pure and IO-free; the
+ * page attaches the layered progress (`quoteGroups`) afterwards.
+ */
+export function researcherCountryGroups(
+  items: readonly ResearcherItemView[],
+  myCountries: ReadonlySet<string>,
+): ResearcherCountryGroup[] {
+  const byCountry = new Map<string, GuidanceFields[]>();
+  for (const item of items) {
+    if (!myCountries.has(item.country)) continue;
+    const list = byCountry.get(item.country) ?? [];
+    list.push({
+      id: item.id,
+      country: item.country,
+      clientItemNumber: item.clientItemNumber,
+      itemDescription: item.itemDescription,
+      configurationComment: item.configurationComment,
+      quantity: item.quantity,
+      clientSourceUnit: item.clientSourceUnit,
+      requiredQuotes: item.requiredQuotes,
+    });
+    byCountry.set(item.country, list);
+  }
+  return [...byCountry.entries()].map(([country, list]) => ({ country, items: list }));
 }
 
 /** A Benchmark Item the researcher may add a line for, with its picker label. */
@@ -137,13 +169,6 @@ export function quoteGroups(
   return groups;
 }
 
-/** The Rejected-line affordances a researcher has on a single Quote in the item
- *  view (Draft mutation + Submit moved to the document panel, #97/Q8). */
-export interface QuoteAffordances {
-  readonly canRevise: boolean;
-  readonly showRejectionReason: boolean;
-}
-
 /** A Draft line in a document group, with the labels its panel row renders. */
 export interface DraftLineLabel {
   readonly lineId: string;
@@ -197,61 +222,3 @@ export function partitionSubmitReport(
   return { docMissing, lines };
 }
 
-/**
- * What the viewing researcher may do with one Quote on the item's pool. Every
- * affordance — and the rejection-reason line — is owner-only: a quote is only
- * actionable by its author (#68). This is independent of the item's claim mode;
- * mode governs only the item-level affordances (Claim, + Add quote). Once
- * authorship is established, the state drives which actions apply: a Rejected
- * quote can be revised and shows its reason. Draft edit/delete + Submit live in
- * the document panel now (#97/Q8), so the item view exposes neither.
- */
-export function quoteAffordances(
-  quote: { readonly state: string; readonly createdById: string },
-  myUserId: string,
-): QuoteAffordances {
-  const mine = quote.createdById === myUserId;
-  return {
-    canRevise: mine && quote.state === "Rejected",
-    showRejectionReason: mine && quote.state === "Rejected",
-  };
-}
-
-/**
- * Resolve each Benchmark Item to the researcher's work mode, carrying the full
- * guidance the `mine` panel renders. Mode: mine (I'm Primary) / claimable
- * (unclaimed, in my assigned Country) / claimed (someone else's).
- *
- * The caller scopes the query to the Researcher's assigned (study, country) pairs
- * (ADR-0025), so every item reaching here is already in an assigned Country. This
- * function keeps `myCountries` as an app-layer BACKSTOP: any item outside it is
- * DROPPED (not loaded data must never render), never tagged a `locked` row — that
- * mode is gone, so a future reader can't reintroduce a cross-boundary leak.
- */
-export function resolveResearcherEntries(
-  items: ResearcherItemView[],
-  myCountries: Set<string>,
-  userId: string,
-): ResearcherEntry[] {
-  return items
-    .filter((item) => myCountries.has(item.country))
-    .map((item) => {
-    let mode: ItemMode;
-    if (item.primaryResearcherId === userId) mode = "mine";
-    else if (item.primaryResearcherId !== null) mode = "claimed";
-    else mode = "claimable";
-    return {
-      mode,
-      item: {
-        id: item.id,
-        country: item.country,
-        clientItemNumber: item.clientItemNumber,
-        itemDescription: item.itemDescription,
-        configurationComment: item.configurationComment,
-        quantity: item.quantity,
-        clientSourceUnit: item.clientSourceUnit,
-        requiredQuotes: item.requiredQuotes,
-      },
-    };
-  });
-}
