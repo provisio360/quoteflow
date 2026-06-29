@@ -24,6 +24,7 @@ import { recordAuditEvents } from "@/lib/audit/repository";
 import { auditQuoteLifecycle, auditDocumentSubmit, auditManualRateOverride } from "@/domains/audit/events";
 import { recordNotifications } from "@/lib/notifications/dispatch";
 import { notifyQuoteRejected } from "@/domains/notifications/events";
+import type { PartProgress } from "@/domains/benchmark-items/researcher-view";
 
 // Tenant-aware data-access adapter for the Market Quote aggregate (#87, ADR-0026).
 // A Market Quote (dealer DOCUMENT) is created by a Researcher and gathers many
@@ -1045,6 +1046,57 @@ export function countMyRejectedLines(principal: Principal): Promise<number> {
 /** Count of the researcher's own Draft Quote Lines — work in progress. */
 export function countMyDraftLines(principal: Principal): Promise<number> {
   return countMyLinesInState(principal, "Draft");
+}
+
+/**
+ * Per-Benchmark-Item layered progress for the Collect surface (#142): for each
+ * item in the study that has any line, its **approved** count (ALL authors — the
+ * canonical [[Release Eligibility]] figure; line-count = distinct-Market-Quote
+ * count under the `(marketQuote, item)` uniqueness) and the **caller's own**
+ * in-flight (Draft/Submitted) count. A Rejected line counts toward neither. Two
+ * `groupBy` reads, folded into one map keyed by `benchmarkItemId`; an item with no
+ * line is simply absent (the pure `quoteGroups` defaults it to zero). Internal-only
+ * and self-scoped on the in-flight half (`createdById = me`); approved is unscoped
+ * by author by design. No Client Price is touched (ADR-0003 safe — counts only).
+ */
+export async function countPartProgressForResearcher(
+  principal: Principal,
+  studyId: string,
+): Promise<Map<string, PartProgress>> {
+  if (!isInternal(principal)) {
+    throw new QuoteAccessError("Internal staff only");
+  }
+  return withTenant(principal, async (tx) => {
+    const [approved, mine] = await Promise.all([
+      tx.quoteLine.groupBy({
+        by: ["benchmarkItemId"],
+        where: { studyId, state: "Approved" },
+        _count: { _all: true },
+      }),
+      tx.quoteLine.groupBy({
+        by: ["benchmarkItemId"],
+        where: {
+          studyId,
+          state: { in: ["Draft", "Submitted"] },
+          createdById: principal.userId,
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const progress = new Map<string, PartProgress>();
+    const ensure = (id: string): { approvedCount: number; myInFlightCount: number } => {
+      let row = progress.get(id) as { approvedCount: number; myInFlightCount: number } | undefined;
+      if (row === undefined) {
+        row = { approvedCount: 0, myInFlightCount: 0 };
+        progress.set(id, row);
+      }
+      return row;
+    };
+    for (const g of approved) ensure(g.benchmarkItemId).approvedCount = g._count._all;
+    for (const g of mine) ensure(g.benchmarkItemId).myInFlightCount = g._count._all;
+    return progress;
+  });
 }
 
 /**
