@@ -303,8 +303,11 @@ async function createMarketQuoteTx(
  * transaction so a mid-loop failure rolls the whole document back (no half-seeded
  * document, ADR-0038). The group number is a non-persisted lens — nothing about the
  * grouping is stored; only the Market Quote and its lines are. Filing each line
- * auto-claims its unclaimed part first-come via {@link addQuoteLineTx} (#138). Lines
- * start blank — the transient batch stamp-on-create is a separate slice.
+ * auto-claims its unclaimed part first-come via {@link addQuoteLineTx} (#138). The
+ * dealer + batch step's transient values are stamped onto every line at creation by
+ * passing one document-uniform `fields` (ADR-0038, #141) — batch stays a stateless
+ * writer (ADR-0036): nothing batch-level is persisted, the fields land line-level.
+ * `fields` defaults to blank, so a part added in a later session inherits no defaults.
  */
 export async function seedMarketQuote(
   principal: Principal,
@@ -312,11 +315,12 @@ export async function seedMarketQuote(
   country: string,
   header: MarketQuoteHeaderFields,
   itemIds: readonly string[],
+  fields: QuoteLineFields = {},
 ): Promise<{ readonly id: string; readonly marketQuoteNumber: number }> {
   return withTenant(principal, async (tx) => {
     const doc = await createMarketQuoteTx(tx, principal, studyId, country, header);
     for (const itemId of itemIds) {
-      await addQuoteLineTx(tx, principal, doc.id, itemId, {});
+      await addQuoteLineTx(tx, principal, doc.id, itemId, fields);
     }
     return doc;
   });

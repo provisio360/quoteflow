@@ -56,14 +56,17 @@ export async function createMarketQuoteAction(
   }
 }
 
-/** Seed a new Market Quote from a Quote Group selection (ADR-0038, #140): one
- *  document + one blank Draft line per selected part, atomically. Reuses
- *  CreateMarketQuoteActionResult — the caller gets the new document's id/number. */
+/** Seed a new Market Quote from a Quote Group selection (ADR-0038, #140/#141): one
+ *  document + one Draft line per selected part, atomically. The dealer + batch step's
+ *  transient values arrive as one document-uniform `fields`, stamped onto every line
+ *  at creation (#141); it defaults to blank. Reuses CreateMarketQuoteActionResult —
+ *  the caller gets the new document's id/number. */
 export async function seedMarketQuoteAction(
   studyId: string,
   country: string,
   header: MarketQuoteHeaderFields,
   itemIds: readonly string[],
+  fields: QuoteLineFields = {},
 ): Promise<CreateMarketQuoteActionResult> {
   const principal = await requirePrincipal();
   try {
@@ -73,6 +76,7 @@ export async function seedMarketQuoteAction(
       country,
       header,
       itemIds,
+      fields,
     );
     revalidatePath("/studies");
     return { ok: true, id, marketQuoteNumber };

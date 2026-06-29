@@ -13,20 +13,9 @@ import type {
   QuoteLineFields,
 } from "@/lib/quotes/repository";
 import { formatMoney, NO_AMOUNT } from "@/domains/quotes/format-money";
-import { stockStatusOptions } from "@/domains/quotes/stock-status";
-import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
-import {
-  stockStatusGroup,
-  leadTimeGroup,
-  warrantyGroup,
-  landedCostGroup,
-  discountGroup,
-} from "@/domains/quotes/batch-line-fill";
-import { ValueUnitField } from "./ValueUnitField";
-import { WarrantyField } from "./WarrantyField";
-import { LandedCostField } from "./LandedCostField";
-import { DiscountField } from "./DiscountField";
+import { emptyBatchGroupValues, type BatchGroupValues } from "@/domains/quotes/batch-line-fill";
+import { BatchGroupFields } from "./BatchGroupFields";
 import {
   partitionSubmitReport,
   type AddLineCandidate,
@@ -152,22 +141,7 @@ function BatchFillPanel({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [stock, setStock] = useState("");
-  const [leadTimeValue, setLeadTimeValue] = useState("");
-  const [leadTimeUnit, setLeadTimeUnit] = useState("");
-  const [warrantyOffered, setWarrantyOffered] = useState("");
-  const [warranty, setWarranty] = useState({
-    warranty1Value: "",
-    warranty1Unit: "",
-    warranty2Value: "",
-    warranty2Unit: "",
-  });
-  const [landedCostIncluded, setLandedCostIncluded] = useState("");
-  const [landedCostNote, setLandedCostNote] = useState("");
-  const [discountAvailable, setDiscountAvailable] = useState("");
-  const [discountType, setDiscountType] = useState("");
-  const [discountApplied, setDiscountApplied] = useState("");
-  const [discountValue, setDiscountValue] = useState("");
+  const [values, setValues] = useState<BatchGroupValues>(emptyBatchGroupValues);
   const [message, setMessage] = useState<string | null>(null);
 
   // Same predicate the single-line form uses, so the group's show/hide can never drift
@@ -183,94 +157,25 @@ function BatchFillPanel({
     });
   }
 
-  const applyButton = (group: QuoteLineFields) => (
-    <button type="button" disabled={pending} onClick={() => apply(group)} style={{ padding: "0.2rem 0.55rem" }}>
-      Apply to all {draftCount} draft lines
-    </button>
-  );
-
   return (
     <details style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
       <summary style={{ cursor: "pointer", color: "#555" }}>Set for all lines</summary>
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "0.4rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <label>
-            Stock status{" "}
-            <select value={stock} onChange={(e) => setStock(e.target.value)} style={{ padding: "0.2rem" }}>
-              <option value="">— select —</option>
-              {stockStatusOptions(stock || undefined).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {applyButton(stockStatusGroup(stock))}
-        </div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
-          <div style={{ flex: 1 }}>
-            <ValueUnitField
-              mode="controlled"
-              label="Shipping lead time"
-              unitOptions={leadTimeUnitOptions}
-              value={leadTimeValue}
-              unit={leadTimeUnit}
-              onValueChange={setLeadTimeValue}
-              onUnitChange={setLeadTimeUnit}
-            />
-          </div>
-          {applyButton(leadTimeGroup(leadTimeValue, leadTimeUnit))}
-        </div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-            <WarrantyField
-              mode="controlled"
-              offered={warrantyOffered}
-              onOfferedChange={setWarrantyOffered}
-              values={warranty}
-              onChange={(field, next) => setWarranty((w) => ({ ...w, [field]: next }))}
-            />
-          </div>
-          {applyButton(
-            warrantyGroup(
-              warrantyOffered,
-              warranty.warranty1Value,
-              warranty.warranty1Unit,
-              warranty.warranty2Value,
-              warranty.warranty2Unit,
-            ),
+      <div style={{ marginTop: "0.4rem" }}>
+        <BatchGroupFields
+          values={values}
+          onChange={setValues}
+          showLandedCost={showLandedCost}
+          renderApply={(group) => (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => apply(group)}
+              style={{ padding: "0.2rem 0.55rem" }}
+            >
+              Apply to all {draftCount} draft lines
+            </button>
           )}
-        </div>
-        {showLandedCost && (
-          <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
-            <div style={{ flex: 1 }}>
-              <LandedCostField
-                mode="controlled"
-                included={landedCostIncluded}
-                onIncludedChange={setLandedCostIncluded}
-                note={landedCostNote}
-                onNoteChange={setLandedCostNote}
-              />
-            </div>
-            {applyButton(landedCostGroup(landedCostIncluded, landedCostNote))}
-          </div>
-        )}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.4rem" }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-            <DiscountField
-              mode="controlled"
-              available={discountAvailable}
-              onAvailableChange={setDiscountAvailable}
-              applied={discountApplied}
-              onAppliedChange={setDiscountApplied}
-              type={discountType}
-              onTypeChange={setDiscountType}
-              value={discountValue}
-              onValueChange={setDiscountValue}
-            />
-          </div>
-          {applyButton(discountGroup(discountAvailable, discountType, discountApplied, discountValue))}
-        </div>
+        />
       </div>
       {message !== null && (
         <p role="alert" style={{ color: "#b00", margin: "0.3rem 0 0" }}>
