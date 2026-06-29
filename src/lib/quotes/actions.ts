@@ -5,6 +5,7 @@ import { requirePrincipal } from "@/lib/identity/current-principal";
 import {
   createMarketQuote,
   addQuoteLine,
+  seedMarketQuote,
   updateDraftLine,
   batchUpdateDraftLines,
   updateMarketQuote,
@@ -48,6 +49,32 @@ export async function createMarketQuoteAction(
   const principal = await requirePrincipal();
   try {
     const { id, marketQuoteNumber } = await createMarketQuote(principal, studyId, country, header);
+    return { ok: true, id, marketQuoteNumber };
+  } catch (error) {
+    if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
+    throw error;
+  }
+}
+
+/** Seed a new Market Quote from a Quote Group selection (ADR-0038, #140): one
+ *  document + one blank Draft line per selected part, atomically. Reuses
+ *  CreateMarketQuoteActionResult — the caller gets the new document's id/number. */
+export async function seedMarketQuoteAction(
+  studyId: string,
+  country: string,
+  header: MarketQuoteHeaderFields,
+  itemIds: readonly string[],
+): Promise<CreateMarketQuoteActionResult> {
+  const principal = await requirePrincipal();
+  try {
+    const { id, marketQuoteNumber } = await seedMarketQuote(
+      principal,
+      studyId,
+      country,
+      header,
+      itemIds,
+    );
+    revalidatePath("/studies");
     return { ok: true, id, marketQuoteNumber };
   } catch (error) {
     if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
