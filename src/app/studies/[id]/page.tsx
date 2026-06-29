@@ -23,6 +23,7 @@ import {
 import {
   listLinesForItem,
   listDraftMarketQuotesForResearcher,
+  listRejectedLinesForResearcher,
   type QuoteLineView,
 } from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
@@ -33,6 +34,7 @@ import { BenchmarkComparison } from "./BenchmarkComparison";
 import { CountryAssignRow } from "./CountryAssignRow";
 import { ResearcherItem } from "./ResearcherItem";
 import { DraftMarketQuotes, type DraftDocGroup } from "./DraftMarketQuotes";
+import { RejectedLines } from "./RejectedLines";
 import {
   addLineCandidates,
   resolveResearcherEntries,
@@ -93,6 +95,9 @@ export default async function StudyDetailPage({
   // Document-grouped Draft submit surface (#97): the researcher's own Draft Market
   // Quotes, each with the items a new line may be added for.
   const draftDocs = mayResearch ? await buildDraftDocGroups(principal, study.id) : [];
+  // Needs-attention surface (#139 / ADR-0038): the researcher's own currently-Rejected
+  // lines, each deep-linking to revise it (same destination as the rejection inbox).
+  const rejectedLines = mayResearch ? await listRejectedLinesForResearcher(principal, study.id) : [];
 
   // Analyst release gate (#13): each Country's eligibility + current release state.
   const mayRelease = canReleaseCountry(principal);
@@ -158,6 +163,8 @@ export default async function StudyDetailPage({
       )}
 
       {mayResearch && <DraftMarketQuotes groups={draftDocs} />}
+
+      {mayResearch && <RejectedLines lines={rejectedLines} />}
 
       {mayResearch && (
         <section style={{ marginTop: "2rem" }}>
