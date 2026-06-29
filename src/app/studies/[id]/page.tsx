@@ -24,6 +24,7 @@ import {
   listLinesForItem,
   listDraftMarketQuotesForResearcher,
   listRejectedLinesForResearcher,
+  countPartProgressForResearcher,
   type QuoteLineView,
 } from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
@@ -94,6 +95,12 @@ export default async function StudyDetailPage({
   // per-item mode (mine / claimable / claimed / locked). Client Price never loaded.
   const mayResearch = canSelfAssignBenchmarkItem(principal);
   const research = mayResearch ? await buildResearcherView(principal, study.id) : [];
+  // Per-part layered progress for the Collect lens (#142): all-author approved
+  // n/N + the researcher's own in-flight tally, keyed per Benchmark Item. A
+  // separate read — buildResearcherView only attaches lines for mine/claimed items.
+  const partProgress = mayResearch
+    ? await countPartProgressForResearcher(principal, study.id)
+    : new Map();
   // Document-grouped Draft submit surface (#97): the researcher's own Draft Market
   // Quotes, each with the items a new line may be added for.
   const draftDocs = mayResearch ? await buildDraftDocGroups(principal, study.id) : [];
@@ -170,8 +177,8 @@ export default async function StudyDetailPage({
           countries={research.map((g) => ({
             country: g.country,
             // The Quote Group lens is computed per Country from its parts' Required
-            // Quotes (ADR-0038) — a non-persisted ordinal view, no new read needed.
-            groups: quoteGroups(g.items.map((e) => e.item)),
+            // Quotes (ADR-0038); each part carries its layered progress (#142).
+            groups: quoteGroups(g.items.map((e) => e.item), partProgress),
           }))}
         />
       )}

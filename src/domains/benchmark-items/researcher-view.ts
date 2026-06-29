@@ -59,11 +59,33 @@ export function addLineCandidates(
     .map((item) => ({ id: item.id, label: `${item.clientItemNumber} ${item.itemDescription}` }));
 }
 
-/** A part as the Quote Group part-picker lists it: the picker label fields. */
+/** The per-part progress counts the Collect surface reads (#142): the approved
+ *  figure is ALL-author (the canonical [[Release Eligibility]] count of distinct
+ *  Market Quotes with an approved line — line-count = distinct-MQ-count under the
+ *  `(marketQuote, item)` uniqueness); the in-flight figure is the VIEWING
+ *  researcher's OWN Draft/Submitted lines only (a peer's Drafts are private,
+ *  ADR-0011). A part absent from the map has no quotes yet (both zero). */
+export interface PartProgress {
+  readonly approvedCount: number;
+  readonly myInFlightCount: number;
+}
+
+const NO_PROGRESS: PartProgress = { approvedCount: 0, myInFlightCount: 0 };
+
+/** A part as the Quote Group part-picker lists it: the picker label fields plus
+ *  its layered progress (#142). `preChecked` is the picker's default selection,
+ *  keyed on the APPROVED figure alone (`approved < Required`) — the in-flight
+ *  layer is collection visibility only and never suppresses the pre-check
+ *  (ADR-0038). Always false for an off-slot `otherParts` entry (the escape hatch
+ *  is never nudged). */
 export interface QuoteGroupPart {
   readonly id: string;
   readonly clientItemNumber: string;
   readonly itemDescription: string;
+  readonly requiredQuotes: number;
+  readonly approvedCount: number;
+  readonly myInFlightCount: number;
+  readonly preChecked: boolean;
 }
 
 /** One Quote Group: an ordinal dealer-document slot (ADR-0038). `members` are the
@@ -85,19 +107,31 @@ export interface QuoteGroup {
  * with no parts (or every part at Required Quotes 0) yields no groups. The group
  * number labels a slot and is never stored on the Market Quote a group seeds.
  */
-export function quoteGroups(items: readonly GuidanceFields[]): QuoteGroup[] {
+export function quoteGroups(
+  items: readonly GuidanceFields[],
+  counts: ReadonlyMap<string, PartProgress> = new Map(),
+): QuoteGroup[] {
   const maxRequired = items.reduce((max, item) => Math.max(max, item.requiredQuotes), 0);
-  const part = (i: GuidanceFields): QuoteGroupPart => ({
-    id: i.id,
-    clientItemNumber: i.clientItemNumber,
-    itemDescription: i.itemDescription,
-  });
+  // `member` carries the approved-keyed pre-check default; an off-slot part is the
+  // escape hatch — counts shown for context, never pre-checked (ADR-0038, #142).
+  const part = (i: GuidanceFields, isMember: boolean): QuoteGroupPart => {
+    const progress = counts.get(i.id) ?? NO_PROGRESS;
+    return {
+      id: i.id,
+      clientItemNumber: i.clientItemNumber,
+      itemDescription: i.itemDescription,
+      requiredQuotes: i.requiredQuotes,
+      approvedCount: progress.approvedCount,
+      myInFlightCount: progress.myInFlightCount,
+      preChecked: isMember && progress.approvedCount < i.requiredQuotes,
+    };
+  };
   const groups: QuoteGroup[] = [];
   for (let n = 1; n <= maxRequired; n += 1) {
     groups.push({
       groupNumber: n,
-      members: items.filter((i) => i.requiredQuotes >= n).map(part),
-      otherParts: items.filter((i) => i.requiredQuotes < n).map(part),
+      members: items.filter((i) => i.requiredQuotes >= n).map((i) => part(i, true)),
+      otherParts: items.filter((i) => i.requiredQuotes < n).map((i) => part(i, false)),
     });
   }
   return groups;

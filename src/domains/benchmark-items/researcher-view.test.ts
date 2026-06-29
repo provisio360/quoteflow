@@ -116,6 +116,58 @@ describe("quoteGroups", () => {
     expect(quoteGroups([])).toEqual([]);
     expect(quoteGroups([item({ requiredQuotes: 0 })])).toEqual([]);
   });
+
+  // #142: each part carries a layered progress count — approved n/N (all-author,
+  // the Release-Eligibility figure) plus the viewing researcher's own in-flight
+  // tally — and a pre-check default keyed on the approved figure ALONE.
+  it("attaches approved + my-in-flight counts and pre-checks members still short on approved", () => {
+    const groups = quoteGroups(
+      [item({ id: "a", requiredQuotes: 6 })],
+      new Map([["a", { approvedCount: 2, myInFlightCount: 3 }]]),
+    );
+
+    const [partA] = groups[0].members;
+    expect(partA.approvedCount).toBe(2);
+    expect(partA.myInFlightCount).toBe(3);
+    expect(partA.requiredQuotes).toBe(6);
+    expect(partA.preChecked).toBe(true); // 2 approved < 6 required
+  });
+
+  it("a member satisfied on approved is not pre-checked but stays selectable in members", () => {
+    const groups = quoteGroups(
+      [item({ id: "a", requiredQuotes: 2 })],
+      new Map([["a", { approvedCount: 2, myInFlightCount: 0 }]]),
+    );
+    const [partA] = groups[0].members;
+    expect(partA.preChecked).toBe(false); // 2 approved >= 2 required → satisfied
+    expect(groups[0].members.map((m) => m.id)).toEqual(["a"]); // not relegated
+  });
+
+  it("in-flight never suppresses the pre-check: a short-on-approved part stays checked", () => {
+    const groups = quoteGroups(
+      [item({ id: "a", requiredQuotes: 3 })],
+      new Map([["a", { approvedCount: 1, myInFlightCount: 5 }]]),
+    );
+    expect(groups[0].members[0].preChecked).toBe(true); // 1 < 3 despite 5 in flight
+  });
+
+  it("an off-slot escape-hatch part is never pre-checked even when short on approved", () => {
+    // a needs 1 (short on approved), so in group 2 it is otherParts — never nudged.
+    const groups = quoteGroups(
+      [item({ id: "a", requiredQuotes: 1 }), item({ id: "b", requiredQuotes: 2 })],
+      new Map([["a", { approvedCount: 0, myInFlightCount: 0 }]]),
+    );
+    expect(groups[1].otherParts.map((m) => m.id)).toEqual(["a"]);
+    expect(groups[1].otherParts[0].preChecked).toBe(false);
+  });
+
+  it("a part with no quotes defaults to zero counts (absent from the map)", () => {
+    const groups = quoteGroups([item({ id: "a", requiredQuotes: 1 })]);
+    const [partA] = groups[0].members;
+    expect(partA.approvedCount).toBe(0);
+    expect(partA.myInFlightCount).toBe(0);
+    expect(partA.preChecked).toBe(true); // 0 < 1
+  });
 });
 
 describe("partitionSubmitReport", () => {

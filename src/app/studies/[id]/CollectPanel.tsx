@@ -21,10 +21,10 @@ import type { QuoteGroup, QuoteGroupPart } from "@/domains/benchmark-items/resea
 // The Collect surface (ADR-0038, #140): the dealer-first researcher entry path —
 // Country → Quote Group → part-picker → seed a NEW Market Quote. A Quote Group is a
 // non-persisted ordinal lens; selecting parts and starting seeds one document with a
-// blank Draft line per part (the batch stamp-on-create is a later slice), which the
-// researcher then fills in the Drafts panel below. The lens adds NO gates — groups
-// are independently startable in any order. This tracer uses a DUMB pre-check (every
-// position-membership part checked); progress-aware pre-check + n/N counts come later.
+// blank Draft line per part, which the researcher then fills in the Drafts panel
+// below. The lens adds NO gates — groups are independently startable in any order.
+// Each part shows layered progress (approved n/N + the researcher's own in-flight
+// tally) and the picker pre-checks only parts still short on approved (#142).
 
 const input = { padding: "0.3rem 0.4rem", width: "100%", boxSizing: "border-box" } as const;
 
@@ -60,9 +60,10 @@ export function CollectPanel({
   );
 }
 
-/** One Quote Group slot: its position-membership parts pre-checked (dumb pre-check),
- *  the off-slot "other parts" escape hatch collapsed and unchecked, and a dealer-info
- *  form that seeds a new document from whatever is checked. */
+/** One Quote Group slot: its position-membership parts shown with layered progress
+ *  and pre-checked only when still short on approved (#142), the off-slot "other
+ *  parts" escape hatch collapsed and unchecked, and a dealer-info form that seeds a
+ *  new document from whatever is checked. */
 function GroupBlock({
   studyId,
   country,
@@ -77,10 +78,16 @@ function GroupBlock({
   const [message, setMessage] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
-  // Selection: members start checked (dumb pre-check), other parts start unchecked.
-  // Both populations merge into one selection set the seed receives (#140).
+  // Selection: progress-aware pre-check (#142, replacing #140's dumb pre-check) —
+  // a part is checked by default only when still short on its APPROVED count
+  // (`preChecked`, keyed on the all-author Release-Eligibility figure alone, ADR-0038).
+  // Satisfied members and off-slot parts start unchecked but stay selectable. Both
+  // populations merge into one selection set the seed receives.
   const [checked, setChecked] = useState<ReadonlySet<string>>(
-    () => new Set(group.members.map((m) => m.id)),
+    () =>
+      new Set(
+        [...group.members, ...group.otherParts].filter((p) => p.preChecked).map((p) => p.id),
+      ),
   );
   const [currency, setCurrency] = useState("");
   // Dealer country is controlled so the batch step's Landed Cost group can show/hide
@@ -132,17 +139,30 @@ function GroupBlock({
     });
   }
 
-  const checkbox = (part: QuoteGroupPart) => (
-    <label key={part.id} style={{ display: "block", fontSize: "0.9rem" }}>
-      <input
-        type="checkbox"
-        checked={checked.has(part.id)}
-        onChange={() => toggle(part.id)}
-        style={{ marginRight: "0.4rem" }}
-      />
-      {part.clientItemNumber} {part.itemDescription}
-    </label>
-  );
+  const checkbox = (part: QuoteGroupPart) => {
+    // Satisfied = approved count has reached Required Quotes (the canonical
+    // Release-Eligibility "done", ADR-0038). Dimmed and unchecked, but still
+    // selectable — a dealer may still price an already-satisfied part (#142).
+    const satisfied = part.approvedCount >= part.requiredQuotes;
+    return (
+      <label
+        key={part.id}
+        style={{ display: "block", fontSize: "0.9rem", color: satisfied ? "#999" : undefined }}
+      >
+        <input
+          type="checkbox"
+          checked={checked.has(part.id)}
+          onChange={() => toggle(part.id)}
+          style={{ marginRight: "0.4rem" }}
+        />
+        {part.clientItemNumber} {part.itemDescription}{" "}
+        <span style={{ color: "#777", fontSize: "0.8rem" }}>
+          ({part.approvedCount}/{part.requiredQuotes} approved
+          {part.myInFlightCount > 0 ? `, ${part.myInFlightCount} of mine in review` : ""})
+        </span>
+      </label>
+    );
+  };
 
   return (
     <div style={{ margin: "0.75rem 0", padding: "0.6rem", border: "1px solid #ddd" }}>
