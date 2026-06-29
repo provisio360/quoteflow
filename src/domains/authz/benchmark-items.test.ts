@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   canImportBenchmarkItems,
-  canSelfAssignBenchmarkItem,
+  canResearch,
   canMaintainClientPrice,
   canViewClientPrice,
 } from "./benchmark-items";
@@ -34,22 +34,22 @@ describe("canImportBenchmarkItems — shared internal-setup capability", () => {
   });
 });
 
-describe("canSelfAssignBenchmarkItem — a Researcher-only act", () => {
-  it("allows a Researcher (self-assigning to become primary researcher)", () => {
-    expect(canSelfAssignBenchmarkItem(internal("Researcher"))).toBe(true);
+describe("canResearch — the researcher collection capability (ADR-0038)", () => {
+  it("allows a Researcher (uses the Collect / Drafts / Needs-attention surfaces)", () => {
+    expect(canResearch(internal("Researcher"))).toBe(true);
   });
 
-  it("forbids Engagement Managers and Analysts (self-assign is a Researcher act)", () => {
-    expect(canSelfAssignBenchmarkItem(internal("EngagementManager"))).toBe(false);
-    expect(canSelfAssignBenchmarkItem(internal("Analyst"))).toBe(false);
+  it("forbids Engagement Managers and Analysts (research is a Researcher act)", () => {
+    expect(canResearch(internal("EngagementManager"))).toBe(false);
+    expect(canResearch(internal("Analyst"))).toBe(false);
   });
 
   it("forbids the Admin (user-administration only)", () => {
-    expect(canSelfAssignBenchmarkItem(internal("Admin"))).toBe(false);
+    expect(canResearch(internal("Admin"))).toBe(false);
   });
 
   it("forbids client users (viewer-only, never write)", () => {
-    expect(canSelfAssignBenchmarkItem(clientUser)).toBe(false);
+    expect(canResearch(clientUser)).toBe(false);
   });
 });
 

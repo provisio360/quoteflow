@@ -6,7 +6,6 @@ import { parseXlsx } from "./parse-xlsx";
 import { uploadProblem } from "./upload-validation";
 import {
   importBenchmarkItems,
-  selfAssignBenchmarkItem,
   setClientPrice,
   BenchmarkItemAccessError,
   type ImportOutcome,
@@ -53,34 +52,6 @@ export async function importBenchmarkItemsFormAction(
   formData: FormData,
 ): Promise<ImportOutcome> {
   return importBenchmarkItemsAction(formData);
-}
-
-// Server action backing the (future) researcher item-list "claim" control (#7).
-// Pure wiring: authenticate → hand the item id to the principal-scoped
-// repository, which owns the Researcher role gate, the Country-pool check and the
-// first-come atomic claim. This layer adds no domain logic.
-
-export type SelfAssignResult =
-  | { readonly ok: true; readonly primaryResearcherId: string }
-  | { readonly ok: false; readonly message: string };
-
-export async function selfAssignBenchmarkItemAction(
-  formData: FormData,
-): Promise<SelfAssignResult> {
-  const principal = await requirePrincipal();
-  const itemId = String(formData.get("itemId") ?? "");
-
-  try {
-    const { primaryResearcherId } = await selfAssignBenchmarkItem(principal, itemId);
-    return { ok: true, primaryResearcherId };
-  } catch (error) {
-    // The repository raises BenchmarkItemAccessError for permission/not-found/
-    // not-in-pool/already-claimed — surface its message; anything else re-throws.
-    if (error instanceof BenchmarkItemAccessError) {
-      return { ok: false, message: error.message };
-    }
-    throw error;
-  }
 }
 
 // Server action backing the analyst QC list's inline Client Price edit (issue

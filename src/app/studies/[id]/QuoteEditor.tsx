@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  createMarketQuoteAction,
   addQuoteLineAction,
   updateDraftLineAction,
   updateMarketQuoteAction,
@@ -28,9 +27,9 @@ import {
 } from "@/domains/quotes/quote-line-form";
 
 // The Quote entry/edit form for a Researcher (#87, #97). A Market Quote is a dealer
-// DOCUMENT (source/date/currency) that has many Quote Lines. Modes:
-//   create     — capture the document header AND a first line, creating a one-line
-//                Market Quote (the common by-row case, ADR-0026);
+// DOCUMENT (source/date/currency) that has many Quote Lines. New documents are
+// seeded only through the Collect flow now (ADR-0038, #143); the modes here all
+// edit an EXISTING document:
 //   edit       — edit an existing Draft line's per-item fields;
 //   addLine    — add another Draft line to an EXISTING document (#97/Q5);
 //   editHeader — edit an existing Draft document's header (#97/Q6), allowed only
@@ -39,12 +38,11 @@ import {
 // only touches what was filled. Client Price is not a line field.
 
 type Mode =
-  | { type: "create"; studyId: string; country: string; itemId: string }
   | { type: "edit"; lineId: string }
   | { type: "addLine"; marketQuoteId: string; itemId: string }
   | { type: "editHeader"; marketQuoteId: string };
 
-// Document-header text fields (create only) and the line fields. Kept as plain
+// Document-header text fields (editHeader only) and the line fields. Kept as plain
 // [name, label] pairs to render a compact grid (ADR-0022: plain components).
 // Free-text header fields. Dealer Country and Currency are validated pickers
 // rendered separately (controlled, country drives the currency default — ADR-0032).
@@ -67,13 +65,13 @@ export function QuoteEditor({
   initial,
   onDone,
   // The market Country and Dealer Country the Landed Cost conditional reads (ADR-0035).
-  // In create mode the Dealer Country is the live header select and the market is
-  // mode.country; in edit/addLine both are fixed on the saved document and passed in.
+  // Both are fixed on the saved document and passed in (edit/addLine); editHeader's
+  // live country select feeds the currency default, not the Landed Cost conditional.
   marketCountry,
   dealerCountry,
   // Whether to show the Justification field — true only when editing a flagged line
   // the analyst returned to its author for a Justification (ADR-0014). A brand-new
-  // line (create/addLine) has no USD yet so is never flagged, hence the default.
+  // addLine has no USD yet so is never flagged, hence the default.
   showJustification = false,
 }: {
   mode: Mode;
@@ -112,9 +110,7 @@ export function QuoteEditor({
   // nothing, so a stale answer clears (like the discount chain). The Note nests under
   // Included? = Yes.
   const [landedCostIncluded, setLandedCostIncluded] = useState(initial?.landedCostIncluded ?? "");
-  const effectiveDealerCountry = mode.type === "create" ? country : dealerCountry;
-  const effectiveMarketCountry = mode.type === "create" ? mode.country : marketCountry;
-  const showLandedCost = landedCostApplies(effectiveDealerCountry, effectiveMarketCountry);
+  const showLandedCost = landedCostApplies(dealerCountry, marketCountry);
 
   function onCountryChange(next: string) {
     setCountry(next);
@@ -127,24 +123,7 @@ export function QuoteEditor({
     const fd = new FormData(event.currentTarget);
     setMessage(null);
     startTransition(async () => {
-      if (mode.type === "create") {
-        // Create the one-line document: header first (allocates the Market Quote
-        // Number), then its single line (allocates the Quote Line Number).
-        const doc = await createMarketQuoteAction(
-          mode.studyId,
-          mode.country,
-          headerFieldsFromForm(fd),
-        );
-        if (!doc.ok) {
-          setMessage(doc.message ?? "Couldn't create the Market Quote.");
-          return;
-        }
-        const line = await addQuoteLineAction(doc.id, mode.itemId, lineFieldsFromForm(fd));
-        if (!line.ok) {
-          setMessage(line.message ?? "Couldn't add the Quote Line.");
-          return;
-        }
-      } else if (mode.type === "addLine") {
+      if (mode.type === "addLine") {
         const line = await addQuoteLineAction(mode.marketQuoteId, mode.itemId, lineFieldsFromForm(fd));
         if (!line.ok) {
           setMessage(line.message ?? "Couldn't add the Quote Line.");
@@ -168,17 +147,15 @@ export function QuoteEditor({
     });
   }
 
-  const showHeader = mode.type === "create" || mode.type === "editHeader";
-  const showLine = mode.type === "create" || mode.type === "edit" || mode.type === "addLine";
+  const showHeader = mode.type === "editHeader";
+  const showLine = mode.type === "edit" || mode.type === "addLine";
   const submitLabel = pending
     ? "Saving…"
-    : mode.type === "create"
-      ? "Add quote"
-      : mode.type === "addLine"
-        ? "Add line"
-        : mode.type === "editHeader"
-          ? "Save details"
-          : "Save";
+    : mode.type === "addLine"
+      ? "Add line"
+      : mode.type === "editHeader"
+        ? "Save details"
+        : "Save";
 
   return (
     <form onSubmit={handle} style={{ display: "grid", gap: "0.4rem", margin: "0.5rem 0", padding: "0.6rem", border: "1px solid #ddd" }}>

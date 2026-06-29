@@ -3,7 +3,6 @@ import type { Principal } from "@/domains/authz/principal";
 import { isInternal } from "@/domains/authz/principal";
 import {
   canImportBenchmarkItems,
-  canSelfAssignBenchmarkItem,
   canMaintainClientPrice,
 } from "@/domains/authz/benchmark-items";
 import { getStudy } from "@/lib/studies/repository";
@@ -281,83 +280,6 @@ export async function listBenchmarkItemsForResearcher(
       orderBy: [{ country: "asc" }, { clientItemNumber: "asc" }],
       select: RESEARCHER_VIEW_SELECT,
     });
-  });
-}
-
-export interface SelfAssignResult {
-  /** The Primary Researcher now on the item — always the calling researcher. */
-  readonly primaryResearcherId: string;
-}
-
-/**
- * Self-assign a Benchmark Item, becoming its Primary Researcher (issue #7).
- *
- * Preconditions, in order: the caller is a Researcher (role-gated); the item
- * exists; and the caller already has a Country Assignment for the item's Country
- * (#6 — only the pool may work it). The claim itself is **first-come and never
- * stolen**: a conditional `updateMany` that only writes when `primaryResearcherId`
- * is still NULL, so two concurrent claimers cannot both win — exactly one update
- * affects a row. If the conditional write matches nothing, the item is already
- * claimed: by the caller → idempotent success; by someone else → rejected.
- *
- * Throws `BenchmarkItemAccessError` for permission, unknown-item,
- * not-in-pool, or already-claimed-by-another — none of which change the lead.
- */
-export async function selfAssignBenchmarkItem(
-  principal: Principal,
-  itemId: string,
-): Promise<SelfAssignResult> {
-  if (!canSelfAssignBenchmarkItem(principal)) {
-    throw new BenchmarkItemAccessError(
-      "Only Researchers may self-assign a Benchmark Item",
-    );
-  }
-
-  return withTenant(principal, async (tx) => {
-    const item = await tx.benchmarkItem.findUnique({
-      where: { id: itemId },
-      select: { id: true, studyId: true, country: true },
-    });
-    if (item === null) {
-      throw new BenchmarkItemAccessError(`Benchmark Item not found: ${itemId}`);
-    }
-
-    // The caller must be in the item's Country pool (#6). Only Researchers are ever
-    // in a pool, so this also re-confirms the role at the data layer.
-    const membership = await tx.countryAssignment.findFirst({
-      where: {
-        studyId: item.studyId,
-        country: item.country,
-        researcherId: principal.userId,
-      },
-      select: { id: true },
-    });
-    if (membership === null) {
-      throw new BenchmarkItemAccessError(
-        `Not assigned to Country "${item.country}" — ask the Engagement Manager`,
-      );
-    }
-
-    // Atomic first-come claim: writes only while the lead is still unclaimed.
-    const claimed = await tx.benchmarkItem.updateMany({
-      where: { id: itemId, primaryResearcherId: null },
-      data: { primaryResearcherId: principal.userId },
-    });
-    if (claimed.count === 1) {
-      return { primaryResearcherId: principal.userId };
-    }
-
-    // The claim matched no row: the item already has a primary researcher.
-    const current = await tx.benchmarkItem.findUnique({
-      where: { id: itemId },
-      select: { primaryResearcherId: true },
-    });
-    if (current?.primaryResearcherId === principal.userId) {
-      return { primaryResearcherId: principal.userId }; // idempotent re-claim
-    }
-    throw new BenchmarkItemAccessError(
-      `Benchmark Item ${itemId} already has a primary researcher`,
-    );
   });
 }
 

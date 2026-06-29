@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import {
   getBenchmarkItemForResearcher,
-  selfAssignBenchmarkItem,
   BenchmarkItemAccessError,
 } from "./repository";
 import { createStudy } from "@/lib/studies/repository";
@@ -155,54 +154,5 @@ describe("getBenchmarkItemForResearcher — guidance view, Client Price hidden",
     expect(Object.keys(view!)).not.toContain("clientPrice");
     // And nothing in the serialized payload carries the value.
     expect(JSON.stringify(view)).not.toContain("123.45");
-  });
-});
-
-describe("selfAssignBenchmarkItem — becoming the Primary Researcher", () => {
-  it("an assigned researcher claims an unclaimed item and becomes primary", async () => {
-    const result = await selfAssignBenchmarkItem(researcherA, germanyItemId);
-    expect(result.primaryResearcherId).toBe(researcherA.userId);
-
-    const view = await getBenchmarkItemForResearcher(researcherA, germanyItemId);
-    expect(view?.primaryResearcherId).toBe(researcherA.userId);
-  });
-
-  it("re-claiming one's own item is an idempotent no-op (still primary)", async () => {
-    // germanyItemId is already A's from the previous test.
-    const again = await selfAssignBenchmarkItem(researcherA, germanyItemId);
-    expect(again.primaryResearcherId).toBe(researcherA.userId);
-  });
-
-  it("first-come: another pool researcher cannot steal an already-claimed lead", async () => {
-    // C is in the Germany pool but A already holds germanyItemId.
-    await expect(
-      selfAssignBenchmarkItem(researcherC, germanyItemId),
-    ).rejects.toBeInstanceOf(BenchmarkItemAccessError);
-
-    // The lead is unchanged — still A.
-    const view = await getBenchmarkItemForResearcher(researcherC, germanyItemId);
-    expect(view?.primaryResearcherId).toBe(researcherA.userId);
-  });
-
-  it("rejects a researcher not in the item's Country pool, leaving it unclaimed", async () => {
-    // B is not assigned to Germany; germanyItem2Id is still unclaimed.
-    await expect(
-      selfAssignBenchmarkItem(researcherB, germanyItem2Id),
-    ).rejects.toBeInstanceOf(BenchmarkItemAccessError);
-
-    const view = await getBenchmarkItemForResearcher(researcherB, germanyItem2Id);
-    expect(view?.primaryResearcherId).toBeNull();
-  });
-
-  it("rejects a non-Researcher (an EM may run a study, not self-assign items)", async () => {
-    await expect(
-      selfAssignBenchmarkItem(em, germanyItem2Id),
-    ).rejects.toBeInstanceOf(BenchmarkItemAccessError);
-  });
-
-  it("rejects an unknown item id (not-found)", async () => {
-    await expect(
-      selfAssignBenchmarkItem(researcherA, randomUUID()),
-    ).rejects.toBeInstanceOf(BenchmarkItemAccessError);
   });
 });
