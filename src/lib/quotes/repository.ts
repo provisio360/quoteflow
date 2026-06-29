@@ -699,6 +699,73 @@ export async function listDraftMarketQuotesForResearcher(
   }));
 }
 
+/** One currently-Rejected line on the researcher's Needs-attention surface (#139,
+ *  ADR-0038): the author's own line awaiting revision, carrying the rejection
+ *  context the inbox shows (study/country/MQ#/line#, the analyst's reason) plus the
+ *  item label to triage which part to fix. `studyId` lets the row build the same
+ *  deep-link as the rejection Notification (`/studies/<id>#line-<n>`). NEVER carries
+ *  a Client Price — the list computes no flag, so the benchmark never crosses to a
+ *  researcher (ADR-0003). */
+export interface RejectedLineView {
+  readonly lineId: string;
+  readonly studyId: string;
+  readonly country: string;
+  readonly marketQuoteNumber: number;
+  readonly quoteLineNumber: number;
+  /** "<Client Item Number> <item description>" — the row's human handle. */
+  readonly itemLabel: string;
+  /** The analyst's snapshotted rejection reason (cleared on resubmit, so always
+   *  present here — a Rejected line has not been revised). For a flagged line it
+   *  states only the divergence direction, never the Client Price (ADR-0003). */
+  readonly reason: string | null;
+  readonly reviewedAt: Date | null;
+}
+
+/**
+ * List a Researcher's own currently-Rejected Quote Lines in a study — the
+ * Needs-attention surface (#139, ADR-0038's third researcher surface). Scope: lines
+ * the caller AUTHORED (`createdById`) whose `state` is still Rejected; revising one
+ * (Rejected→Draft) drops it from this list and surfaces it in the Drafts view
+ * instead. Read straight off the Quote Line (its `state` is the canonical truth and
+ * `rejectionReason` the frozen reason), NOT the transient Notification outbox
+ * (ADR-0020/0031) — so "revised ⇒ gone" needs no newest-per-line dismissal dance.
+ * Ordered newest-verdict-first (`reviewedAt desc`). No Client Price is selected
+ * (ADR-0003).
+ */
+export async function listRejectedLinesForResearcher(
+  principal: Principal,
+  studyId: string,
+): Promise<RejectedLineView[]> {
+  if (!isInternal(principal)) {
+    throw new QuoteAccessError("Internal staff only");
+  }
+  const rows = await withTenant(principal, (tx) =>
+    tx.quoteLine.findMany({
+      where: { studyId, createdById: principal.userId, state: "Rejected" },
+      select: {
+        id: true,
+        country: true,
+        quoteLineNumber: true,
+        rejectionReason: true,
+        reviewedAt: true,
+        marketQuote: { select: { marketQuoteNumber: true } },
+        benchmarkItem: { select: { clientItemNumber: true, itemDescription: true } },
+      },
+      orderBy: { reviewedAt: "desc" },
+    }),
+  );
+  return rows.map((r) => ({
+    lineId: r.id,
+    studyId,
+    country: r.country,
+    marketQuoteNumber: r.marketQuote.marketQuoteNumber,
+    quoteLineNumber: r.quoteLineNumber,
+    itemLabel: `${r.benchmarkItem.clientItemNumber} ${r.benchmarkItem.itemDescription}`,
+    reason: r.rejectionReason,
+    reviewedAt: r.reviewedAt,
+  }));
+}
+
 /**
  * Bulk-submit a Market Quote document (#88, ADR-0026): the ONE bulk transition.
  * Owner-only. Every Draft line in the document moves Draft→Submitted together,

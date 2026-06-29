@@ -10,6 +10,7 @@ import {
   deleteDraftLine,
   listLinesForItem,
   listDraftMarketQuotesForResearcher,
+  listRejectedLinesForResearcher,
   submitMarketQuote,
   approveLine,
   rejectLine,
@@ -914,6 +915,81 @@ describe("listDraftMarketQuotesForResearcher (#97 — document-grouped Draft vie
     const line = draftLine(await listDraftMarketQuotesForResearcher(researcherA, studyId), lineId);
     expect(line).toBeDefined();
     expect(line!.flagged).toBe(false);
+  });
+});
+
+describe("listRejectedLinesForResearcher (#139 — Needs-attention surface)", () => {
+  // Drive a line all the way to Rejected by its author, returning its id + number.
+  async function rejectedLine(
+    researcher: InternalPrincipal,
+    itemId: string,
+    reason: string,
+  ): Promise<{ id: string; quoteLineNumber: number }> {
+    const doc = await createMarketQuote(researcher, studyId, itemCountry(itemId), completeHeader);
+    const line = await addQuoteLine(researcher, doc.id, itemId, completeLine);
+    await submitMarketQuote(researcher, doc.id);
+    await rejectLine(analyst, line.id, reason);
+    return line;
+  }
+
+  it("lists the author's own Rejected line with study/country/MQ#/line#/item label/reason", async () => {
+    const { id } = await rejectedLine(researcherA, itemG1, "Please re-check the source.");
+    const doc = await prisma.quoteLine.findUnique({
+      where: { id },
+      select: { quoteLineNumber: true, marketQuote: { select: { marketQuoteNumber: true } } },
+    });
+
+    const rows = await listRejectedLinesForResearcher(researcherA, studyId);
+    const mine = rows.find((r) => r.lineId === id);
+    expect(mine).toBeDefined();
+    expect(mine!.studyId).toBe(studyId);
+    expect(mine!.country).toBe("Germany");
+    expect(mine!.marketQuoteNumber).toBe(doc!.marketQuote.marketQuoteNumber);
+    expect(mine!.quoteLineNumber).toBe(doc!.quoteLineNumber);
+    expect(mine!.itemLabel).toBe("G1 Item G1");
+    expect(mine!.reason).toBe("Please re-check the source.");
+  });
+
+  it("excludes a peer's Rejected line — only the author's own appear", async () => {
+    const { id } = await rejectedLine(researcherB, itemG1, "Peer's reject.");
+    const rows = await listRejectedLinesForResearcher(researcherA, studyId);
+    expect(rows.some((r) => r.lineId === id)).toBe(false);
+  });
+
+  it("excludes the author's non-Rejected lines (Draft / Submitted / Approved)", async () => {
+    // Draft
+    const draftDoc = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const draft = await addQuoteLine(researcherA, draftDoc.id, itemG1, completeLine);
+    // Approved
+    const apprId = await submittedConverted(researcherA, itemG2, 130);
+    await approveLine(analyst, apprId);
+    // Submitted (left in review)
+    const subDoc = await createMarketQuote(researcherA, studyId, "France", completeHeader);
+    const submitted = await addQuoteLine(researcherA, subDoc.id, itemF1, completeLine);
+    await submitMarketQuote(researcherA, subDoc.id);
+
+    const ids = new Set((await listRejectedLinesForResearcher(researcherA, studyId)).map((r) => r.lineId));
+    expect(ids.has(draft.id)).toBe(false);
+    expect(ids.has(apprId)).toBe(false);
+    expect(ids.has(submitted.id)).toBe(false);
+  });
+
+  it("drops a line once it is revised back to Draft (it returns to the Drafts surface)", async () => {
+    const { id } = await rejectedLine(researcherA, itemG1, "Fix and resubmit.");
+    expect((await listRejectedLinesForResearcher(researcherA, studyId)).some((r) => r.lineId === id)).toBe(true);
+
+    await reviseLine(researcherA, id); // Rejected → Draft
+    expect((await listRejectedLinesForResearcher(researcherA, studyId)).some((r) => r.lineId === id)).toBe(false);
+  });
+
+  it("orders newest analyst verdict first (reviewedAt desc)", async () => {
+    const first = await rejectedLine(researcherA, itemG1, "First.");
+    const second = await rejectedLine(researcherA, itemG2, "Second.");
+
+    const rows = await listRejectedLinesForResearcher(researcherA, studyId);
+    const firstAt = rows.findIndex((r) => r.lineId === first.id);
+    const secondAt = rows.findIndex((r) => r.lineId === second.id);
+    expect(secondAt).toBeLessThan(firstAt); // the later rejection sorts above the earlier
   });
 });
 
