@@ -182,6 +182,32 @@ describe("buildClientExport — client_final_report detail sheet", () => {
       null,
     ]);
   });
+
+  // Detail rows follow the catalog order (ADR-0040): document-major, then Client
+  // Source Unit (A→Z, nulls last) → Client Item Number (A→Z) — the same order the
+  // Internal Export uses. An item priced by several documents repeats under each.
+  it("orders detail rows document-major then by source unit and item number, across items", () => {
+    const wb = buildClientExport("Boznia", [
+      item({
+        market: "Brazil",
+        clientSourceUnit: "BBB",
+        clientItemNumber: "200",
+        quotes: [line({ rowId: 1, marketQuoteNumber: 2 }), line({ rowId: 2, marketQuoteNumber: 1 })],
+      }),
+      item({
+        market: "Brazil",
+        clientSourceUnit: "AAA",
+        clientItemNumber: "100",
+        quotes: [line({ rowId: 3, marketQuoteNumber: 1 }), line({ rowId: 4, marketQuoteNumber: 2 })],
+      }),
+    ]);
+    expect(wb.sheets[0].rows.map((r) => [r.marketQuoteNumber, r.clientSourceUnit, r.clientItemNumber])).toEqual([
+      [1, "AAA", "100"],
+      [1, "BBB", "200"],
+      [2, "AAA", "100"],
+      [2, "BBB", "200"],
+    ]);
+  });
 });
 
 describe("buildClientExport — global Summary sheet", () => {

@@ -5,6 +5,7 @@ import {
   type IncompleteLine,
   type LineRequiredField,
 } from "@/domains/quotes/lifecycle";
+import { compareBySourceUnitThenItem } from "@/domains/ordering/line-order";
 
 const DOC_FIELDS = new Set<string>(DOC_REQUIRED_TO_SUBMIT);
 
@@ -61,7 +62,13 @@ export function researcherCountryGroups(
     });
     byCountry.set(item.country, list);
   }
-  return [...byCountry.entries()].map(([country, list]) => ({ country, items: list }));
+  // Within each Country the parts follow the catalog order's part-only degrade
+  // (ADR-0040): Client Source Unit (A→Z, nulls last) → Client Item Number (A→Z).
+  // There is no Market Quote yet on this Collect surface, so the document key drops.
+  return [...byCountry.entries()].map(([country, list]) => ({
+    country,
+    items: [...list].sort(compareBySourceUnitThenItem),
+  }));
 }
 
 /** A Benchmark Item the researcher may add a line for, with its picker label. */

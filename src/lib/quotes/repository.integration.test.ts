@@ -69,7 +69,7 @@ const completeLine: QuoteLineFields = {
   warrantyOffered: false,
 };
 
-async function seedItem(country: string, n: string): Promise<string> {
+async function seedItem(country: string, n: string, clientSourceUnit: string | null = null): Promise<string> {
   const row = await prisma.benchmarkItem.create({
     data: {
       studyId,
@@ -78,6 +78,7 @@ async function seedItem(country: string, n: string): Promise<string> {
       clientItemNumber: n,
       clientItemNumberKey: n.toLowerCase(),
       itemDescription: `Item ${n}`,
+      clientSourceUnit,
       requiredQuotes: 2,
       requiredCompetitors: [],
       clientPrice: "123.4500",
@@ -1137,6 +1138,29 @@ describe("listDraftMarketQuotesForResearcher (#97 — document-grouped Draft vie
     expect(mine!.conversionStatus).toBeNull(); // never submitted
     // Both Draft lines, each with its Benchmark Item label for the panel row.
     expect(mine!.lines.map((l) => l.itemLabel).sort()).toEqual(["G1 Item G1", "G2 Item G2"]);
+  });
+
+  it("orders a document's Draft lines by Client Source Unit (A→Z, nulls last) then Client Item Number (ADR-0040)", async () => {
+    const x = await seedItem("Germany", "300", "ITR");
+    const y = await seedItem("Germany", "100", "BRC");
+    const z = await seedItem("Germany", "200", "BRC");
+    const w = await seedItem("Germany", "050", null);
+
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    // Add out of target order to prove the sort, not insertion order.
+    await addQuoteLine(researcherA, d.id, x, completeLine);
+    await addQuoteLine(researcherA, d.id, w, completeLine);
+    await addQuoteLine(researcherA, d.id, z, completeLine);
+    await addQuoteLine(researcherA, d.id, y, completeLine);
+
+    const groups = await listDraftMarketQuotesForResearcher(researcherA, studyId);
+    const mine = groups.find((g) => g.marketQuoteId === d.id);
+    expect(mine!.lines.map((l) => l.itemLabel)).toEqual([
+      "100 Item 100", // BRC
+      "200 Item 200", // BRC
+      "300 Item 300", // ITR
+      "050 Item 050", // null → last
+    ]);
   });
 
   it("shows only the Draft lines of a partially-submitted document", async () => {

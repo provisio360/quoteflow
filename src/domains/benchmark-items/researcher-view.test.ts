@@ -57,6 +57,20 @@ describe("researcherCountryGroups", () => {
     expect(groups.map((g) => g.country)).toEqual(["Germany"]);
     expect(groups.flatMap((g) => g.items.map((i) => i.id))).toEqual(["mine"]);
   });
+
+  it("orders a Country's parts by Client Source Unit (A→Z, nulls last) then Client Item Number (ADR-0040)", () => {
+    const groups = researcherCountryGroups(
+      [
+        item({ id: "a", country: "Germany", clientSourceUnit: "Model Z", clientItemNumber: "100" }),
+        item({ id: "b", country: "Germany", clientSourceUnit: "Model A", clientItemNumber: "200" }),
+        item({ id: "c", country: "Germany", clientSourceUnit: "Model A", clientItemNumber: "100" }),
+        item({ id: "d", country: "Germany", clientSourceUnit: null, clientItemNumber: "001" }),
+      ],
+      new Set(["Germany"]),
+    );
+
+    expect(groups[0].items.map((i) => i.id)).toEqual(["c", "b", "a", "d"]);
+  });
 });
 
 describe("quoteGroups", () => {

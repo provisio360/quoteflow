@@ -22,7 +22,9 @@ constant `"USD"`.
 - **One detail sheet per workbook, named after the study** (sanitized + truncated
   to Excel's 31-char limit), with `Market` as a column. Multiple countries are
   more rows, sorted Market → Client Item Number → Quote Line Number — never
-  separate tabs.
+  separate tabs. **(Row order superseded by ADR-0040:** ordering is now
+  document-major — Market Quote Number → Client Source Unit (A→Z) → Client Item
+  Number (A→Z). The column/cell/keying decisions below still stand.)
 - **The column set is a fixed superset** matching the artifact exactly. Columns
   with no backing schema field — the 5 competitor-descriptive ones (Competitor
   Category, Source Unit, Source Unit Identifier, Item Offering, Item Secondary

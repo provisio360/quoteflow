@@ -286,3 +286,76 @@ describe("buildInternalExport — analyst_tracker shape", () => {
     ]);
   });
 });
+
+// Row ordering is document-major and alphabetical (ADR-0040, superseding ADR-0029's
+// row-order clause): Market → Market Quote Number → Client Source Unit (A→Z, nulls
+// last) → Client Item Number (A→Z). The same dealer document's lines cluster
+// together; an item priced by several documents repeats under each.
+describe("buildInternalExport — row ordering (ADR-0040)", () => {
+  it("orders rows document-major: a Market Quote's lines all precede the next document's", () => {
+    const wb = buildInternalExport(
+      "Boznia",
+      [
+        line({ rowId: 1, marketQuoteNumber: 2, clientItemNumber: "A" }),
+        line({ rowId: 2, marketQuoteNumber: 1, clientItemNumber: "A" }),
+        line({ rowId: 3, marketQuoteNumber: 2, clientItemNumber: "B" }),
+        line({ rowId: 4, marketQuoteNumber: 1, clientItemNumber: "B" }),
+      ],
+      0.25,
+    );
+    expect(wb.sheets[0].rows.map((r) => r.marketQuoteNumber)).toEqual([1, 1, 2, 2]);
+  });
+
+  it("within a document, orders by Client Source Unit A→Z then Client Item Number A→Z", () => {
+    const wb = buildInternalExport(
+      "Boznia",
+      [
+        line({ rowId: 1, marketQuoteNumber: 1, clientSourceUnit: "ITR336490G", clientItemNumber: "300254" }),
+        line({ rowId: 2, marketQuoteNumber: 1, clientSourceUnit: "BRC8T450X", clientItemNumber: "579952" }),
+        line({ rowId: 3, marketQuoteNumber: 1, clientSourceUnit: "BRC8T450X", clientItemNumber: "209801" }),
+        line({ rowId: 4, marketQuoteNumber: 1, clientSourceUnit: "ITR336490G", clientItemNumber: "186095" }),
+      ],
+      0.25,
+    );
+    expect(wb.sheets[0].rows.map((r) => [r.clientSourceUnit, r.clientItemNumber])).toEqual([
+      ["BRC8T450X", "209801"],
+      ["BRC8T450X", "579952"],
+      ["ITR336490G", "186095"],
+      ["ITR336490G", "300254"],
+    ]);
+  });
+
+  it("sorts items with no Client Source Unit last within a document", () => {
+    const wb = buildInternalExport(
+      "Boznia",
+      [
+        line({ rowId: 1, marketQuoteNumber: 1, clientSourceUnit: null, clientItemNumber: "111" }),
+        line({ rowId: 2, marketQuoteNumber: 1, clientSourceUnit: "AAA", clientItemNumber: "999" }),
+        line({ rowId: 3, marketQuoteNumber: 1, clientSourceUnit: null, clientItemNumber: "000" }),
+      ],
+      0.25,
+    );
+    expect(wb.sheets[0].rows.map((r) => [r.clientSourceUnit, r.clientItemNumber])).toEqual([
+      ["AAA", "999"],
+      [null, "000"],
+      [null, "111"],
+    ]);
+  });
+
+  it("ranks Market above Market Quote Number (countries stay grouped, low quote number first)", () => {
+    const wb = buildInternalExport(
+      "Boznia",
+      [
+        line({ rowId: 1, market: "France", marketQuoteNumber: 1 }),
+        line({ rowId: 2, market: "Brazil", marketQuoteNumber: 9 }),
+        line({ rowId: 3, market: "Brazil", marketQuoteNumber: 2 }),
+      ],
+      0.25,
+    );
+    expect(wb.sheets[0].rows.map((r) => [r.market, r.marketQuoteNumber])).toEqual([
+      ["Brazil", 2],
+      ["Brazil", 9],
+      ["France", 1],
+    ]);
+  });
+});

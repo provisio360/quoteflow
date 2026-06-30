@@ -12,6 +12,7 @@
 import type { Cell, Column, SheetData, WorkbookData } from "./workbook";
 import { yesNo, naWhenOff, composeSourceLocation } from "./cells";
 import { buildItemDashboards } from "@/domains/analytics/dashboard";
+import { compareCatalogOrder } from "@/domains/ordering/line-order";
 
 /** One released + approved Quote Line as the client detail reads it: the line and
  *  its parent document's facts, never the item's Client Price. `convertedPricePerUnit`
@@ -140,11 +141,21 @@ export function buildClientExport(
 }
 
 function detailSheet(studyName: string, items: readonly ClientExportItem[]): SheetData {
+  // Flatten to (item, line) pairs, then order by the catalog order (ADR-0040):
+  // document-major across the whole study, so an item priced by several documents
+  // repeats under each. The item carries Market / Source Unit / Item Number; the
+  // line carries the Market Quote Number.
+  const pairs = items.flatMap((item) => item.quotes.map((l) => ({ item, l })));
+  pairs.sort((a, b) =>
+    compareCatalogOrder(
+      { market: a.item.market, marketQuoteNumber: a.l.marketQuoteNumber, clientSourceUnit: a.item.clientSourceUnit, clientItemNumber: a.item.clientItemNumber },
+      { market: b.item.market, marketQuoteNumber: b.l.marketQuoteNumber, clientSourceUnit: b.item.clientSourceUnit, clientItemNumber: b.item.clientItemNumber },
+    ),
+  );
   const rows: Record<string, Cell>[] = [];
-  for (const item of items) {
-    for (const l of item.quotes) {
-      const discountOn = l.discountAvailable === true && l.discountApplied === true;
-      rows.push({
+  for (const { item, l } of pairs) {
+    const discountOn = l.discountAvailable === true && l.discountApplied === true;
+    rows.push({
         rowId: l.rowId,
         market: item.market,
         marketQuoteNumber: l.marketQuoteNumber,
@@ -196,7 +207,6 @@ function detailSheet(studyName: string, items: readonly ClientExportItem[]): She
         otherNotes2: l.otherNotes2,
         confidenceCode: l.confidenceCode,
       });
-    }
   }
   return { name: studyName, columns: DETAIL_COLUMNS, rows };
 }
