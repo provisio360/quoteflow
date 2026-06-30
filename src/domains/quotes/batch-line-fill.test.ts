@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   batchStampFields,
+  brandGroup,
   discountGroup,
   landedCostGroup,
   leadTimeGroup,
@@ -15,12 +16,13 @@ import {
 // (`quote-line-form.ts`), where an empty field is `undefined` (omit, "don't touch").
 
 // `batchStampFields` is the merge the Quote Group Collect dealer step uses to
-// stamp the five groups onto EACH line at creation (ADR-0038, #141). It spreads the
+// stamp the six groups onto EACH line at creation (ADR-0038, #141). It spreads the
 // same per-group builders (so the create-time stamp can never diverge from the
 // Drafts-surface panel), and includes the Landed Cost group ONLY when the document is
 // cross-border — exactly as the entry form unmounts the field domestically (ADR-0035).
 describe("batchStampFields", () => {
   const filled: BatchGroupValues = {
+    competitorBrand: "Acme",
     stockStatus: "In stock",
     leadTimeValue: "3",
     leadTimeUnit: "weeks",
@@ -37,8 +39,9 @@ describe("batchStampFields", () => {
     discountValue: "15",
   };
 
-  it("cross-border: spreads all five groups (landed cost included)", () => {
+  it("cross-border: spreads all six groups (landed cost included)", () => {
     expect(batchStampFields(filled, true)).toEqual({
+      competitorBrand: "Acme",
       stockStatus: "In stock",
       leadTimeValue: 3,
       leadTimeUnit: "weeks",
@@ -60,9 +63,23 @@ describe("batchStampFields", () => {
     const stamped = batchStampFields(filled, false);
     expect(stamped).not.toHaveProperty("landedCostIncluded");
     expect(stamped).not.toHaveProperty("landedCostNote");
-    // The other four groups are unaffected.
+    // The other five groups are unaffected.
+    expect(stamped.competitorBrand).toBe("Acme");
     expect(stamped.stockStatus).toBe("In stock");
     expect(stamped.discountApplied).toBe(true);
+  });
+});
+
+// The Competitor brand group (ADR-0039): brand is the one competitor field uniform
+// across a document, so it batches as a free-text single field — empty-is-clear like
+// the other text groups. competitorPartNumber/Description stay per-line (not here).
+describe("brandGroup", () => {
+  it("carries a chosen brand through", () => {
+    expect(brandGroup("Acme")).toEqual({ competitorBrand: "Acme" });
+  });
+
+  it("maps an empty value to null (stamp blank / clear-all)", () => {
+    expect(brandGroup("")).toEqual({ competitorBrand: null });
   });
 });
 

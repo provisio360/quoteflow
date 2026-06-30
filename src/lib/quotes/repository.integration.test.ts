@@ -379,6 +379,7 @@ describe("seedMarketQuote — Quote Group Collect seam (ADR-0038, #140)", () => 
     // A cross-border (France dealer → Germany market) document, so Landed Cost applies.
     const stamp = batchStampFields(
       {
+        competitorBrand: "Acme",
         stockStatus: "In stock",
         leadTimeValue: "3",
         leadTimeUnit: "weeks",
@@ -432,6 +433,7 @@ describe("seedMarketQuote — Quote Group Collect seam (ADR-0038, #140)", () => 
     // Same-country (Germany dealer → Germany market): the merge drops Landed Cost.
     const stamp = batchStampFields(
       {
+        competitorBrand: "Acme",
         stockStatus: "In stock",
         leadTimeValue: "",
         leadTimeUnit: "",
@@ -466,6 +468,7 @@ describe("seedMarketQuote — Quote Group Collect seam (ADR-0038, #140)", () => 
     const later = await seedItem("Germany", `SD7b-${randomUUID().slice(0, 8)}`);
     const stamp = batchStampFields(
       {
+        competitorBrand: "Acme",
         stockStatus: "In stock",
         leadTimeValue: "3",
         leadTimeUnit: "weeks",
