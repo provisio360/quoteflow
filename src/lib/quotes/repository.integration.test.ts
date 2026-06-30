@@ -561,7 +561,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const l1 = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
     const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine); // no stock status
 
-    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" });
+    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" }, [l1.id, l2.id]);
 
     const lines = await prisma.quoteLine.findMany({
       where: { id: { in: [l1.id, l2.id] } },
@@ -580,13 +580,13 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const subLine = await addQuoteLine(researcherA, subDoc.id, itemG2, { ...completeLine, stockStatus: "In stock" });
     await submitMarketQuote(researcherA, subDoc.id); // subLine → Submitted
 
-    await batchUpdateDraftLines(researcherA, subDoc.id, { stockStatus: "Out of stock" });
+    await batchUpdateDraftLines(researcherA, subDoc.id, { stockStatus: "Out of stock" }, [subLine.id]);
 
     const sub = await prisma.quoteLine.findUnique({ where: { id: subLine.id }, select: { state: true, stockStatus: true } });
     expect(sub).toMatchObject({ state: "Submitted", stockStatus: "In stock" }); // untouched
 
     // And the Draft document still fills normally (control).
-    await batchUpdateDraftLines(researcherA, draftDoc.id, { stockStatus: "Out of stock" });
+    await batchUpdateDraftLines(researcherA, draftDoc.id, { stockStatus: "Out of stock" }, [draftLine.id]);
     const drafted = await prisma.quoteLine.findUnique({ where: { id: draftLine.id }, select: { stockStatus: true } });
     expect(drafted?.stockStatus).toBe("Out of stock");
   });
@@ -596,11 +596,12 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
     const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
 
-    await batchUpdateDraftLines(researcherA, d.id, leadTimeGroup("3", "weeks"));
+    await batchUpdateDraftLines(researcherA, d.id, leadTimeGroup("3", "weeks"), [l1.id, l2.id]);
     await batchUpdateDraftLines(
       researcherA,
       d.id,
       warrantyGroup("true", "12,000", "miles", "5", "years"),
+      [l1.id, l2.id],
     );
 
     const lines = await prisma.quoteLine.findMany({
@@ -646,8 +647,9 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
       researcherA,
       d.id,
       warrantyGroup("true", "3", "year", "", ""),
+      [l1.id],
     );
-    await batchUpdateDraftLines(researcherA, d.id, warrantyGroup("false", "", "", "", ""));
+    await batchUpdateDraftLines(researcherA, d.id, warrantyGroup("false", "", "", "", ""), [l1.id]);
 
     const after = await prisma.quoteLine.findUnique({
       where: { id: l1.id },
@@ -672,7 +674,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
     const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
 
-    await batchUpdateDraftLines(researcherA, d.id, leadTimeGroup("3", ""));
+    await batchUpdateDraftLines(researcherA, d.id, leadTimeGroup("3", ""), [l1.id]);
 
     const after = await prisma.quoteLine.findUnique({
       where: { id: l1.id },
@@ -689,7 +691,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
     const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
 
-    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("true", "ships DDP"));
+    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("true", "ships DDP"), [l1.id, l2.id]);
 
     const lines = await prisma.quoteLine.findMany({
       where: { id: { in: [l1.id, l2.id] } },
@@ -703,9 +705,9 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
   it("clears a stale note when the chain is re-stamped as No (#130)", async () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
     const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
-    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("true", "ships DDP"));
+    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("true", "ships DDP"), [l1.id]);
 
-    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("false", ""));
+    await batchUpdateDraftLines(researcherA, d.id, landedCostGroup("false", ""), [l1.id]);
 
     const after = await prisma.quoteLine.findUnique({
       where: { id: l1.id },
@@ -719,7 +721,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const line = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
 
     await expect(
-      batchUpdateDraftLines(researcherB, d.id, { stockStatus: "Out of stock" }),
+      batchUpdateDraftLines(researcherB, d.id, { stockStatus: "Out of stock" }, [line.id]),
     ).rejects.toThrow(QuoteAccessError);
 
     const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { stockStatus: true } });
@@ -731,7 +733,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     await addQuoteLine(researcherA, d.id, itemG1, completeLine);
     const clientUser = { kind: "client", userId: randomUUID(), tenantId } as const;
     await expect(
-      batchUpdateDraftLines(clientUser, d.id, { stockStatus: "Out of stock" }),
+      batchUpdateDraftLines(clientUser, d.id, { stockStatus: "Out of stock" }, []),
     ).rejects.toThrow(QuoteAccessError);
   });
 
@@ -741,7 +743,7 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
     const line = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
 
-    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: null });
+    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: null }, [line.id]);
 
     const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { stockStatus: true } });
     expect(after?.stockStatus).toBeNull();
@@ -749,14 +751,91 @@ describe("batch line-fill (#128 / ADR-0036)", () => {
 
   it("produces no audit event (a Draft write is not in the audited set, ADR-0036)", async () => {
     const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
-    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
-    await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
 
     const before = await prisma.auditEvent.count({ where: { studyId } });
-    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" });
+    await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" }, [l1.id, l2.id]);
     const after = await prisma.auditEvent.count({ where: { studyId } });
 
     expect(after).toBe(before); // batch pushes nothing to the audit log
+  });
+});
+
+describe("batch line-fill targets a selected set of lines (#151 / ADR-0039)", () => {
+  it("stamps only the selected Draft lines, leaving the unselected ones untouched", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const a = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+    const b = await addQuoteLine(researcherA, d.id, itemG2, { ...completeLine, stockStatus: "In stock" });
+
+    const written = await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" }, [a.id]);
+
+    expect(written).toBe(1);
+    const lines = await prisma.quoteLine.findMany({
+      where: { id: { in: [a.id, b.id] } },
+      select: { id: true, stockStatus: true },
+    });
+    const byId = new Map(lines.map((l) => [l.id, l.stockStatus]));
+    expect(byId.get(a.id)).toBe("Out of stock");
+    expect(byId.get(b.id)).toBe("In stock"); // unselected — untouched
+  });
+
+  it("drops a requested id that left Draft in another tab, stamping the rest (intersect-silently)", async () => {
+    // The selected set was captured while both were Draft; one is submitted before the
+    // apply lands. The writer narrows to the still-writable line — no error path.
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const stillDraft = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+    const raced = await addQuoteLine(researcherA, d.id, itemG2, { ...completeLine, stockStatus: "In stock" });
+
+    // Bulk submit moves EVERY Draft line on the document at once, so it can't leave one
+    // Draft sibling behind. Model the per-line race directly: push just `raced` out of Draft.
+    await prisma.quoteLine.update({ where: { id: raced.id }, data: { state: "Submitted" } });
+
+    const written = await batchUpdateDraftLines(
+      researcherA,
+      d.id,
+      { stockStatus: "Out of stock" },
+      [stillDraft.id, raced.id],
+    );
+
+    expect(written).toBe(1); // only the still-Draft line
+    const after = await prisma.quoteLine.findMany({
+      where: { id: { in: [stillDraft.id, raced.id] } },
+      select: { id: true, stockStatus: true },
+    });
+    const byId = new Map(after.map((l) => [l.id, l.stockStatus]));
+    expect(byId.get(stillDraft.id)).toBe("Out of stock");
+    expect(byId.get(raced.id)).toBe("In stock"); // dropped — left Draft
+  });
+
+  it("drops a foreign id belonging to another document, writing only this document's lines", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const mine = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+
+    const other = await createMarketQuote(researcherA, studyId, "France", { ...completeHeader, sourceCountry: "France", currency: "EUR" });
+    const foreign = await addQuoteLine(researcherA, other.id, itemF1, { ...completeLine, stockStatus: "In stock" });
+
+    const written = await batchUpdateDraftLines(
+      researcherA,
+      d.id,
+      { stockStatus: "Out of stock" },
+      [mine.id, foreign.id],
+    );
+
+    expect(written).toBe(1); // scoped by marketQuoteId — the foreign id never matches
+    const foreignAfter = await prisma.quoteLine.findUnique({ where: { id: foreign.id }, select: { stockStatus: true } });
+    expect(foreignAfter?.stockStatus).toBe("In stock"); // untouched — different document
+  });
+
+  it("writes nothing for an empty selection, returning 0 (the disabled-button server backstop)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const line = await addQuoteLine(researcherA, d.id, itemG1, { ...completeLine, stockStatus: "In stock" });
+
+    const written = await batchUpdateDraftLines(researcherA, d.id, { stockStatus: "Out of stock" }, []);
+
+    expect(written).toBe(0);
+    const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { stockStatus: true } });
+    expect(after?.stockStatus).toBe("In stock"); // unchanged
   });
 });
 

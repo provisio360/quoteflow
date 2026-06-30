@@ -463,13 +463,23 @@ export async function updateDraftLine(
  * stay line-level and per-line edit remains the override path. No new validation
  * (the document submit gate still catches half-pairs), no audit event, no
  * notification — Draft writes are not in the audited set and push nothing.
+ *
+ * The apply targets a chosen subset of the document's Draft lines (#151 / ADR-0039):
+ * `lineIds` narrows the `updateMany` to the **intersection** of the requested ids
+ * with {this document's Draft lines owned by the principal}. Ids that are foreign or
+ * no longer writable (submitted in another tab) simply fail the `id IN (…)` filter and
+ * are **dropped without error** — the owner/Draft gate above stays authoritative, the
+ * subset only narrows which rows it writes. An empty `lineIds` writes nothing (0). The
+ * caller always passes an explicit set — there is no "empty means all" path (ADR-0039);
+ * "all" is every id. Returns the count actually written.
  */
 export async function batchUpdateDraftLines(
   principal: Principal,
   marketQuoteId: string,
   group: QuoteLineFields,
-): Promise<void> {
-  await withTenant(principal, async (tx) => {
+  lineIds: string[],
+): Promise<number> {
+  return withTenant(principal, async (tx) => {
     if (!isInternal(principal)) {
       throw new QuoteAccessError("Internal staff only");
     }
@@ -483,10 +493,11 @@ export async function batchUpdateDraftLines(
     if (doc.createdById !== principal.userId) {
       throw new QuoteAccessError("Only the document's author may batch-fill its lines");
     }
-    await tx.quoteLine.updateMany({
-      where: { marketQuoteId, state: "Draft" },
+    const result = await tx.quoteLine.updateMany({
+      where: { id: { in: lineIds }, marketQuoteId, state: "Draft" },
       data: toData(group),
     });
+    return result.count;
   });
 }
 
