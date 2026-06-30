@@ -12,6 +12,7 @@
 import type { Cell, Column, WorkbookData } from "./workbook";
 import { yesNo, naWhenOff, composeSourceLocation } from "./cells";
 import { evaluatePriceFlag } from "@/domains/quotes/price-flag";
+import { compareCatalogOrder } from "@/domains/ordering/line-order";
 
 /** One non-Draft Quote Line as the analyst_tracker reads it: line fields joined to
  *  the parent document's facts, plus the item context the analyst needs (Client
@@ -144,7 +145,8 @@ export function buildInternalExport(
   lines: readonly InternalExportLine[],
   threshold: number,
 ): WorkbookData {
-  const rows: Record<string, Cell>[] = lines.map((l) => {
+  const ordered = [...lines].sort(compareCatalogOrder);
+  const rows: Record<string, Cell>[] = ordered.map((l) => {
     const flag = evaluatePriceFlag({
       usdPricePerUnit: l.convertedPricePerUnit,
       clientPrice: l.clientItemPriceUsd,

@@ -25,6 +25,7 @@ import { auditQuoteLifecycle, auditDocumentSubmit, auditManualRateOverride } fro
 import { recordNotifications } from "@/lib/notifications/dispatch";
 import { notifyQuoteRejected } from "@/domains/notifications/events";
 import type { PartProgress } from "@/domains/benchmark-items/researcher-view";
+import { compareBySourceUnitThenItem } from "@/domains/ordering/line-order";
 
 // Tenant-aware data-access adapter for the Market Quote aggregate (#87, ADR-0026).
 // A Market Quote (dealer DOCUMENT) is created by a Researcher and gathers many
@@ -704,6 +705,7 @@ export async function listDraftMarketQuotesForResearcher(
             benchmarkItem: {
               select: {
                 clientItemNumber: true,
+                clientSourceUnit: true,
                 itemDescription: true,
                 clientPrice: true,
                 qcThreshold: true,
@@ -728,8 +730,17 @@ export async function listDraftMarketQuotesForResearcher(
     conversionStatus: r.conversionStatus as ConversionStatus | null,
     // Only the Draft lines are shown (the set the bulk Submit moves); every item on
     // the document — any state — is barred from add-line (one line per item per doc).
+    // Ordered within the document by the catalog order (ADR-0040): Client Source
+    // Unit (A→Z, nulls last) → Client Item Number (A→Z); Market and Market Quote
+    // Number are constant across one document.
     lines: r.quoteLines
       .filter((l) => l.state === "Draft")
+      .sort((a, b) =>
+        compareBySourceUnitThenItem(
+          { clientSourceUnit: a.benchmarkItem.clientSourceUnit, clientItemNumber: a.benchmarkItem.clientItemNumber },
+          { clientSourceUnit: b.benchmarkItem.clientSourceUnit, clientItemNumber: b.benchmarkItem.clientItemNumber },
+        ),
+      )
       .map((l) => ({
         lineId: l.id,
         quoteLineNumber: l.quoteLineNumber,
