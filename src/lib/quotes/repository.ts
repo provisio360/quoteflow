@@ -548,6 +548,44 @@ export async function deleteDraftLine(principal: Principal, lineId: string): Pro
 }
 
 /**
+ * Hard-delete a chosen subset of a Market Quote document's Draft lines in one shot
+ * (the researcher draft view's "Delete selected"). The mirror of `batchUpdateDraftLines`
+ * but destructive: same DOCUMENT-level gate (owner-only, the author who created the
+ * document) and the same intersect-silently subset semantics — `lineIds` narrows the
+ * `deleteMany` to the intersection of the requested ids with {this document's Draft
+ * lines}. Ids that are foreign or no longer Draft (submitted in another tab) fail the
+ * `id IN (…)` / `state: "Draft"` filter and are dropped without error. An empty `lineIds`
+ * deletes nothing (0). Like the single-line discard, deleted `quoteLineSeq` numbers are
+ * NOT rewound — each becomes a permanent gap, never reused (ADR-0026). Returns the count
+ * actually deleted.
+ */
+export async function batchDeleteDraftLines(
+  principal: Principal,
+  marketQuoteId: string,
+  lineIds: string[],
+): Promise<number> {
+  return withTenant(principal, async (tx) => {
+    if (!isInternal(principal)) {
+      throw new QuoteAccessError("Internal staff only");
+    }
+    const doc = await tx.marketQuote.findUnique({
+      where: { id: marketQuoteId },
+      select: { createdById: true },
+    });
+    if (doc === null) {
+      throw new QuoteAccessError(`Market Quote not found: ${marketQuoteId}`);
+    }
+    if (doc.createdById !== principal.userId) {
+      throw new QuoteAccessError("Only the document's author may delete its lines");
+    }
+    const result = await tx.quoteLine.deleteMany({
+      where: { id: { in: lineIds }, marketQuoteId, state: "Draft" },
+    });
+    return result.count;
+  });
+}
+
+/**
  * List the Quote Lines on a Benchmark Item that the caller may read (issue #8 read
  * AC, ported). Internal staff only. Draft privacy (ADR-0011): the caller sees their
  * own lines in any state, plus other authors' lines only once they have left Draft.

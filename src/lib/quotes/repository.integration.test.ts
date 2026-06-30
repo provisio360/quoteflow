@@ -9,6 +9,7 @@ import {
   batchUpdateDraftLines,
   updateMarketQuote,
   deleteDraftLine,
+  batchDeleteDraftLines,
   listLinesForItem,
   listDraftMarketQuotesForResearcher,
   listRejectedLinesForResearcher,
@@ -837,6 +838,72 @@ describe("batch line-fill targets a selected set of lines (#151 / ADR-0039)", ()
     expect(written).toBe(0);
     const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { stockStatus: true } });
     expect(after?.stockStatus).toBe("In stock"); // unchanged
+  });
+});
+
+describe("bulk-delete a selected set of Draft lines (researcher draft view)", () => {
+  it("deletes only the selected Draft lines, leaving the unselected ones untouched", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const a = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const b = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+
+    const deleted = await batchDeleteDraftLines(researcherA, d.id, [a.id]);
+
+    expect(deleted).toBe(1);
+    const survivors = await prisma.quoteLine.findMany({
+      where: { id: { in: [a.id, b.id] } },
+      select: { id: true },
+    });
+    expect(survivors.map((l) => l.id)).toEqual([b.id]); // a deleted, b untouched
+  });
+
+  it("drops a requested id that left Draft in another tab, deleting the rest (intersect-silently)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const stillDraft = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const raced = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+    await prisma.quoteLine.update({ where: { id: raced.id }, data: { state: "Submitted" } });
+
+    const deleted = await batchDeleteDraftLines(researcherA, d.id, [stillDraft.id, raced.id]);
+
+    expect(deleted).toBe(1); // only the still-Draft line
+    const survivors = await prisma.quoteLine.findMany({
+      where: { id: { in: [stillDraft.id, raced.id] } },
+      select: { id: true },
+    });
+    expect(survivors.map((l) => l.id)).toEqual([raced.id]); // submitted sibling untouched
+  });
+
+  it("drops a foreign id belonging to another document, deleting only this document's lines", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const mine = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const other = await createMarketQuote(researcherA, studyId, "France", { ...completeHeader, sourceCountry: "France", currency: "EUR" });
+    const foreign = await addQuoteLine(researcherA, other.id, itemF1, completeLine);
+
+    const deleted = await batchDeleteDraftLines(researcherA, d.id, [mine.id, foreign.id]);
+
+    expect(deleted).toBe(1); // scoped by marketQuoteId — the foreign id never matches
+    const foreignAfter = await prisma.quoteLine.findUnique({ where: { id: foreign.id }, select: { id: true } });
+    expect(foreignAfter).not.toBeNull(); // untouched — different document
+  });
+
+  it("deletes nothing for an empty selection, returning 0 (the disabled-button server backstop)", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const line = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    const deleted = await batchDeleteDraftLines(researcherA, d.id, []);
+
+    expect(deleted).toBe(0);
+    const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { id: true } });
+    expect(after).not.toBeNull(); // unchanged
+  });
+
+  it("refuses a non-author — only the document's author may delete its lines", async () => {
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const line = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    await expect(batchDeleteDraftLines(researcherB, d.id, [line.id])).rejects.toThrow();
+    const after = await prisma.quoteLine.findUnique({ where: { id: line.id }, select: { id: true } });
+    expect(after).not.toBeNull(); // a peer cannot delete the author's lines
   });
 });
 
