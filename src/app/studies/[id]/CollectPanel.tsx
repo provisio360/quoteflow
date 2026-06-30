@@ -110,6 +110,23 @@ function GroupBlock({
     });
   }
 
+  // Select-all is scoped to the always-visible MEMBERS only — never the collapsed
+  // off-slot otherParts, which stay a hand-picked escape hatch (a select-all that
+  // swept in unseen parts would silently seed them). So the toggle adds/removes only
+  // member ids and leaves any checked otherParts untouched.
+  const allMembersSelected =
+    group.members.length > 0 && group.members.every((m) => checked.has(m.id));
+  function toggleAllMembers() {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      for (const m of group.members) {
+        if (allMembersSelected) next.delete(m.id);
+        else next.add(m.id);
+      }
+      return next;
+    });
+  }
+
   function onDealerCountryChange(next: string) {
     setSourceCountry(next);
     const applied = defaultCurrencyOnCountryChange(next);
@@ -167,6 +184,18 @@ function GroupBlock({
   return (
     <div style={{ margin: "0.75rem 0", padding: "0.6rem", border: "1px solid #ddd" }}>
       <h4 style={{ fontSize: "0.95rem", margin: "0 0 0.4rem" }}>Quote Group {group.groupNumber}</h4>
+
+      {group.members.length > 0 && (
+        <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600 }}>
+          <input
+            type="checkbox"
+            checked={allMembersSelected}
+            onChange={toggleAllMembers}
+            style={{ marginRight: "0.4rem" }}
+          />
+          {allMembersSelected ? "Clear all" : "Select all"}
+        </label>
+      )}
 
       {group.members.map(checkbox)}
 
