@@ -1,3 +1,4 @@
+import "./globals.css";
 import { NavHeader } from "./NavHeader";
 
 export const metadata = {
