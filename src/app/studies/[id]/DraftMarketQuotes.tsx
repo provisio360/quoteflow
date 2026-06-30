@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  deleteDraftLineAction,
+  batchDeleteDraftLinesAction,
   submitMarketQuoteAction,
   batchUpdateDraftLinesAction,
 } from "@/lib/quotes/actions";
@@ -243,6 +243,10 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
   const [editingHeader, setEditingHeader] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [addItemId, setAddItemId] = useState<string | null>(null);
+  // Which Draft lines the one "Delete selected" button targets. Own state, kept apart
+  // from the batch-fill panel's selection (Q2): a destructive delete never shares a
+  // selection with the fill convenience. Empty ⇒ the delete button is disabled.
+  const [selectedForDelete, setSelectedForDelete] = useState<ReadonlySet<string>>(new Set());
 
   // The header is editable only while the document has never been submitted — once
   // converting/converted the Exchange Rate is pinned to its date (#97/Q6, ADR-0004).
@@ -267,12 +271,36 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
     });
   }
 
-  function deleteLine(lineId: string) {
+  const allLinesSelected =
+    selectedForDelete.size === group.lines.length && group.lines.length > 0;
+  function toggleLineForDelete(lineId: string) {
+    setSelectedForDelete((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  }
+  function toggleAllForDelete() {
+    setSelectedForDelete(
+      allLinesSelected ? new Set() : new Set(group.lines.map((l) => l.lineId)),
+    );
+  }
+
+  function deleteSelected() {
+    if (selectedForDelete.size === 0) return; // guarded by the disabled button; defend anyway
+    const n = selectedForDelete.size;
+    if (!window.confirm(`Delete ${n} line${n === 1 ? "" : "s"}? This can't be undone.`)) return;
     setMessage(null);
+    const lineIds = [...selectedForDelete];
     startTransition(async () => {
-      const result = await deleteDraftLineAction(lineId);
-      if (result.ok) router.refresh();
-      else setMessage(result.message ?? "Couldn't delete that line.");
+      const result = await batchDeleteDraftLinesAction(group.marketQuoteId, lineIds);
+      if (result.ok) {
+        setSelectedForDelete(new Set());
+        router.refresh();
+      } else {
+        setMessage(result.message ?? "Couldn't delete the selected lines.");
+      }
     });
   }
 
@@ -318,18 +346,44 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
         />
       )}
 
+      {group.lines.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.4rem", fontSize: "0.85rem" }}>
+          <label style={{ color: "#555" }}>
+            <input
+              type="checkbox"
+              checked={allLinesSelected}
+              onChange={toggleAllForDelete}
+              style={{ marginRight: "0.4rem" }}
+            />
+            {allLinesSelected ? "Clear all" : "Select all"}
+          </label>
+          <button
+            type="button"
+            disabled={pending || selectedForDelete.size === 0}
+            onClick={deleteSelected}
+            style={{ padding: "0.2rem 0.55rem" }}
+          >
+            Delete selected ({selectedForDelete.size})
+          </button>
+        </div>
+      )}
+
       <ul style={{ listStyle: "none", padding: 0, margin: "0.4rem 0 0" }}>
         {group.lines.map((l) => {
           const missing = lineMissing.get(l.lineId) ?? [];
           return (
             <li key={l.lineId} style={{ padding: "0.25rem 0" }}>
+              <input
+                type="checkbox"
+                checked={selectedForDelete.has(l.lineId)}
+                onChange={() => toggleLineForDelete(l.lineId)}
+                style={{ marginRight: "0.4rem" }}
+                aria-label={`Select line ${l.quoteLineNumber} for deletion`}
+              />
               #{l.quoteLineNumber} · {l.itemLabel} · {l.competitorBrand ?? "—"} {group.currency ? formatMoney(l.price, group.currency) : l.price ?? NO_AMOUNT}
               <span style={{ marginLeft: "0.4rem" }}>
                 <button type="button" style={btn} disabled={pending} onClick={() => setEditingLineId(editingLineId === l.lineId ? null : l.lineId)}>
                   {editingLineId === l.lineId ? "Close" : "Edit"}
-                </button>
-                <button type="button" style={btn} disabled={pending} onClick={() => deleteLine(l.lineId)}>
-                  Delete
                 </button>
               </span>
               {missing.length > 0 && (

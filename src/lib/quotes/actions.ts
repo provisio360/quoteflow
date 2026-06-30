@@ -9,6 +9,7 @@ import {
   batchUpdateDraftLines,
   updateMarketQuote,
   deleteDraftLine,
+  batchDeleteDraftLines,
   submitMarketQuote,
   approveLine,
   rejectLine,
@@ -150,6 +151,25 @@ export async function deleteDraftLineAction(
   try {
     await deleteDraftLine(principal, lineId);
     return { ok: true };
+  } catch (error) {
+    if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
+    throw error;
+  }
+}
+
+/** Author action: hard-delete a chosen subset of a document's Draft lines in one shot
+ *  (the draft view's "Delete selected"). Mirrors `batchUpdateDraftLinesAction` — the
+ *  repository gates it owner-only and narrows to this document's still-Draft lines, and
+ *  returns the count actually deleted. */
+export async function batchDeleteDraftLinesAction(
+  marketQuoteId: string,
+  lineIds: string[],
+): Promise<{ readonly ok: boolean; readonly message?: string; readonly count?: number }> {
+  const principal = await requirePrincipal();
+  try {
+    const count = await batchDeleteDraftLines(principal, marketQuoteId, lineIds);
+    revalidatePath("/studies");
+    return { ok: true, count };
   } catch (error) {
     if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
     throw error;
