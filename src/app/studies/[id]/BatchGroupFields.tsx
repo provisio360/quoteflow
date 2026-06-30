@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import {
+  brandGroup,
   stockStatusGroup,
   leadTimeGroup,
   warrantyGroup,
@@ -17,7 +18,7 @@ import { WarrantyField } from "./WarrantyField";
 import { LandedCostField } from "./LandedCostField";
 import { DiscountField } from "./DiscountField";
 
-// The five Batch Line-Fill group inputs as ONE dumb, controlled component, shared by
+// The six Batch Line-Fill group inputs as ONE dumb, controlled component, shared by
 // both batch surfaces so they can never present different field shapes (ADR-0036/0038):
 //   - the Drafts panel (BatchFillPanel), which stamps EXISTING Draft lines, and
 //   - the Collect dealer step (CollectPanel), which stamps each line AT creation.
@@ -47,6 +48,19 @@ export function BatchGroupFields({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+        <label>
+          Competitor brand{" "}
+          <input
+            type="text"
+            value={values.competitorBrand}
+            onChange={(e) => set("competitorBrand", e.target.value)}
+            style={{ padding: "0.2rem" }}
+          />
+        </label>
+        {apply(brandGroup(values.competitorBrand))}
+      </div>
+
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
         <label>
           Stock status{" "}

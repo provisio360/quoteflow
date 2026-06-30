@@ -11,10 +11,11 @@ import { parseMoneyInput } from "@/domains/quotes/format-money";
 // the single-line entry parser (`str()` in quote-line-form.ts), where an empty
 // field is `undefined` (omit — a partial edit leaves untouched fields alone).
 
-// The raw form values for all five batch groups, held in the entry session's
+// The raw form values for all six batch groups, held in the entry session's
 // transient UI state (ADR-0038). Shared by the Drafts-surface panel and the Quote
 // Group Collect dealer step so the two surfaces present one field shape.
 export interface BatchGroupValues {
+  competitorBrand: string;
   stockStatus: string;
   leadTimeValue: string;
   leadTimeUnit: string;
@@ -34,6 +35,7 @@ export interface BatchGroupValues {
 /** A pristine batch-group form state — every group empty. Both batch surfaces
  *  (the Drafts panel and the Collect dealer step) start their UI state from this. */
 export const emptyBatchGroupValues: BatchGroupValues = {
+  competitorBrand: "",
   stockStatus: "",
   leadTimeValue: "",
   leadTimeUnit: "",
@@ -50,7 +52,7 @@ export const emptyBatchGroupValues: BatchGroupValues = {
   discountValue: "",
 };
 
-// Merge all five groups into the single QuoteLineFields the Collect dealer step
+// Merge all six groups into the single QuoteLineFields the Collect dealer step
 // stamps onto EACH line at creation (ADR-0038, #141). Spreads the same per-group
 // builders the Drafts panel uses, so a create-time stamp can never diverge from a
 // per-group apply. The Landed Cost group is included ONLY when the document is
@@ -59,12 +61,21 @@ export const emptyBatchGroupValues: BatchGroupValues = {
 // stamp `null` (empty-is-clear, ADR-0036), harmless on a fresh blank line.
 export function batchStampFields(v: BatchGroupValues, showLandedCost: boolean): QuoteLineFields {
   return {
+    ...brandGroup(v.competitorBrand),
     ...stockStatusGroup(v.stockStatus),
     ...leadTimeGroup(v.leadTimeValue, v.leadTimeUnit),
     ...warrantyGroup(v.warrantyOffered, v.warranty1Value, v.warranty1Unit, v.warranty2Value, v.warranty2Unit),
     ...(showLandedCost ? landedCostGroup(v.landedCostIncluded, v.landedCostNote) : {}),
     ...discountGroup(v.discountAvailable, v.discountType, v.discountApplied, v.discountValue),
   };
+}
+
+// The Competitor brand group (ADR-0039): the one competitor field uniform across a
+// document (CONTEXT), so it batches; `competitorPartNumber`/`competitorPartDescription`
+// stay per-line identity and are never batched. A free-text value, mapped like the
+// other text groups (discountType/landedCostNote) — empty ⇒ null (clear-all), no trim.
+export function brandGroup(value: string): QuoteLineFields {
+  return { competitorBrand: value === "" ? null : value };
 }
 
 /** The stock-status group: a single nullable select. Empty ⇒ clear-all. */
