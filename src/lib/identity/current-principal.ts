@@ -41,7 +41,23 @@ interface SessionUserShape {
  * closed) rather than becoming an over-privileged principal.
  */
 export async function getCurrentPrincipal(): Promise<Principal | null> {
-  const session = await auth.api.getSession({ headers: await headers() });
+  // disableRefresh: this resolves the principal for reads (page guards, nav,
+  // server actions) and must never trigger Better Auth's session-refresh COOKIE
+  // WRITE — that write is illegal during a React Server Component render and
+  // surfaces as an opaque `APIError: Failed to get session` that 500s the page.
+  // Sliding-expiry refresh is handled centrally in middleware.ts, the one place
+  // a Set-Cookie is legal. We also fail closed: any getSession failure resolves
+  // to null (→ /login redirect for pages, PrincipalError for actions) rather
+  // than crashing the render.
+  let session: Awaited<ReturnType<typeof auth.api.getSession>>;
+  try {
+    session = await auth.api.getSession({
+      headers: await headers(),
+      query: { disableRefresh: true },
+    });
+  } catch {
+    return null;
+  }
   if (!session?.user) return null;
 
   const user = session.user as unknown as SessionUserShape;

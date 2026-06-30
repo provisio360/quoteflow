@@ -25,7 +25,13 @@ export async function NavHeader() {
   const principal = await getCurrentPrincipal();
   if (principal === null) return null;
 
-  const session = await auth.api.getSession({ headers: await headers() });
+  // disableRefresh: read-only render context — never let Better Auth write the
+  // refreshed session cookie here (illegal in RSC render). Refresh lives in
+  // middleware.ts. See current-principal.ts for the full rationale.
+  const session = await auth.api.getSession({
+    headers: await headers(),
+    query: { disableRefresh: true },
+  });
   const name = session?.user?.name ?? "Signed in";
 
   const isInternal = principal.kind === "internal";
