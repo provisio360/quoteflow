@@ -110,57 +110,103 @@ function initialFromHeader(g: DraftDocGroup): Record<string, string> {
 }
 
 /**
- * Batch line-fill panel (#128 / ADR-0036): stamps a group of line fields onto
- * EVERY Draft line of the document at once. Shown only at ≥2 Draft lines (one line
- * — just edit it). Each group has its own "Apply to all N draft lines" button (the
- * count is live — `draftCount` is the document's Draft-line array length). Tracer
- * groups: stock status (reusing `stockStatusOptions`) and the shipping lead time
- * value+unit pair (#129) — rendered via the shared `ValueUnitField` — plus the warranty
- * chain (ADR-0037): a Yes/No Offered? gate over both warranty pairs via the shared
- * `WarrantyField`, where `warrantyGroup` owns gate-coherence (a No/blank clears all four
- * pair fields). Per-group apply is total: leaving a half blank stamps blank (clears) on every
- * line; a half-filled pair is stampable and caught by the existing submit gate, not
- * here (ADR-0034/0035). The landed-cost group (#130) shows only when the document is
- * cross-border (`landedCostApplies` on the document's two countries — doc-uniform, so
- * the whole group is present or absent), mirroring the single-line form. The discount
- * group (#131) is the full gated chain (available → type + applied → value) via the
- * shared `DiscountField`, always shown; `discountGroup` owns its chain coherence. Each
- * group has its own apply button (the click IS the intent); the status line reports the
- * most recent apply.
+ * Batch line-fill panel (#128 / ADR-0036; selected-set #151 / ADR-0039): stamps a group
+ * of line fields onto a CHOSEN SUBSET of the document's Draft lines. Shown only at ≥2
+ * Draft lines (one line — just edit it). The researcher first checks which lines an apply
+ * targets (one, several, or all — "all" is just checking every box); every group's apply
+ * is DISABLED until at least one line is selected, so a forgotten selection can never
+ * silently stamp the whole document. The selection is over the LINES, never over which
+ * groups apply — each group keeps its own apply button (the click IS the intent), now
+ * landing on the selected set. The selection PERSISTS across applies, so several groups
+ * can be stamped onto the same subset in succession.
+ *
+ * Groups (the shared `BatchGroupFields`, identical to the Collect dealer step): the
+ * Competitor brand (ADR-0039), stock status, the shipping lead-time pair (#129), the
+ * warranty chain (ADR-0037 — one Offered? gate over both pairs), landed cost (#130, shown
+ * only cross-border, mirroring the single-line form), and the discount chain (#131). Each
+ * per-group apply stays TOTAL on the selected lines: leaving a half blank stamps blank
+ * (clears); a half-filled pair is stampable and caught by the existing submit gate, not
+ * here (ADR-0034/0035). The writer intersects the selected ids with the document's
+ * still-writable Draft lines and reports the count actually written.
  */
 function BatchFillPanel({
   marketQuoteId,
-  draftCount,
+  lines,
   dealerCountry,
   marketCountry,
 }: {
   marketQuoteId: string;
-  draftCount: number;
+  lines: readonly DraftMarketQuoteGroupLine[];
   dealerCountry?: string;
   marketCountry: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [values, setValues] = useState<BatchGroupValues>(emptyBatchGroupValues);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  // Which Draft lines an apply targets. Persists across applies (re-fired against the
+  // live set); only explicit (un)checking changes it. Empty ⇒ every apply disabled.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
   // Same predicate the single-line form uses, so the group's show/hide can never drift
   // from per-line entry. Both countries live on the document → uniform across lines.
   const showLandedCost = landedCostApplies(dealerCountry, marketCountry);
 
+  const allSelected = selected.size === lines.length && lines.length > 0;
+  function toggleLine(lineId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(lines.map((l) => l.lineId)));
+  }
+
   function apply(group: QuoteLineFields) {
-    setMessage(null);
+    if (selected.size === 0) return; // guarded by the disabled button; defend anyway
+    setError(null);
+    setStatus(null);
+    const lineIds = [...selected];
     startTransition(async () => {
-      const result = await batchUpdateDraftLinesAction(marketQuoteId, group);
-      if (result.ok) router.refresh();
-      else setMessage(result.message ?? "Couldn't apply to the draft lines.");
+      const result = await batchUpdateDraftLinesAction(marketQuoteId, group, lineIds);
+      if (result.ok) {
+        const n = result.count ?? 0;
+        setStatus(`Applied to ${n} line${n === 1 ? "" : "s"}.`);
+        router.refresh();
+      } else {
+        setError(result.message ?? "Couldn't apply to the draft lines.");
+      }
     });
   }
 
   return (
     <details style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
-      <summary style={{ cursor: "pointer", color: "#555" }}>Set for all lines</summary>
+      <summary style={{ cursor: "pointer", color: "#555" }}>Set for selected lines</summary>
       <div style={{ marginTop: "0.4rem" }}>
+        <fieldset style={{ border: "1px solid #ddd", borderRadius: 4, padding: "0.4rem 0.6rem", margin: "0 0 0.5rem" }}>
+          <legend style={{ color: "#555", padding: "0 0.3rem" }}>
+            Lines to apply to ({selected.size} of {lines.length} selected)
+          </legend>
+          <label style={{ display: "block", fontWeight: 600, padding: "0.15rem 0" }}>
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ marginRight: "0.4rem" }} />
+            {allSelected ? "Clear all" : "Select all"}
+          </label>
+          {lines.map((l) => (
+            <label key={l.lineId} style={{ display: "block", padding: "0.1rem 0" }}>
+              <input
+                type="checkbox"
+                checked={selected.has(l.lineId)}
+                onChange={() => toggleLine(l.lineId)}
+                style={{ marginRight: "0.4rem" }}
+              />
+              #{l.quoteLineNumber} · {l.itemLabel}
+            </label>
+          ))}
+        </fieldset>
         <BatchGroupFields
           values={values}
           onChange={setValues}
@@ -168,18 +214,21 @@ function BatchFillPanel({
           renderApply={(group) => (
             <button
               type="button"
-              disabled={pending}
+              disabled={pending || selected.size === 0}
               onClick={() => apply(group)}
               style={{ padding: "0.2rem 0.55rem" }}
             >
-              Apply to all {draftCount} draft lines
+              Apply to {selected.size} selected line{selected.size === 1 ? "" : "s"}
             </button>
           )}
         />
       </div>
-      {message !== null && (
+      {status !== null && (
+        <p style={{ color: "#555", margin: "0.3rem 0 0" }}>{status}</p>
+      )}
+      {error !== null && (
         <p role="alert" style={{ color: "#b00", margin: "0.3rem 0 0" }}>
-          {message}
+          {error}
         </p>
       )}
     </details>
@@ -263,7 +312,7 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
       {group.lines.length >= 2 && (
         <BatchFillPanel
           marketQuoteId={group.marketQuoteId}
-          draftCount={group.lines.length}
+          lines={group.lines}
           dealerCountry={group.sourceCountry ?? undefined}
           marketCountry={group.country}
         />

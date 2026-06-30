@@ -105,19 +105,22 @@ export async function updateDraftLineAction(
   }
 }
 
-/** Author convenience: batch line-fill (#128 / ADR-0036). Stamps one group of line
- *  fields onto every Draft line of the document at once; the repository gates it
- *  owner-only + Draft-only. Unlike the single-line edit (optimistic), a batch write
- *  touches many lines, so it revalidates the study screen the researcher fills from. */
+/** Author convenience: batch line-fill (#128 / ADR-0036, subset #151 / ADR-0039).
+ *  Stamps one group of line fields onto a chosen subset of the document's Draft lines;
+ *  the repository gates it owner-only + Draft-only and intersects `lineIds` silently
+ *  (foreign/no-longer-Draft ids are dropped). Returns the count actually written so the
+ *  panel can confirm it. Unlike the single-line edit (optimistic), a batch write touches
+ *  many lines, so it revalidates the study screen the researcher fills from. */
 export async function batchUpdateDraftLinesAction(
   marketQuoteId: string,
   group: QuoteLineFields,
-): Promise<{ readonly ok: boolean; readonly message?: string }> {
+  lineIds: string[],
+): Promise<{ readonly ok: boolean; readonly message?: string; readonly count?: number }> {
   const principal = await requirePrincipal();
   try {
-    await batchUpdateDraftLines(principal, marketQuoteId, group);
+    const count = await batchUpdateDraftLines(principal, marketQuoteId, group, lineIds);
     revalidatePath("/studies");
-    return { ok: true };
+    return { ok: true, count };
   } catch (error) {
     if (error instanceof QuoteAccessError) return { ok: false, message: error.message };
     throw error;
