@@ -401,11 +401,15 @@ enum QuoteState {
 /// document, not per line (CONTEXT.md: Conversion Status, ADR-0004/0026). NULLABLE;
 /// null = unconverted (lines still Draft). `pending` = submitted, awaiting the
 /// worker (no USD figures, blocks approval of every line); `auto` = a provider rate
-/// pinned; `manual` = analyst override (sticky). Pure mirror of ConversionStatus.
+/// pinned; `manual` = analyst override (sticky); `studyRate` = pinned at submit from
+/// the Study Exchange Rate table (ADR-0041), never via pending. Pure mirror of
+/// ConversionStatus. The `studyRate` member maps to the persisted/wire value
+/// `study-rate` (Prisma members can't hold a hyphen; the documented value is kept).
 enum ConversionStatus {
   pending
   auto
   manual
+  studyRate @map("study-rate")
 }
 
 /// The researcher's per-line confidence in a Quote Line (CONTEXT.md: Quote Line).

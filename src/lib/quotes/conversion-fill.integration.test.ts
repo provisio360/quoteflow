@@ -171,4 +171,19 @@ describe("fillPendingConversions", () => {
     expect(doc?.conversionStatus).toBe("manual");
     expect(Number(doc?.exchangeRate)).toBeCloseTo(1.5, 8);
   });
+
+  it("never selects or overwrites a study-rate pin (#161, ADR-0041)", async () => {
+    const { docId } = await submittedPending(CLOSED_DATE);
+    await prisma.marketQuote.update({
+      where: { id: docId },
+      data: { conversionStatus: "studyRate", exchangeRate: "2.00000000", rateDate: CLOSED_DATE },
+    });
+    const provider = new InMemoryRateProvider().set("EUR", CLOSED_DATE, 1.08);
+
+    await fillPendingConversions(provider, NOW);
+
+    const doc = await prisma.marketQuote.findUnique({ where: { id: docId } });
+    expect(doc?.conversionStatus).toBe("studyRate");
+    expect(Number(doc?.exchangeRate)).toBeCloseTo(2, 8);
+  });
 });

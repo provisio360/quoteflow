@@ -236,22 +236,33 @@ describe("parseManualRate", () => {
 });
 
 describe("nextConversionStatus", () => {
-  it("moves an unconverted document to pending on submit", () => {
-    expect(nextConversionStatus(null, { kind: "submit" })).toEqual({
+  it("moves an unconverted document to pending on submit with a table miss", () => {
+    expect(nextConversionStatus(null, { kind: "submit", studyRateHit: false })).toEqual({
       ok: true,
       status: "pending",
       changed: true,
     });
   });
 
+  it("pins an unconverted document to studyRate on submit with a table hit (#161)", () => {
+    expect(nextConversionStatus(null, { kind: "submit", studyRateHit: true })).toEqual({
+      ok: true,
+      status: "studyRate",
+      changed: true,
+    });
+  });
+
   it("keeps an already-converted document's status on resubmit (sticky no-op)", () => {
-    // A revised line resubmitted into a pinned document never re-pins (ADR-0028).
-    for (const current of ["pending", "auto", "manual"] as const) {
-      expect(nextConversionStatus(current, { kind: "submit" })).toEqual({
-        ok: true,
-        status: current,
-        changed: false,
-      });
+    // A revised line resubmitted into a pinned document never re-pins (ADR-0028) —
+    // regardless of a fresh table hit, and including a studyRate document.
+    for (const current of ["pending", "auto", "manual", "studyRate"] as const) {
+      for (const studyRateHit of [true, false]) {
+        expect(nextConversionStatus(current, { kind: "submit", studyRateHit })).toEqual({
+          ok: true,
+          status: current,
+          changed: false,
+        });
+      }
     }
   });
 
@@ -265,6 +276,14 @@ describe("nextConversionStatus", () => {
 
   it("resolves a pending document to manual on an analyst override", () => {
     expect(nextConversionStatus("pending", { kind: "manualSet" })).toEqual({
+      ok: true,
+      status: "manual",
+      changed: true,
+    });
+  });
+
+  it("lets an analyst manual override supersede a studyRate pin (#161, ADR-0041)", () => {
+    expect(nextConversionStatus("studyRate", { kind: "manualSet" })).toEqual({
       ok: true,
       status: "manual",
       changed: true,

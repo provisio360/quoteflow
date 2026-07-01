@@ -231,8 +231,8 @@ function reasonText(reason?: string): string {
       return "A reason is required to reject.";
     case "invalid-rate":
       return "Enter a valid exchange rate (a positive number).";
-    case "not-pending":
-      return "This quote is no longer awaiting conversion.";
+    case "not-overridable":
+      return "This quote's rate can no longer be overridden.";
     case "illegal-transition":
       return "This quote is no longer awaiting review (already actioned).";
     case "access":
