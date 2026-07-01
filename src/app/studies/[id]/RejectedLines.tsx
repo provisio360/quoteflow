@@ -43,6 +43,7 @@ function RejectedRow({ line }: { line: RejectedLineView }) {
       <div style={{ fontWeight: 600 }}>{line.itemLabel}</div>
       <div style={{ color: "#555" }}>
         {line.country} · market quote {line.marketQuoteNumber}, line {line.quoteLineNumber}
+        {line.dateQuoteReceived && ` · received ${line.dateQuoteReceived.toISOString().slice(0, 10)}`}
       </div>
       {line.reason && <div style={{ color: "#555" }}>Reason: {line.reason}</div>}
       <button

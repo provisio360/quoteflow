@@ -1451,6 +1451,9 @@ describe("listRejectedLinesForResearcher (#139 — Needs-attention surface)", ()
     expect(mine!.quoteLineNumber).toBe(doc!.quoteLineNumber);
     expect(mine!.itemLabel).toBe("G1 Item G1");
     expect(mine!.reason).toBe("Please re-check the source.");
+    // The parent document's Date Quote Received rides along so the author sees
+    // which dated quote is bouncing back.
+    expect(mine!.dateQuoteReceived).toEqual(new Date("2026-06-01"));
   });
 
   it("excludes a peer's Rejected line — only the author's own appear", async () => {
