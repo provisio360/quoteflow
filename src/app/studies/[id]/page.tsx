@@ -10,6 +10,7 @@ import {
   canViewClientPrice,
 } from "@/domains/authz/benchmark-items";
 import { canAssignResearchers } from "@/domains/authz/assignments";
+import { canManageStudyRates } from "@/domains/authz/exchange-rates";
 import {
   listBenchmarkItemsForAnalyst,
   listBenchmarkItemsForResearcher,
@@ -61,6 +62,9 @@ export default async function StudyDetailPage({
   if (study === null) notFound();
 
   const mayImport = canImportBenchmarkItems(principal);
+  // The Study Exchange Rate setup surface is the EM/Analyst study-setup pair only
+  // (ADR-0041) — same gate as the page guard, so the link and the wall can't drift.
+  const mayManageRates = canManageStudyRates(principal);
   // The client dashboard is the aggregated released "answer" view; a Researcher
   // must not reach it (#63, ADR-0003). Same predicate as the page guard, so the
   // link and the wall cannot drift.
@@ -126,6 +130,15 @@ export default async function StudyDetailPage({
           <Link href={`/studies/${study.id}/import`} style={{ fontWeight: 600 }}>
             Import brief →
           </Link>
+        </p>
+      )}
+
+      {mayManageRates && (
+        <p style={{ marginTop: "1.5rem" }}>
+          <Link href={`/studies/${study.id}/rates`} style={{ fontWeight: 600 }}>
+            Exchange rates →
+          </Link>{" "}
+          <span style={{ color: "#777" }}>(manual local-currency→USD rates)</span>
         </p>
       )}
 

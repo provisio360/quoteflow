@@ -14,7 +14,8 @@ export type AuditAction =
   | "import"
   | "clientPriceChange"
   | "manualRateOverride"
-  | "assign";
+  | "assign"
+  | "studyRateSet";
 
 /** The audit-log view's display vocabulary (issue #72): each Audit Action as a
  *  past-tense human verb. Lives with the domain, not the JSX, so the wording
@@ -29,6 +30,7 @@ const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   clientPriceChange: "Client Price changed",
   manualRateOverride: "Manual rate override",
   assign: "Assigned",
+  studyRateSet: "Study rate set",
 };
 
 /** The human display label for an Audit Action, shown in the audit-log view. */
@@ -46,7 +48,8 @@ export type AuditSubjectType =
   | "QuoteLine"
   | "BenchmarkItem"
   | "CountryRelease"
-  | "CountryAssignment";
+  | "CountryAssignment"
+  | "StudyExchangeRate";
 
 /** One append-only Audit Event, ready to persist. `beforeValue`/`afterValue`
  *  carry a monetary delta only for the actions that change one (v1: Client Price
@@ -177,6 +180,28 @@ export function auditManualRateOverride(input: {
     subjectId: input.marketQuoteId,
     beforeValue: null,
     afterValue: input.after,
+  };
+}
+
+/** An Engagement Manager or Analyst set or edited a Study Exchange Rate row
+ *  (ADR-0041). Subject is the StudyExchangeRate row; the monetary pair is NULL —
+ *  a rate is Decimal(18,8) and would be silently truncated by this Decimal(14,4)
+ *  channel, so the rate value lives on the row, not here (ADR-0023's reasoning).
+ *  One event per row actually created or value-changed (an identical re-save is
+ *  a no-op the caller does not audit). */
+export function auditStudyRateSet(input: {
+  actorId: string;
+  studyId: string;
+  rateId: string;
+}): AuditEvent {
+  return {
+    action: "studyRateSet",
+    actorId: input.actorId,
+    studyId: input.studyId,
+    subjectType: "StudyExchangeRate",
+    subjectId: input.rateId,
+    beforeValue: null,
+    afterValue: null,
   };
 }
 
