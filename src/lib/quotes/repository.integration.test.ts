@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import {
   createMarketQuote,
@@ -1047,6 +1047,132 @@ describe("bulk submit over a Market Quote document (#88)", () => {
     });
     const byId = Object.fromEntries(after.map((r) => [r.id, Number(r.convertedUsdPrice)]));
     expect(byId[l2.id]).toBe(2000);
+    expect(byId[l1.id]).toBe(2501);
+  });
+});
+
+describe("study-rate pin at submit (#161, ADR-0041)", () => {
+  async function seedStudyRate(currency: string, rateDate: string, rate: string): Promise<void> {
+    const day = new Date(`${rateDate}T00:00:00.000Z`);
+    // Upsert by key — the study is shared across tests, so a repeated (currency,
+    // rateDate) seed updates rather than colliding on the unique constraint.
+    await prisma.studyExchangeRate.upsert({
+      where: { studyId_currency_rateDate: { studyId, currency, rateDate: day } },
+      update: { rate },
+      create: { id: randomUUID(), studyId, clientId: tenantId, currency, rateDate: day, rate },
+    });
+  }
+
+  // The study is shared across the whole file — clear seeded rates so a later
+  // describe's submit still sees a table miss (pending), not a stray study hit.
+  afterEach(async () => {
+    await prisma.studyExchangeRate.deleteMany({ where: { studyId } });
+  });
+
+  it("pins study-rate at submit on a table hit, derives every line's USD, never pending", async () => {
+    await seedStudyRate("EUR", "2026-05-01", "2"); // ≤ Date Quote Received 2026-06-01
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine); // price 1250.5
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+
+    const result = await submitMarketQuote(researcherA, d.id);
+    expect(result.ok).toBe(true);
+
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { conversionStatus: true, exchangeRate: true, rateDate: true },
+    });
+    expect(doc?.conversionStatus).toBe("studyRate");
+    expect(Number(doc?.exchangeRate)).toBe(2);
+    expect(doc?.rateDate?.toISOString().slice(0, 10)).toBe("2026-05-01"); // the row's date, not the quote's
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { id: { in: [l1.id, l2.id] } },
+      select: { convertedUsdPrice: true },
+    });
+    expect(lines.map((l) => Number(l.convertedUsdPrice))).toEqual([2501, 2501]); // 1250.5 × 2
+
+    // Never pending ⇒ the conversion gate is cleared at approval. This line is
+    // flagged (2501 ≫ client price 123.45), so it stops at needs-justification —
+    // proving it passed the conversion-pending gate a pending doc would fail first.
+    const approve = await approveLine(analyst, l1.id);
+    expect(approve).toEqual({ ok: false, reason: "needs-justification" });
+  });
+
+  it("falls to the existing pending path on a table miss (only rows dated after the quote)", async () => {
+    await seedStudyRate("EUR", "2026-07-01", "9"); // after Date Quote Received — never reached
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+
+    await submitMarketQuote(researcherA, d.id);
+
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { conversionStatus: true, exchangeRate: true },
+    });
+    expect(doc?.conversionStatus).toBe("pending");
+    expect(doc?.exchangeRate).toBeNull();
+  });
+
+  it("lets a per-document manual override supersede a study-rate pin", async () => {
+    await seedStudyRate("EUR", "2026-05-01", "2");
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    await submitMarketQuote(researcherA, d.id); // → studyRate @2
+
+    const override = await setMarketQuoteManualRate(analyst, d.id, "3");
+    expect(override.ok).toBe(true);
+
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { conversionStatus: true, exchangeRate: true },
+    });
+    expect(doc?.conversionStatus).toBe("manual");
+    expect(Number(doc?.exchangeRate)).toBe(3);
+
+    const line = await prisma.quoteLine.findUnique({
+      where: { id: l1.id },
+      select: { convertedUsdPrice: true },
+    });
+    expect(Number(line?.convertedUsdPrice)).toBe(3751.5); // 1250.5 × 3, re-derived from the override
+
+    // The override writes exactly one manualRateOverride event — the automatic
+    // study-rate pin wrote none of its own (ADR-0041).
+    const events = await prisma.auditEvent.count({
+      where: { action: "manualRateOverride", subjectId: d.id },
+    });
+    expect(events).toBe(1);
+  });
+
+  it("does not re-pin a study-rate document on revise/resubmit — editing the row never shifts it", async () => {
+    await seedStudyRate("EUR", "2026-05-01", "2");
+    const d = await createMarketQuote(researcherA, studyId, "Germany", completeHeader);
+    const l1 = await addQuoteLine(researcherA, d.id, itemG1, completeLine);
+    const l2 = await addQuoteLine(researcherA, d.id, itemG2, completeLine);
+    await submitMarketQuote(researcherA, d.id); // → studyRate @2, USD 2501 each
+
+    // Edit the table row AFTER the pin — an already-converted document never re-pins.
+    await prisma.studyExchangeRate.updateMany({ where: { studyId, currency: "EUR" }, data: { rate: "5" } });
+
+    await rejectLine(analyst, l2.id, "Please re-check the price.");
+    await reviseLine(researcherA, l2.id);
+    await updateDraftLine(researcherA, l2.id, { price: 1000 });
+    const resubmit = await submitMarketQuote(researcherA, d.id);
+    expect(resubmit.ok).toBe(true);
+
+    const doc = await prisma.marketQuote.findUnique({
+      where: { id: d.id },
+      select: { conversionStatus: true, exchangeRate: true },
+    });
+    expect(doc?.conversionStatus).toBe("studyRate");
+    expect(Number(doc?.exchangeRate)).toBe(2); // still the original pin, NOT the edited 5
+
+    const after = await prisma.quoteLine.findMany({
+      where: { id: { in: [l1.id, l2.id] } },
+      select: { id: true, convertedUsdPrice: true },
+    });
+    const byId = Object.fromEntries(after.map((r) => [r.id, Number(r.convertedUsdPrice)]));
+    expect(byId[l2.id]).toBe(2000); // 1000 × 2 (the pinned rate, not the edited row)
     expect(byId[l1.id]).toBe(2501);
   });
 });

@@ -22,9 +22,12 @@ currency→USD, and the rate follows the **currency**, never the country (see
 
 **Lookup (identical at preview and at pin).** Given a document's currency and its
 Date Quote Received, take the table row for that currency with the **greatest
-`rateDate ≤ Date Quote Received`**, walking back as far as **study start** (no
-rolling window). We never reach *forward* to a later row (that would be a future
-rate for a past quote). Staleness is **visible, not blocking**: the picked row's
+`rateDate ≤ Date Quote Received`** — the nearest prior seeded row, **however
+old**. There is **no rolling window** (unlike the provider's 7-day walk-back,
+ADR-0012) and **no study-start floor** (the `Study` has no start date; the
+earliest seeded row is the effective floor). We never reach *forward* to a later
+row (that would be a future rate for a past quote). Staleness is **visible, not
+blocking**: the picked row's
 `rateDate` and age are surfaced so a researcher pinning an old rate sees it.
 
 **Precedence and pinning.** If the lookup finds a row:
@@ -47,7 +50,30 @@ only, so it never touches `study-rate` (as it never touches `auto`/`manual`).
 And, per ADR-0004's core invariant — *a quote's USD conversion never shifts after
 the fact* — **editing a table row never re-pins already-converted documents**; it
 changes only **future** pins. A document pinned from a value later found wrong is
-corrected the existing way, via the per-document `manual` override (ADR-0023).
+corrected the existing way, via the per-document `manual` override (ADR-0023) —
+which means the Conversion Status machine's `manualSet` precondition widens from
+`pending → manual` to **`{pending, study-rate} → manual`** (a `manual` override is
+the *later, document-specific act* and supersedes a `study-rate` pin; `auto` stays
+un-overridable, out of scope). The manual path's typed reject reason accordingly
+renames `not-pending → not-overridable`.
+
+## Encoding, USD, and audit specifics
+
+- **Enum encoding.** Prisma enum members can't contain hyphens, and the existing
+  members hold *member name == DB value == TS literal*. So the new member is
+  `studyRate @map("study-rate")`: the **persisted/wire value stays the documented
+  `study-rate`**, while code references the literal **`studyRate`** (preserving the
+  member-equals-literal convention — no boundary mapping).
+- **USD is not a `study-rate` hit.** A USD document (rate ≡ 1, never a table row)
+  routes to the existing `pending → auto` path, where the worker already pins rate 1
+  as `auto`. Pinning it `study-rate` would misattribute provenance; inventing a
+  submit-time `auto` would break "auto ⇐ worker only". The shared decision core
+  therefore returns a **miss** for USD, tested as its own case.
+- **No new audit at the pin.** A `study-rate` pin is automatic at submit and writes
+  **no** audit of its own beyond the document's existing `submit` event — in
+  particular never `manualRateOverride` (that is an analyst hand-typing one doc's
+  rate). The only `study-rate`-family audit is `study-rate-set` on **table edits**
+  (#160).
 
 ## Keyed by currency, entered by country
 

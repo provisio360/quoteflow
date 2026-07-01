@@ -13,6 +13,7 @@ import {
 import { evaluatePriceFlag, isLineFlagged, type PriceFlagResult } from "@/domains/quotes/price-flag";
 import { isValidCurrency } from "@/domains/quotes/currencies";
 import { canonicalCountry } from "@/domains/benchmark-items/countries";
+import { decideStudyRatePin, type StudyRatePin } from "@/domains/exchange-rates/lookup";
 import { resolveQcThreshold } from "@/domains/benchmark-items/qc-threshold";
 import {
   convertManual,
@@ -988,45 +989,82 @@ export async function submitMarketQuote(
       },
     });
 
-    // The document's conversion move. `changed` ⇒ null→pending (guard on null so a
-    // concurrent pin is never clobbered). An already-auto/manual document stays put
-    // (sticky) but its just-submitted lines need their USD re-derived from the
-    // pinned rate (ADR-0028).
-    const conversion = nextConversionStatus(doc.conversionStatus, { kind: "submit" });
-    if (conversion.ok && conversion.changed) {
+    // The study-rate lookup runs ONLY on a first submit (unconverted document):
+    // the same shared rule the entry preview uses (ADR-0041), so preview == pinned.
+    // A hit pins `study-rate` at submit; a miss leaves the existing pending→worker
+    // path. Rows are pre-filtered to the document's currency; USD short-circuits to
+    // a miss inside decideStudyRatePin, routing to pending→auto unchanged (Q6).
+    const pin: StudyRatePin =
+      doc.conversionStatus === null && doc.currency !== null
+        ? decideStudyRatePin(
+            doc.currency,
+            doc.dateQuoteReceived as Date,
+            (
+              await tx.studyExchangeRate.findMany({
+                where: { studyId: doc.studyId, currency: doc.currency },
+                select: { rateDate: true, rate: true },
+              })
+            ).map((r) => ({ rateDate: r.rateDate, rate: r.rate.toString() })),
+          )
+        : { hit: false };
+
+    // The document's conversion move. `changed` ⇒ null→(studyRate hit | pending
+    // miss), guarded on null so a concurrent pin is never clobbered. An already
+    // -pinned document (auto/manual/studyRate) stays put (sticky) but its just
+    // -submitted lines need their USD re-derived from the pinned rate (ADR-0028).
+    const conversion = nextConversionStatus(doc.conversionStatus, {
+      kind: "submit",
+      studyRateHit: pin.hit,
+    });
+    // The rate that spreads across the just-submitted lines: a fresh study-rate
+    // pin uses the looked-up row; a sticky resubmit re-uses the document's rate.
+    const submittedLines = doc.quoteLines.filter((l) => result.toSubmit.includes(l.id));
+    const deriveLines = (rate: number) =>
+      Promise.all(
+        submittedLines.map((l) => {
+          const pinned = convertManual(
+            {
+              price: Number(l.price),
+              currency: doc.currency as string,
+              quantityQuoted: l.quantityQuoted,
+              dateQuoteReceived: doc.dateQuoteReceived as Date,
+            },
+            rate,
+          );
+          return tx.quoteLine.update({
+            where: { id: l.id },
+            data: {
+              convertedUsdPrice: pinned.convertedUsdPrice,
+              convertedUsdPricePerUnit: pinned.convertedUsdPricePerUnit,
+            },
+          });
+        }),
+      );
+
+    if (conversion.ok && conversion.changed && conversion.status === "studyRate" && pin.hit) {
+      // Pin the one document rate from the table row and derive every line's USD.
+      const applied = await tx.marketQuote.updateMany({
+        where: { id: marketQuoteId, conversionStatus: null },
+        data: {
+          conversionStatus: "studyRate",
+          exchangeRate: pin.rate,
+          rateDate: pin.rateDate,
+        },
+      });
+      if (applied.count === 1) await deriveLines(Number(pin.rate));
+    } else if (conversion.ok && conversion.changed) {
       await tx.marketQuote.updateMany({
         where: { id: marketQuoteId, conversionStatus: null },
         data: { conversionStatus: "pending" },
       });
     } else if (
       conversion.ok &&
-      (conversion.status === "auto" || conversion.status === "manual") &&
+      (conversion.status === "auto" ||
+        conversion.status === "manual" ||
+        conversion.status === "studyRate") &&
       doc.exchangeRate !== null
     ) {
-      const rate = Number(doc.exchangeRate);
-      const date = doc.dateQuoteReceived as Date;
-      await Promise.all(
-        doc.quoteLines
-          .filter((l) => result.toSubmit.includes(l.id))
-          .map((l) => {
-            const pinned = convertManual(
-              {
-                price: Number(l.price),
-                currency: doc.currency as string,
-                quantityQuoted: l.quantityQuoted,
-                dateQuoteReceived: date,
-              },
-              rate,
-            );
-            return tx.quoteLine.update({
-              where: { id: l.id },
-              data: {
-                convertedUsdPrice: pinned.convertedUsdPrice,
-                convertedUsdPricePerUnit: pinned.convertedUsdPricePerUnit,
-              },
-            });
-          }),
-      );
+      await deriveLines(Number(doc.exchangeRate));
     }
 
     await recordAuditEvents(tx, [
@@ -1056,7 +1094,7 @@ export interface ReviewQueueItem {
   readonly quantityQuoted: number | null;
   readonly convertedUsdPrice: string | null;
   readonly convertedUsdPricePerUnit: string | null;
-  readonly conversionStatus: "pending" | "auto" | "manual" | null;
+  readonly conversionStatus: ConversionStatus | null;
   readonly justification: string | null;
   readonly submittedAt: Date | null;
   readonly authorName: string;
@@ -1324,7 +1362,7 @@ export async function approveLine(
 /** Outcome of a manual rate override: success, or a user-fixable rejection. */
 export type SetManualRateResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: "invalid-rate" | "not-pending" };
+  | { readonly ok: false; readonly reason: "invalid-rate" | "not-overridable" };
 
 /**
  * Set a manual Exchange Rate on a Market Quote whose conversion is `pending` (#70 /
@@ -1360,8 +1398,11 @@ export async function setMarketQuoteManualRate(
     if (doc === null) {
       throw new QuoteAccessError(`Market Quote not found: ${marketQuoteId}`);
     }
-    if (doc.conversionStatus !== "pending") {
-      return { ok: false, reason: "not-pending" };
+    // A manual override may resolve a pending document OR supersede a study-rate
+    // pin (ADR-0041) — the machine owns which currents are overridable; auto/manual
+    // are not. `null` (unsubmitted) and already-`manual`/`auto` reject.
+    if (!nextConversionStatus(doc.conversionStatus, { kind: "manualSet" }).ok) {
+      return { ok: false, reason: "not-overridable" };
     }
 
     // Derive each line's USD from the one document rate; sum the totals for the
@@ -1391,15 +1432,15 @@ export async function setMarketQuoteManualRate(
       });
     });
 
-    // Sticky guard: only a still-pending document is overridden, so a concurrent
-    // auto-pin or a second override can't double-apply. The count gates the lines'
-    // USD writes and the atomic audit (ADR-0019).
+    // Sticky guard: only a still-overridable document (pending or study-rate) is
+    // overridden, so a concurrent auto-pin or a second override can't double-apply.
+    // The count gates the lines' USD writes and the atomic audit (ADR-0019).
     const applied = await tx.marketQuote.updateMany({
-      where: { id: marketQuoteId, conversionStatus: "pending" },
+      where: { id: marketQuoteId, conversionStatus: { in: ["pending", "studyRate"] } },
       data: { conversionStatus: "manual", exchangeRate: pinnedRate, rateDate: pinnedRateDate },
     });
     if (applied.count !== 1) {
-      return { ok: false, reason: "not-pending" };
+      return { ok: false, reason: "not-overridable" };
     }
     await Promise.all(lineUpdates);
     await recordAuditEvents(tx, [

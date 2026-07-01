@@ -14,11 +14,12 @@ import type { RateProvider } from "./rate-provider";
 
 /**
  * Where a Quote's conversion stands (CONTEXT.md: Conversion Status). `pending`
- * carries no USD figures and blocks analyst approval (#11); `auto`/`manual` both
- * carry pinned figures and differ only in provenance. The fourth state,
- * "unconverted" (a Draft), is represented by a null status column, not here.
+ * carries no USD figures and blocks analyst approval (#11); `auto`, `manual`, and
+ * `studyRate` all carry pinned figures and differ only in provenance (`studyRate`
+ * pins at submit from the study table, ADR-0041). The unconverted state (a Draft)
+ * is represented by a null status column, not here.
  */
-export type ConversionStatus = "pending" | "auto" | "manual";
+export type ConversionStatus = "pending" | "auto" | "manual" | "studyRate";
 
 /** How many calendar days back resolveExchangeRate probes before giving up. A
  *  closed market (weekend + holiday run) is covered well inside this; a currency
@@ -171,7 +172,7 @@ export async function computeConversion(
  * pinning a provider rate; `manualSet` is the analyst's override.
  */
 export type ConversionEvent =
-  | { readonly kind: "submit" }
+  | { readonly kind: "submit"; readonly studyRateHit: boolean }
   | { readonly kind: "autoResolved" }
   | { readonly kind: "manualSet" };
 
@@ -203,13 +204,25 @@ export function nextConversionStatus(
 ): ConversionStatusResult {
   switch (event.kind) {
     case "submit":
-      if (current === null) return { ok: true, status: "pending", changed: true };
+      // First submit pins immediately from the study table on a hit (studyRate,
+      // never pending — ADR-0041), else defers to the worker (pending). An already
+      // -converted document is sticky regardless of a fresh hit (ADR-0028).
+      if (current === null) {
+        return event.studyRateHit
+          ? { ok: true, status: "studyRate", changed: true }
+          : { ok: true, status: "pending", changed: true };
+      }
       return { ok: true, status: current, changed: false };
     case "autoResolved":
       if (current === "pending") return { ok: true, status: "auto", changed: true };
       return { ok: false, reason: "illegal-transition" };
     case "manualSet":
-      if (current === "pending") return { ok: true, status: "manual", changed: true };
+      // A manual override is the later, document-specific act: it may supersede a
+      // studyRate pin as well as resolve a pending document (ADR-0041). auto stays
+      // un-overridable, and a second manual is a no-op the caller need not repeat.
+      if (current === "pending" || current === "studyRate") {
+        return { ok: true, status: "manual", changed: true };
+      }
       return { ok: false, reason: "illegal-transition" };
   }
 }
