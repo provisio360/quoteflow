@@ -218,10 +218,44 @@ model Study {
   countryReleases    CountryRelease[]
   marketQuotes         MarketQuote[]
   quoteNumberSequences QuoteNumberSequence[]
+  exchangeRates        StudyExchangeRate[]
 
   @@index([clientId])
   @@index([createdById])
   @@map("study")
+}
+
+/// A per-Pricing-Study manual local-currency→USD exchange rate an Engagement
+/// Manager or Analyst seeds on study setup (ADR-0041, CONTEXT.md: Study Exchange
+/// Rate). Keyed by `(study, currency, rateDate)` — by CURRENCY (ISO 4217), never
+/// country, so a shared currency (EUR across France + Germany) holds one rate per
+/// date and a dealer-country currency (COP on a Brazil-market study, ADR-0032) is
+/// representable. `rate` is Decimal(18,8) — the pinned Exchange Rate's precision;
+/// it does NOT feed conversion yet (a later slice). USD needs no row (rate ≡ 1).
+/// `clientId` is the RLS backstop (ADR-0021), copied from the study on insert and
+/// verified by WITH CHECK. Set/edit writes a `studyRateSet` Audit Event.
+model StudyExchangeRate {
+  id       String   @id @default(cuid())
+  studyId  String
+  // Denormalized owning tenant — the RLS backstop column (ADR-0021), copied from
+  // the parent study on insert; verified by WITH CHECK.
+  clientId String
+  // ISO 4217 code, currency→USD. USD is refused at the app layer (rate ≡ 1).
+  currency String
+  // The date this rate applies from (a calendar day; lookup semantics are a later
+  // slice). Stored as a date-only column.
+  rateDate DateTime @db.Date
+  rate     Decimal  @db.Decimal(18, 8)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  study Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  @@unique([studyId, currency, rateDate])
+  @@index([studyId])
+  @@index([clientId])
+  @@map("study_exchange_rate")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -666,6 +700,10 @@ enum AuditAction {
   clientPriceChange
   manualRateOverride
   assign
+  // An EM/Analyst set or edited a Study Exchange Rate row (ADR-0041) — subject
+  // StudyExchangeRate, null monetary pair (a Decimal(18,8) rate won't fit the
+  // pair's Decimal(14,4), so the value lives on the row).
+  studyRateSet
 }
 
 /// The kind of entity an Audit Event is about. The subject id is a plain string,
@@ -682,6 +720,7 @@ enum AuditSubjectType {
   BenchmarkItem
   CountryRelease
   CountryAssignment
+  StudyExchangeRate
 }
 
 /// One append-only record that a significant transition happened (ADR-0019).

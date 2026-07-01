@@ -3,6 +3,7 @@ import {
   auditDocumentSubmit,
   auditQuoteLifecycle,
   auditManualRateOverride,
+  auditStudyRateSet,
   auditActionLabel,
   type AuditAction,
 } from "./events";
@@ -69,6 +70,26 @@ describe("auditManualRateOverride", () => {
   });
 });
 
+describe("auditStudyRateSet — Study Exchange Rate set/edit (#160, ADR-0041)", () => {
+  it("records a StudyExchangeRate-subject event with a null monetary pair", () => {
+    expect(
+      auditStudyRateSet({
+        actorId: "em-1",
+        studyId: "study-1",
+        rateId: "rate-1",
+      }),
+    ).toEqual({
+      action: "studyRateSet",
+      actorId: "em-1",
+      studyId: "study-1",
+      subjectType: "StudyExchangeRate",
+      subjectId: "rate-1",
+      beforeValue: null,
+      afterValue: null,
+    });
+  });
+});
+
 describe("auditActionLabel — human display vocabulary (issue #72)", () => {
   it.each<[AuditAction, string]>([
     ["submit", "Submitted"],
@@ -80,6 +101,7 @@ describe("auditActionLabel — human display vocabulary (issue #72)", () => {
     ["clientPriceChange", "Client Price changed"],
     ["manualRateOverride", "Manual rate override"],
     ["assign", "Assigned"],
+    ["studyRateSet", "Study rate set"],
   ])("labels %s as %s", (action, label) => {
     expect(auditActionLabel(action)).toBe(label);
   });
