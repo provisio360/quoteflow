@@ -27,6 +27,8 @@ import {
   countPartProgressForResearcher,
 } from "@/lib/quotes/repository";
 import { getStudyBenchmarkComparison } from "@/lib/analytics/repository";
+import { listStudyRateRowsForConversion } from "@/lib/exchange-rates/repository";
+import { studyRatePreview } from "@/domains/exchange-rates/preview";
 import { canReleaseCountry } from "@/domains/authz/release";
 import { listCountryReleaseStatus } from "@/lib/release/repository";
 import { ClientPriceList } from "./ClientPriceList";
@@ -287,12 +289,30 @@ async function buildDraftDocGroups(
   principal: Parameters<typeof listDraftMarketQuotesForResearcher>[0] & { userId: string },
   studyId: string,
 ): Promise<DraftDocGroup[]> {
-  const [groups, items] = await Promise.all([
+  const [groups, items, rateRows] = await Promise.all([
     listDraftMarketQuotesForResearcher(principal, studyId),
     listBenchmarkItemsForResearcher(principal, studyId),
+    listStudyRateRowsForConversion(principal, studyId),
   ]);
-  return groups.map((g) => ({
-    ...g,
-    addCandidates: addLineCandidates(items, g.country, new Set(g.itemIdsOnDocument)),
-  }));
+  // Resolve the entry-time preview once per document from the SAME shared rule the
+  // submit pin uses (studyRatePreview → decideStudyRatePin), so preview == pinned.
+  // Only for an unconverted document that has both header facts — a converted
+  // (returned/flagged) doc is already pinned, so it gets no pre-pin preview.
+  const now = new Date();
+  return groups.map((g) => {
+    const ratePreview =
+      g.conversionStatus === null && g.currency !== null && g.dateQuoteReceived !== null
+        ? studyRatePreview(
+            g.currency,
+            g.dateQuoteReceived,
+            rateRows.filter((r) => r.currency === g.currency),
+            now,
+          )
+        : null;
+    return {
+      ...g,
+      addCandidates: addLineCandidates(items, g.country, new Set(g.itemIdsOnDocument)),
+      ratePreview,
+    };
+  });
 }

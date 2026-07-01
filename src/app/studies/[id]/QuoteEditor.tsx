@@ -13,7 +13,9 @@ import {
   currencyOptions,
   defaultCurrencyOnCountryChange,
 } from "@/domains/quotes/quote-currency-picker";
-import { formatMoneyInput, parseMoneyInput } from "@/domains/quotes/format-money";
+import { formatMoneyInput, parseMoneyInput, formatMoney } from "@/domains/quotes/format-money";
+import { convert } from "@/domains/quotes/conversion";
+import type { StudyRatePreview } from "@/domains/exchange-rates/preview";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
@@ -73,6 +75,11 @@ export function QuoteEditor({
   // the analyst returned to its author for a Justification (ADR-0014). A brand-new
   // addLine has no USD yet so is never flagged, hence the default.
   showJustification = false,
+  // The document's entry-time study-rate preview (#162, ADR-0041), resolved once
+  // on the server (currency + Date Quote Received are fixed while entering lines).
+  // Display only — the line stays Draft and pins nothing. Absent/null in editHeader
+  // and for already-converted documents; then no preview renders.
+  ratePreview,
 }: {
   mode: Mode;
   initial?: Partial<Record<string, string>>;
@@ -80,6 +87,7 @@ export function QuoteEditor({
   marketCountry?: string;
   dealerCountry?: string;
   showJustification?: boolean;
+  ratePreview?: StudyRatePreview | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -111,6 +119,24 @@ export function QuoteEditor({
   // Included? = Yes.
   const [landedCostIncluded, setLandedCostIncluded] = useState(initial?.landedCostIncluded ?? "");
   const showLandedCost = landedCostApplies(dealerCountry, marketCountry);
+
+  // Live study-rate preview (#162). Price/quantity stay UNCONTROLLED (the money
+  // input's comma focus/blur logic must not be disturbed); we mirror their raw
+  // values into preview-only state on input and run the SAME conversion math the
+  // submit pin uses. A `miss` warning is document-level, so it shows regardless of
+  // price/quantity; a `hit`/`usd` number needs both present (qty > 0). USD converts
+  // at rate 1 (its own case — never a table hit, ADR-0041).
+  const [priceRaw, setPriceRaw] = useState(initial?.price ?? "");
+  const [qtyRaw, setQtyRaw] = useState(initial?.quantityQuoted ?? "");
+  const previewKind = ratePreview?.kind;
+  const previewRate =
+    ratePreview?.kind === "hit" ? Number(ratePreview.rate) : ratePreview?.kind === "usd" ? 1 : null;
+  const priceNum = Number(parseMoneyInput(priceRaw));
+  const qtyNum = Number(qtyRaw);
+  const previewPerUnit =
+    previewRate !== null && priceRaw.trim() !== "" && !Number.isNaN(priceNum) && qtyNum > 0
+      ? convert(priceNum, qtyNum, previewRate).convertedUsdPricePerUnit
+      : null;
 
   function onCountryChange(next: string) {
     setCountry(next);
@@ -232,6 +258,9 @@ export function QuoteEditor({
                 type="text"
                 inputMode="decimal"
                 defaultValue={formatMoneyInput(initial?.price, currency)}
+                // Mirror keystrokes into preview-only state — the input stays
+                // uncontrolled so the comma focus/blur logic below is untouched (#162).
+                onInput={(e) => setPriceRaw(e.currentTarget.value)}
                 // Grouped at rest with the document currency's minor units (ADR-0033
                 // amendment): a `text` input — a number input can't hold a comma.
                 // Strip commas on focus for clean editing, re-group on blur. A bare
@@ -250,9 +279,40 @@ export function QuoteEditor({
             </label>
             <label style={{ fontSize: "0.85rem" }}>
               Quantity *
-              <input name="quantityQuoted" type="number" defaultValue={initial?.quantityQuoted ?? ""} style={input} />
+              <input
+                name="quantityQuoted"
+                type="number"
+                defaultValue={initial?.quantityQuoted ?? ""}
+                onInput={(e) => setQtyRaw(e.currentTarget.value)}
+                style={input}
+              />
             </label>
           </div>
+          {/* Live study-rate preview (#162, ADR-0041): the USD-per-unit that WILL pin
+              at submit (same lookup), or the missing-rate warning. Display only. */}
+          {ratePreview != null && (previewKind === "hit" || previewKind === "usd") && (
+            <p style={{ fontSize: "0.85rem", color: "#0a6", margin: 0 }}>
+              {previewPerUnit !== null ? (
+                <>
+                  ≈ {formatMoney(previewPerUnit, "USD")} USD/unit
+                  {ratePreview.kind === "hit" && (
+                    <span style={{ color: "#777" }}>
+                      {" "}
+                      — rate {ratePreview.rate} · {ratePreview.rateDate.toISOString().slice(0, 10)} ·{" "}
+                      {ratePreview.ageDays} {ratePreview.ageDays === 1 ? "day" : "days"} old
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span style={{ color: "#777" }}>Live USD/unit shows once price and quantity are set.</span>
+              )}
+            </p>
+          )}
+          {ratePreview?.kind === "miss" && (
+            <p style={{ fontSize: "0.85rem", color: "#b8860b", margin: 0 }}>
+              ⚠ No saved rate for this currency/date — USD fills in later.
+            </p>
+          )}
           {/* Warranty: a Yes/No "Offered?" gate over up to two value+unit pairs
               (ADR-0037). Offered is required to submit; the pairs show only under Yes
               and clear on save otherwise. Rendered via the shared WarrantyField so

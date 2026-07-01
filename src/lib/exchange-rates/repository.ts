@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { withTenant } from "@/lib/tenant-context";
 import type { Principal } from "@/domains/authz/principal";
+import { isInternal } from "@/domains/authz/principal";
 import { canManageStudyRates } from "@/domains/authz/exchange-rates";
 import { getStudy } from "@/lib/studies/repository";
 import { recordAuditEvents } from "@/lib/audit/repository";
@@ -140,6 +141,41 @@ export async function setStudyRate(
  * (Researchers reach this data only through later conversion slices) and tenant-
  * scoped. Ordered currency A→Z, then most-recent rateDate first.
  */
+/** One rate row projected for CONSUMPTION (not management): the currency it keys,
+ *  its calendar day, and the decimal-string rate — the minimum the entry preview
+ *  and submit pin need. Deliberately NOT `StudyRateView` (no id): a Researcher
+ *  consumes rates here but never sees the editable management table (ADR-0041). */
+export interface StudyRateRowForConversion {
+  readonly currency: string;
+  readonly rateDate: Date;
+  readonly rate: string;
+}
+
+/**
+ * List a study's Study Exchange Rate rows for CONVERSION consumption — the live
+ * entry preview (#162) and the submit-time pin. Unlike `listStudyRates` this is
+ * NOT gated to the study-setup pair: a Researcher legitimately consumes rates
+ * here (they are read-only on the table itself — ADR-0041), exactly as the submit
+ * path already reads them inside the researcher's own tenant transaction. Internal
+ * staff only, tenant-scoped; returns every currency's rows for the caller to
+ * filter and run the shared `studyRatePreview`/`decideStudyRatePin` rule over.
+ */
+export async function listStudyRateRowsForConversion(
+  principal: Principal,
+  studyId: string,
+): Promise<StudyRateRowForConversion[]> {
+  if (!isInternal(principal)) {
+    throw new ExchangeRateAccessError("Internal staff only");
+  }
+  return withTenant(principal, async (tx) => {
+    const rows = await tx.studyExchangeRate.findMany({
+      where: { studyId },
+      select: { currency: true, rateDate: true, rate: true },
+    });
+    return rows.map((r) => ({ currency: r.currency, rateDate: r.rateDate, rate: r.rate.toString() }));
+  });
+}
+
 export async function listStudyRates(
   principal: Principal,
   studyId: string,
