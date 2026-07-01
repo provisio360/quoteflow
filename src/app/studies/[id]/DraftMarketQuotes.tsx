@@ -22,6 +22,7 @@ import {
   type SubmitReport,
 } from "@/domains/benchmark-items/researcher-view";
 import { QuoteEditor } from "./QuoteEditor";
+import type { StudyRatePreview } from "@/domains/exchange-rates/preview";
 
 // The document-grouped researcher submit surface (#97). Each of the researcher's
 // own Draft Market Quotes is one group: its shared document facts, its Draft lines,
@@ -31,9 +32,14 @@ import { QuoteEditor } from "./QuoteEditor";
 // Draft mutation lives here (Edit/Delete lines, + Add line, Edit details), so the
 // fix-and-retry loop is self-contained (#97/Q8).
 
-/** A Draft document plus the items a new line may be added for (#97/Q5/Q7). */
+/** A Draft document plus the items a new line may be added for (#97/Q5/Q7) and the
+ *  entry-time study-rate preview (#162): the view-model is resolved ONCE per
+ *  document (currency + Date Quote Received are fixed while entering lines) and is
+ *  null for an already-converted document (a returned/flagged line — the rate is
+ *  pinned, so a pre-pin preview would mislead) or one still missing its header. */
 export type DraftDocGroup = DraftMarketQuoteGroup & {
   readonly addCandidates: readonly AddLineCandidate[];
+  readonly ratePreview: StudyRatePreview | null;
 };
 
 /** A line's required-to-submit field renders by a friendly name, not its key. */
@@ -397,6 +403,7 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
                   initial={initialFromLine(l, group.currency)}
                   marketCountry={group.country}
                   dealerCountry={group.sourceCountry ?? undefined}
+                  ratePreview={group.ratePreview}
                   // Show the Justification field only when this line was returned
                   // to its author for a Justification (its price is flagged) — ADR-0014.
                   showJustification={l.flagged}
@@ -434,6 +441,7 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
             mode={{ type: "addLine", marketQuoteId: group.marketQuoteId, itemId: addItemId }}
             marketCountry={group.country}
             dealerCountry={group.sourceCountry ?? undefined}
+            ratePreview={group.ratePreview}
             onDone={() => setAddItemId(null)}
           />
         )}
