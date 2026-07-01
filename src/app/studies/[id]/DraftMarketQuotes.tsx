@@ -40,6 +40,12 @@ import type { StudyRatePreview } from "@/domains/exchange-rates/preview";
 export type DraftDocGroup = DraftMarketQuoteGroup & {
   readonly addCandidates: readonly AddLineCandidate[];
   readonly ratePreview: StudyRatePreview | null;
+  // The Researcher peer-spread nudge context (#163, ADR-0042): the study QC
+  // Threshold (one knob) and the peer median USD-per-unit per Benchmark Item on or
+  // addable to this document (null ⇔ < 2 converted peers → silent). Client Price
+  // never appears here — the nudge is market-anchored (ADR-0003).
+  readonly qcThreshold: number;
+  readonly peerMedianByItem: Readonly<Record<string, number | null>>;
 };
 
 /** A line's required-to-submit field renders by a friendly name, not its key. */
@@ -404,6 +410,13 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
                   marketCountry={group.country}
                   dealerCountry={group.sourceCountry ?? undefined}
                   ratePreview={group.ratePreview}
+                  // Peer-spread nudge context for this line's item, and the other
+                  // lines on the document for the decimal-slip check (#163, ADR-0042).
+                  peerMedianUsdPerUnit={group.peerMedianByItem[l.benchmarkItemId] ?? null}
+                  threshold={group.qcThreshold}
+                  siblings={group.lines
+                    .filter((s) => s.lineId !== l.lineId)
+                    .map((s) => ({ price: s.price, quantityQuoted: s.quantityQuoted }))}
                   // Show the Justification field only when this line was returned
                   // to its author for a Justification (its price is flagged) — ADR-0014.
                   showJustification={l.flagged}
@@ -442,6 +455,11 @@ function DocGroup({ group }: { group: DraftDocGroup }) {
             marketCountry={group.country}
             dealerCountry={group.sourceCountry ?? undefined}
             ratePreview={group.ratePreview}
+            // Peer-spread nudge context for the item being added; every existing
+            // line on the document is a sibling for the decimal-slip check (#163).
+            peerMedianUsdPerUnit={group.peerMedianByItem[addItemId] ?? null}
+            threshold={group.qcThreshold}
+            siblings={group.lines.map((s) => ({ price: s.price, quantityQuoted: s.quantityQuoted }))}
             onDone={() => setAddItemId(null)}
           />
         )}

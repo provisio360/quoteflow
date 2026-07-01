@@ -16,6 +16,8 @@ import {
 import { formatMoneyInput, parseMoneyInput, formatMoney } from "@/domains/quotes/format-money";
 import { convert } from "@/domains/quotes/conversion";
 import type { StudyRatePreview } from "@/domains/exchange-rates/preview";
+import { peerSpreadFlag } from "@/domains/quotes/peer-spread-flag";
+import { decimalSlip, quantityPlausible } from "@/domains/quotes/mechanical-checks";
 import { stockStatusOptions } from "@/domains/quotes/stock-status";
 import { leadTimeUnitOptions } from "@/domains/quotes/lead-time-unit";
 import { landedCostApplies } from "@/domains/quotes/landed-cost";
@@ -80,6 +82,14 @@ export function QuoteEditor({
   // Display only — the line stays Draft and pins nothing. Absent/null in editHeader
   // and for already-converted documents; then no preview renders.
   ratePreview,
+  // The Researcher's live peer-spread nudge inputs (#163, ADR-0042): the peer
+  // median USD-per-unit for THIS line's Benchmark Item (null ⇔ < 2 converted peers
+  // → silent), the study QC Threshold (one knob, reused from the analyst flag), and
+  // the OTHER lines on this document (for the within-document decimal-slip check).
+  // All market-anchored — the Client Price is never sent to a researcher (ADR-0003).
+  peerMedianUsdPerUnit = null,
+  threshold = null,
+  siblings = [],
 }: {
   mode: Mode;
   initial?: Partial<Record<string, string>>;
@@ -88,6 +98,9 @@ export function QuoteEditor({
   dealerCountry?: string;
   showJustification?: boolean;
   ratePreview?: StudyRatePreview | null;
+  peerMedianUsdPerUnit?: number | null;
+  threshold?: number | null;
+  siblings?: readonly { readonly price: string | null; readonly quantityQuoted: number | null }[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -137,6 +150,25 @@ export function QuoteEditor({
     previewRate !== null && priceRaw.trim() !== "" && !Number.isNaN(priceNum) && qtyNum > 0
       ? convert(priceNum, qtyNum, previewRate).convertedUsdPricePerUnit
       : null;
+
+  // The live entry-time nudges (#163, ADR-0042). Sibling USD-per-unit is derived
+  // from the SAME shared document rate the live line uses (Q2: server ships the
+  // peer median, the client computes siblings), so every figure on the document is
+  // consistent with the preview the researcher sees. All three are advisory — they
+  // never gate submit; the researcher may proceed regardless.
+  const siblingUsdPerUnit = siblings.map((s) => {
+    if (previewRate === null || s.price === null) return null;
+    const p = Number(parseMoneyInput(s.price));
+    const q = Number(s.quantityQuoted);
+    return !Number.isNaN(p) && q > 0 ? convert(p, q, previewRate).convertedUsdPricePerUnit : null;
+  });
+  const spread = peerSpreadFlag({
+    liveUsdPerUnit: previewPerUnit,
+    peerMedianUsdPerUnit,
+    threshold: threshold ?? 0,
+  });
+  const slip = decimalSlip({ liveUsdPerUnit: previewPerUnit, siblingUsdPerUnit });
+  const quantityBad = qtyRaw.trim() !== "" && !quantityPlausible(qtyNum);
 
   function onCountryChange(next: string) {
     setCountry(next);
@@ -311,6 +343,30 @@ export function QuoteEditor({
           {ratePreview?.kind === "miss" && (
             <p style={{ fontSize: "0.85rem", color: "#b8860b", margin: 0 }}>
               ⚠ No saved rate for this currency/date — USD fills in later.
+            </p>
+          )}
+          {/* Peer-spread nudge (#163, ADR-0042): a soft "sits outside the other
+              dealers — sure?" anchored to the peer median, NEVER the Client Price.
+              Silent below 2 converted peers or with no live USD. Non-blocking. */}
+          {!spread.silent && spread.flagged && (
+            <p style={{ fontSize: "0.85rem", color: "#8a6d00", margin: 0 }}>
+              ⚠ This sits {spread.direction} than the other dealers (~{spread.percentDiff.toFixed(0)}%{" "}
+              {spread.direction}) — sure?
+            </p>
+          )}
+          {/* Decimal-slip mechanical check (#163): a within-document 10× sanity
+              catch on USD-per-unit; fires even with no peers. Advisory. */}
+          {!slip.silent && slip.flagged && (
+            <p style={{ fontSize: "0.85rem", color: "#8a6d00", margin: 0 }}>
+              ⚠ This is {slip.ratio >= 1 ? `${slip.ratio.toFixed(0)}×` : `1/${(1 / slip.ratio).toFixed(0)}`}{" "}
+              your other lines on this document — check for a misplaced decimal.
+            </p>
+          )}
+          {/* Quantity plausibility mechanical check (#163): advisory only — the
+              required-field gate at document submit is the real validation. */}
+          {quantityBad && (
+            <p style={{ fontSize: "0.85rem", color: "#8a6d00", margin: 0 }}>
+              ⚠ Quantity should be a positive number.
             </p>
           )}
           {/* Warranty: a Yes/No "Offered?" gate over up to two value+unit pairs

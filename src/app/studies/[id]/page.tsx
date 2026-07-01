@@ -23,6 +23,7 @@ import {
 } from "@/lib/assignments/repository";
 import {
   listDraftMarketQuotesForResearcher,
+  peerMedianUsdPerUnitByItem,
   listRejectedLinesForResearcher,
   countPartProgressForResearcher,
 } from "@/lib/quotes/repository";
@@ -106,7 +107,9 @@ export default async function StudyDetailPage({
     : new Map();
   // Document-grouped Draft submit surface (#97): the researcher's own Draft Market
   // Quotes, each with the items a new line may be added for.
-  const draftDocs = mayResearch ? await buildDraftDocGroups(principal, study.id) : [];
+  const draftDocs = mayResearch
+    ? await buildDraftDocGroups(principal, study.id, study.qcThreshold)
+    : [];
   // Needs-attention surface (#139 / ADR-0038): the researcher's own currently-Rejected
   // lines, each deep-linking to revise it (same destination as the rejection inbox).
   const rejectedLines = mayResearch ? await listRejectedLinesForResearcher(principal, study.id) : [];
@@ -288,6 +291,7 @@ async function buildResearcherView(
 async function buildDraftDocGroups(
   principal: Parameters<typeof listDraftMarketQuotesForResearcher>[0] & { userId: string },
   studyId: string,
+  studyQcThreshold: number,
 ): Promise<DraftDocGroup[]> {
   const [groups, items, rateRows] = await Promise.all([
     listDraftMarketQuotesForResearcher(principal, studyId),
@@ -299,8 +303,10 @@ async function buildDraftDocGroups(
   // Only for an unconverted document that has both header facts — a converted
   // (returned/flagged) doc is already pinned, so it gets no pre-pin preview.
   const now = new Date();
-  return groups.map((g) => {
-    const ratePreview =
+  const enriched = groups.map((g) => ({
+    group: g,
+    addCandidates: addLineCandidates(items, g.country, new Set(g.itemIdsOnDocument)),
+    ratePreview:
       g.conversionStatus === null && g.currency !== null && g.dateQuoteReceived !== null
         ? studyRatePreview(
             g.currency,
@@ -308,11 +314,24 @@ async function buildDraftDocGroups(
             rateRows.filter((r) => r.currency === g.currency),
             now,
           )
-        : null;
-    return {
-      ...g,
-      addCandidates: addLineCandidates(items, g.country, new Set(g.itemIdsOnDocument)),
-      ratePreview,
-    };
+        : null,
+  }));
+
+  // Peer medians for the live peer-spread nudge (#163, ADR-0042): every Benchmark
+  // Item a line on these documents is entered against — items already on a draft
+  // line (edit) and items a new line may be added for (addLine). One batched read;
+  // the pure ≥2-peers-else-null rule lives in `peerMedian`.
+  const itemIds = new Set<string>();
+  for (const { group, addCandidates } of enriched) {
+    for (const l of group.lines) itemIds.add(l.benchmarkItemId);
+    for (const c of addCandidates) itemIds.add(c.id);
+  }
+  const medianMap = await peerMedianUsdPerUnitByItem(principal, [...itemIds]);
+
+  return enriched.map(({ group, addCandidates, ratePreview }) => {
+    const peerMedianByItem: Record<string, number | null> = {};
+    for (const l of group.lines) peerMedianByItem[l.benchmarkItemId] = medianMap.get(l.benchmarkItemId) ?? null;
+    for (const c of addCandidates) peerMedianByItem[c.id] = medianMap.get(c.id) ?? null;
+    return { ...group, addCandidates, ratePreview, qcThreshold: studyQcThreshold, peerMedianByItem };
   });
 }
