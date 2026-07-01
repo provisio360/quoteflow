@@ -91,6 +91,10 @@ function Row({ item }: { item: ReviewQueueItem }) {
         <br />
         {item.sourceName ?? "—"}, {item.sourceLocality ?? "—"}
         <br />
+        <span style={{ color: "#777" }}>
+          received {item.dateQuoteReceived ? item.dateQuoteReceived.toISOString().slice(0, 10) : "—"}
+        </span>
+        <br />
         <span style={{ color: "#777" }}>by {item.authorName}</span>
       </td>
       <td style={cell}>

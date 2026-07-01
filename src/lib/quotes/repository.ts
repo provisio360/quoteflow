@@ -881,6 +881,9 @@ export interface RejectedLineView {
    *  states only the divergence direction, never the Client Price (ADR-0003). */
   readonly reason: string | null;
   readonly reviewedAt: Date | null;
+  /** The parent document's Date Quote Received — the dealer's quote date, carried
+   *  so the author sees which dated quote is bouncing back. */
+  readonly dateQuoteReceived: Date | null;
 }
 
 /**
@@ -910,7 +913,7 @@ export async function listRejectedLinesForResearcher(
         quoteLineNumber: true,
         rejectionReason: true,
         reviewedAt: true,
-        marketQuote: { select: { marketQuoteNumber: true } },
+        marketQuote: { select: { marketQuoteNumber: true, dateQuoteReceived: true } },
         benchmarkItem: { select: { clientItemNumber: true, itemDescription: true } },
       },
       orderBy: { reviewedAt: "desc" },
@@ -925,6 +928,7 @@ export async function listRejectedLinesForResearcher(
     itemLabel: `${r.benchmarkItem.clientItemNumber} ${r.benchmarkItem.itemDescription}`,
     reason: r.rejectionReason,
     reviewedAt: r.reviewedAt,
+    dateQuoteReceived: r.marketQuote.dateQuoteReceived,
   }));
 }
 
@@ -1131,6 +1135,9 @@ export interface ReviewQueueItem {
   readonly sourceName: string | null;
   readonly sourceCountry: string | null;
   readonly sourceLocality: string | null;
+  /** The parent document's Date Quote Received — the dealer's quote date (drives
+   *  the pinned rate). Distinct from `submittedAt`, which is when it hit the queue. */
+  readonly dateQuoteReceived: Date | null;
   readonly price: string | null;
   readonly currency: string | null;
   readonly quantityQuoted: number | null;
@@ -1271,6 +1278,7 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
             sourceName: true,
             sourceCountry: true,
             sourceLocality: true,
+            dateQuoteReceived: true,
             currency: true,
             conversionStatus: true,
           },
@@ -1307,6 +1315,7 @@ export async function listReviewQueue(principal: Principal): Promise<ReviewQueue
       sourceName: r.marketQuote.sourceName,
       sourceCountry: r.marketQuote.sourceCountry,
       sourceLocality: r.marketQuote.sourceLocality,
+      dateQuoteReceived: r.marketQuote.dateQuoteReceived,
       price: r.price === null ? null : r.price.toString(),
       currency: r.marketQuote.currency,
       quantityQuoted: r.quantityQuoted,
