@@ -4,9 +4,9 @@
   "private": true,
   "description": "QuoteFlow — multi-tenant pricing-study platform (walking skeleton)",
   "scripts": {
-    "dev": "next dev -H 0.0.0.0",
+    "dev": "next dev -H ::",
     "build": "next build",
-    "start": "next start -H 0.0.0.0",
+    "start": "next start -H ::",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
