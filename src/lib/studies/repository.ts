@@ -32,6 +32,10 @@ export interface StudySummary {
   readonly clientId: string;
   readonly clientName: string;
   readonly createdAt: Date;
+  /** The study default QC Threshold (fraction). Safe for researchers — it is a
+   *  tolerance knob, not the hidden Client Price (ADR-0003); it also anchors the
+   *  live peer-spread nudge at entry (#163, ADR-0042). */
+  readonly qcThreshold: number;
 }
 
 /**
@@ -184,5 +188,6 @@ function toSummary(row: Study & { client: { name: string } }): StudySummary {
     clientId: row.clientId,
     clientName: row.client.name,
     createdAt: row.createdAt,
+    qcThreshold: Number(row.qcThreshold),
   };
 }

@@ -11,6 +11,7 @@ import {
   type TransitionResult,
 } from "@/domains/quotes/lifecycle";
 import { evaluatePriceFlag, isLineFlagged, type PriceFlagResult } from "@/domains/quotes/price-flag";
+import { peerMedian } from "@/domains/quotes/peer-spread-flag";
 import { isValidCurrency } from "@/domains/quotes/currencies";
 import { canonicalCountry } from "@/domains/benchmark-items/countries";
 import { decideStudyRatePin, type StudyRatePin } from "@/domains/exchange-rates/lookup";
@@ -817,6 +818,47 @@ export async function listDraftMarketQuotesForResearcher(
       })),
     itemIdsOnDocument: r.quoteLines.map((l) => l.benchmarkItemId),
   }));
+}
+
+/**
+ * The peer median USD-per-unit for each of `itemIds`, powering the Researcher's
+ * live peer-spread nudge (issue #163 / ADR-0042). The population per Benchmark Item
+ * is the "pack" ADR-0003 §3 already lets researchers see: its OTHER lines that carry
+ * a real USD figure — `Submitted` + `Approved`, converted (`convertedUsdPricePerUnit`
+ * not null, i.e. `auto`/`manual`/`study-rate`). Peer Drafts (private, ADR-0011),
+ * `pending` (no USD point), and Rejected lines are excluded by the state/USD filter;
+ * the Draft line being entered is naturally out (it is not Submitted/Approved).
+ * Author is NOT a filter — a peer counts regardless of who filed it. Delegates the
+ * ≥2-peers-else-null rule to the pure `peerMedian`, so the market anchor never
+ * touches the Client Price (ADR-0042). Internal-only; tenant-scoped by `withTenant`.
+ */
+export async function peerMedianUsdPerUnitByItem(
+  principal: Principal,
+  itemIds: readonly string[],
+): Promise<Map<string, number | null>> {
+  if (!isInternal(principal)) throw new QuoteAccessError("Internal staff only");
+  const result = new Map<string, number | null>();
+  if (itemIds.length === 0) return result;
+
+  const rows = await withTenant(principal, (tx) =>
+    tx.quoteLine.findMany({
+      where: {
+        benchmarkItemId: { in: [...itemIds] },
+        state: { in: ["Submitted", "Approved"] },
+        convertedUsdPricePerUnit: { not: null },
+      },
+      select: { benchmarkItemId: true, convertedUsdPricePerUnit: true },
+    }),
+  );
+
+  const byItem = new Map<string, number[]>();
+  for (const r of rows) {
+    const pts = byItem.get(r.benchmarkItemId) ?? [];
+    pts.push(Number(r.convertedUsdPricePerUnit));
+    byItem.set(r.benchmarkItemId, pts);
+  }
+  for (const id of itemIds) result.set(id, peerMedian(byItem.get(id) ?? []));
+  return result;
 }
 
 /** One currently-Rejected line on the researcher's Needs-attention surface (#139,
